@@ -1,0 +1,288 @@
+package de.vortexplus.addon;
+
+import com.vortex.client.core.setting.NumberSetting;
+import com.vortex.client.module.Module;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.minecraft.block.Blocks;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.network.ClientPlayNetworkHandler;
+import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.ItemEntity;
+import net.minecraft.entity.damage.DamageSource;
+import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.text.Text;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.world.World;
+
+/**
+ * Spawner Safer:
+ * Sobald sich ein anderer Spieler innerhalb von 100 Bloeken befindet, schleicht
+ * der Spieler und baut alle Spawner in seiner Umgebung ab, um sie einzusammeln.
+ * Ist alles abgebaut, wird der Server verlassen. Wird der Spieler dabei von
+ * einem Spieler getroffen, wird NICHT verlassen, sondern 30 Sekunden gewartet
+ * (weiter geschlichen), danach wird weitergemacht und anschliessend verlassen.
+ */
+public final class SpawnerSaferAddonModule extends Module {
+    private static final double DETECT_RANGE = 100.0;
+    private static final double DETECT_RANGE_SQ = DETECT_RANGE * DETECT_RANGE;
+    private static final double REACH = 4.0;
+    private static final double REACH_SQ = REACH * REACH;
+    private static final int SEARCH_RADIUS_Y = 4;
+    private static final int WAIT_TICKS = 600;      // 30 Sekunden
+    private static final int BREAK_DELAY = 2;       // Ticks zwischen zwei Abbruechen
+    private static final int WALK_TIMEOUT = 100;    // ~5s ohne Fortschritt -> Ziel aufgeben
+    private static final int PICKUP_TIMEOUT = 120;  // ~6s ohne Aufsammeln -> aufgeben
+
+    /** Suchradius um den Spieler (x/z). */
+    public final NumberSetting range = new NumberSetting("Range", 6, 1, 12, 1);
+
+    private boolean started;
+    private boolean done;
+    private boolean hit;
+    private int waitTimer;
+    private int breakCooldown;
+    private float lastHealth = -1.0f;
+
+    private BlockPos breakTarget;
+    private BlockPos walkTarget;
+    private int walkTicks;
+    private int pickupId = -1;
+    private int pickupTicks;
+
+    public SpawnerSaferAddonModule() {
+        super("Spawner Safer", Category.CHEATS);
+        addSetting(range);
+        ClientTickEvents.END_CLIENT_TICK.register(this::onTick);
+    }
+
+    @Override
+    protected void onEnable() {
+        started = false;
+        done = false;
+        hit = false;
+        waitTimer = 0;
+        breakTarget = null;
+        walkTarget = null;
+        walkTicks = 0;
+        pickupId = -1;
+        pickupTicks = 0;
+        lastHealth = -1.0f;
+    }
+
+    @Override
+    protected void onDisable() {
+        MinecraftClient client = MinecraftClient.getInstance();
+        releaseAllKeys(client);
+    }
+
+    private void onTick(MinecraftClient client) {
+        if (!isEnabled()) return;
+        ClientPlayerEntity player = client.player;
+        if (player == null || client.interactionManager == null) return;
+        if (client.currentScreen != null) return;
+
+        if (!started) {
+            if (enemyWithinRange(client, player)) {
+                started = true;
+                lastHealth = player.getHealth();
+            } else {
+                return;
+            }
+        }
+
+        // Solange aktiv: schleichen
+        client.options.sneakKey.setPressed(true);
+
+        // Wurden wir gerade von einem Spieler getroffen?
+        checkHit(player);
+
+        // Nach einem Treffer: 30 Sekunden warten, nicht abbauen
+        if (waitTimer > 0) {
+            waitTimer--;
+            releaseMoveKeys(client);
+            if (waitTimer == 0) {
+                hit = false;
+            }
+            return;
+        }
+
+        if (done) {
+            releaseMoveKeys(client);
+            leave(client);
+            return;
+        }
+
+        if (breakCooldown > 0) {
+            breakCooldown--;
+            return;
+        }
+
+        // 1) Zu einem entfernten Spawner laufen
+        if (walkTarget != null) {
+            if (!isSpawner(player.getEntityWorld(), walkTarget)) {
+                walkTarget = null;
+            } else {
+                double distSq = player.squaredDistanceTo(
+                        walkTarget.getX() + 0.5, walkTarget.getY() + 0.5, walkTarget.getZ() + 0.5);
+                if (distSq <= REACH_SQ) {
+                    walkTarget = null; // im naechsten Tick brechen
+                } else if (walkTicks++ > WALK_TIMEOUT) {
+                    walkTarget = null; // nicht erreichbar -> naechstes Ziel
+                } else {
+                    moveToward(client, walkTarget.getX() + 0.5, walkTarget.getZ() + 0.5);
+                    return;
+                }
+            }
+        }
+
+        // 2) Fallengelassenes Spawner-Item aufsammeln
+        if (pickupId != -1) {
+            Entity entity = player.getEntityWorld().getEntityById(pickupId);
+            if (entity instanceof ItemEntity item && item.getStack().isOf(Blocks.SPAWNER.asItem())) {
+                if (player.squaredDistanceTo(entity) <= 1.5 * 1.5) {
+                    pickupId = -1; // aufgehoben
+                } else if (pickupTicks++ > PICKUP_TIMEOUT) {
+                    pickupId = -1; // nicht erreichbar -> weiter
+                } else {
+                    moveToward(client, entity.getX(), entity.getZ());
+                    return;
+                }
+            } else {
+                pickupId = -1; // aufgehoben oder verschwunden
+            }
+        }
+
+        // 3) Spawner in Reichweite abbrechen
+        if (breakTarget != null) {
+            if (isSpawner(player.getEntityWorld(), breakTarget)) {
+                client.interactionManager.breakBlock(breakTarget);
+                breakCooldown = BREAK_DELAY;
+            }
+            breakTarget = null;
+            return;
+        }
+
+        // 4) Neues Ziel suchen (naechster Spawner)
+        BlockPos nearest = findNearestSpawner(player);
+        if (nearest != null) {
+            double distSq = player.squaredDistanceTo(
+                    nearest.getX() + 0.5, nearest.getY() + 0.5, nearest.getZ() + 0.5);
+            if (distSq <= REACH_SQ) {
+                breakTarget = nearest;
+            } else {
+                walkTarget = nearest;
+                walkTicks = 0;
+            }
+            return;
+        }
+
+        // 5) Uebrig gebliebenes Spawner-Item einsammeln
+        ItemEntity item = findSpawnerItem(client, player);
+        if (item != null) {
+            pickupId = item.getId();
+            pickupTicks = 0;
+            return;
+        }
+
+        // 6) Alles abgebaut -> fertig
+        done = true;
+    }
+
+    /** Anderer (lebender) Spieler innerhalb von 100 Bloeken? */
+    private static boolean enemyWithinRange(MinecraftClient client, ClientPlayerEntity player) {
+        for (Entity entity : client.world.getEntities()) {
+            if (entity == player || !entity.isAlive() || entity.isSpectator()) continue;
+            if (!(entity instanceof PlayerEntity)) continue;
+            if (entity.squaredDistanceTo(player) <= DETECT_RANGE_SQ) return true;
+        }
+        return false;
+    }
+
+    /** Treffer durch einen Spieler erkennen (Schaden + Verursacher). */
+    private void checkHit(ClientPlayerEntity player) {
+        float health = player.getHealth();
+        if (health < lastHealth) {
+            DamageSource source = player.getRecentDamageSource();
+            Entity attacker = source == null ? null : source.getAttacker();
+            if (attacker instanceof PlayerEntity) {
+                hit = true;
+                waitTimer = WAIT_TICKS;
+            }
+        }
+        lastHealth = health;
+    }
+
+    /** Naechsten Spawner in der Suchbox finden (nach Distanz sortiert). */
+    private BlockPos findNearestSpawner(ClientPlayerEntity player) {
+        int r = (int) range.get();
+        BlockPos center = player.getBlockPos();
+        BlockPos best = null;
+        double bestDist = Double.MAX_VALUE;
+        for (int dx = -r; dx <= r; dx++) {
+            for (int dy = -SEARCH_RADIUS_Y; dy <= SEARCH_RADIUS_Y; dy++) {
+                for (int dz = -r; dz <= r; dz++) {
+                    BlockPos pos = center.add(dx, dy, dz);
+                    if (!isSpawner(player.getEntityWorld(), pos)) continue;
+                    double distSq = player.squaredDistanceTo(
+                            pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
+                    if (distSq < bestDist) {
+                        bestDist = distSq;
+                        best = pos;
+                    }
+                }
+            }
+        }
+        return best;
+    }
+
+    /** Naechstes herumliegendes Spawner-Item finden. */
+    private static ItemEntity findSpawnerItem(MinecraftClient client, ClientPlayerEntity player) {
+        ItemEntity best = null;
+        double bestDist = Double.MAX_VALUE;
+        for (Entity entity : client.world.getEntities()) {
+            if (!(entity instanceof ItemEntity item)) continue;
+            if (!item.getStack().isOf(Blocks.SPAWNER.asItem())) continue;
+            double distSq = entity.squaredDistanceTo(player);
+            if (distSq < bestDist) {
+                bestDist = distSq;
+                best = item;
+            }
+        }
+        return best;
+    }
+
+    private static boolean isSpawner(World world, BlockPos pos) {
+        return world.getBlockState(pos).isOf(Blocks.SPAWNER);
+    }
+
+    /** Hin zu einem Punkt laufen (Blickrichtung setzen + Vorwaerts-Taste). */
+    private void moveToward(MinecraftClient client, double x, double z) {
+        ClientPlayerEntity player = client.player;
+        double dx = x - player.getX();
+        double dz = z - player.getZ();
+        float yaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
+        player.setYaw(yaw);
+        client.options.forwardKey.setPressed(true);
+        client.options.jumpKey.setPressed(player.horizontalCollision);
+    }
+
+    /** Server verlassen (Disconnect). */
+    private void leave(MinecraftClient client) {
+        ClientPlayNetworkHandler handler = client.getNetworkHandler();
+        if (handler != null) {
+            handler.getConnection().disconnect(Text.literal("Spawner Safer: Fertig"));
+        }
+        setEnabled(false);
+    }
+
+    private static void releaseMoveKeys(MinecraftClient client) {
+        client.options.forwardKey.setPressed(false);
+        client.options.jumpKey.setPressed(false);
+    }
+
+    private static void releaseAllKeys(MinecraftClient client) {
+        releaseMoveKeys(client);
+        client.options.sneakKey.setPressed(false);
+    }
+}
