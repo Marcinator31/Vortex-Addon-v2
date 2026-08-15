@@ -1,5 +1,6 @@
 package de.vortexplus.addon;
 
+import com.vortex.client.core.setting.BooleanSetting;
 import com.vortex.client.core.setting.NumberSetting;
 import com.vortex.client.module.Module;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -24,8 +25,6 @@ import net.minecraft.world.World;
  * (weiter geschlichen), danach wird weitergemacht und anschliessend verlassen.
  */
 public final class SpawnerSaferAddonModule extends Module {
-    private static final double DETECT_RANGE = 100.0;
-    private static final double DETECT_RANGE_SQ = DETECT_RANGE * DETECT_RANGE;
     private static final double REACH = 4.0;
     private static final double REACH_SQ = REACH * REACH;
     private static final int SEARCH_RADIUS_Y = 4;
@@ -35,7 +34,38 @@ public final class SpawnerSaferAddonModule extends Module {
     private static final int PICKUP_TIMEOUT = 120;  // ~6s ohne Aufsammeln -> aufgeben
 
     /** Suchradius um den Spieler (x/z). */
-    public final NumberSetting range = new NumberSetting("Range", 6, 1, 12, 1);
+    public final NumberSetting range = new NumberSetting("Range", 10, 1, 16, 1);
+
+    /**
+     * How far away a player counts as spotted.
+     *
+     * Render distance rather than a few blocks: by the time someone is close
+     * enough to see the spawners, packing them up has already taken too long.
+     */
+    public final NumberSetting detectRange = new NumberSetting("Detect Range", 100, 16, 256, 8);
+
+    /** Crouch while working. */
+    public final BooleanSetting sneak = new BooleanSetting("Sneak", true);
+
+    /**
+     * Hotbar slot holding the silk touch pickaxe (1 to 9).
+     *
+     * Without silk touch a spawner breaks into nothing at all, so this is not
+     * a nicety -- it decides whether you pack the spawners up or destroy them.
+     */
+    public final NumberSetting silkSlot = new NumberSetting("Pickaxe Slot", 1, 1, 9, 1);
+
+    /** Switch to that slot before breaking. */
+    public final BooleanSetting useSilkTouch = new BooleanSetting("Switch to Pickaxe", true);
+
+    /** Do nothing at all if that slot holds no pickaxe. */
+    public final BooleanSetting requirePickaxe = new BooleanSetting("Only With a Pickaxe", true);
+
+    /** Pick up dropped totems as well, not only the spawners. */
+    public final BooleanSetting collectTotems = new BooleanSetting("Also Collect Totems", true);
+
+    /** Log out once everything is collected. */
+    public final BooleanSetting logoutWhenDone = new BooleanSetting("Log Out When Done", true);
 
     private boolean started;
     private boolean done;
@@ -53,6 +83,13 @@ public final class SpawnerSaferAddonModule extends Module {
     public SpawnerSaferAddonModule() {
         super("Spawner Safer", Category.CHEATS);
         addSetting(range);
+        addSetting(detectRange);
+        addSetting(sneak);
+        addSetting(silkSlot);
+        addSetting(useSilkTouch);
+        addSetting(requirePickaxe);
+        addSetting(collectTotems);
+        addSetting(logoutWhenDone);
         ClientTickEvents.END_CLIENT_TICK.register(this::onTick);
     }
 
@@ -83,16 +120,29 @@ public final class SpawnerSaferAddonModule extends Module {
         if (client.currentScreen != null) return;
 
         if (!started) {
-            if (enemyWithinRange(client, player)) {
-                started = true;
-                lastHealth = player.getHealth();
-            } else {
-                return;
-            }
+            if (!enemyWithinRange(client, player)) return;
+
+            // Someone is in range. Nothing else matters until the pickaxe is
+            // sorted: breaking a spawner without silk touch destroys it, which
+            // is worse than being caught with it.
+            if (requirePickaxe.get() && !pickaxeReady(player)) return;
+
+            started = true;
+            lastHealth = player.getHealth();
         }
 
-        // Solange aktiv: schleichen
-        client.options.sneakKey.setPressed(true);
+        // Hold the pickaxe. Checked every tick rather than once: a slot can
+        // change underneath you, and finding out mid-break is too late.
+        if (useSilkTouch.get() && pickaxeReady(player)) {
+            Slots.select(player, pickaxeSlot());
+        }
+
+        // Sneak while working, if that is wanted.
+        //
+        // Crouching keeps you off the edge of the platform and makes you a
+        // little harder to spot. Optional, because on some servers moving while
+        // crouched is what draws attention in the first place.
+        client.options.sneakKey.setPressed(sneak.get());
 
         // Wurden wir gerade von einem Spieler getroffen?
         checkHit(player);
@@ -109,7 +159,13 @@ public final class SpawnerSaferAddonModule extends Module {
 
         if (done) {
             releaseMoveKeys(client);
-            leave(client);
+            if (logoutWhenDone.get()) {
+                leave(client);
+            } else {
+                // Everything collected, nothing left to do -- switch off rather
+                // than keep running through the checks every tick.
+                setEnabled(false);
+            }
             return;
         }
 
@@ -185,16 +241,31 @@ public final class SpawnerSaferAddonModule extends Module {
             return;
         }
 
-        // 6) Alles abgebaut -> fertig
+        // 6) Dropped totems, if that is wanted.
+        //
+        // They are worth more than the spawners and are easily forgotten --
+        // they end up on the floor when an inventory fills during the work.
+        if (collectTotems.get()) {
+            ItemEntity totem = findTotem(client, player);
+            if (totem != null) {
+                pickupId = totem.getId();
+                pickupTicks = 0;
+                return;
+            }
+        }
+
+        // 7) Nothing left -> done
         done = true;
     }
 
     /** Anderer (lebender) Spieler innerhalb von 100 Bloeken? */
-    private static boolean enemyWithinRange(MinecraftClient client, ClientPlayerEntity player) {
+    private boolean enemyWithinRange(MinecraftClient client, ClientPlayerEntity player) {
+        double r = detectRange.get();
+        double rSq = r * r;
         for (Entity entity : client.world.getEntities()) {
-            if (entity == player || !entity.isAlive() || entity.isSpectator()) continue;
-            if (!(entity instanceof PlayerEntity)) continue;
-            if (entity.squaredDistanceTo(player) <= DETECT_RANGE_SQ) return true;
+            if (!(entity instanceof PlayerEntity other)) continue;
+            if (other == player || !other.isAlive() || other.isSpectator()) continue;
+            if (other.squaredDistanceTo(player) <= rSq) return true;
         }
         return false;
     }
@@ -243,6 +314,50 @@ public final class SpawnerSaferAddonModule extends Module {
         for (Entity entity : client.world.getEntities()) {
             if (!(entity instanceof ItemEntity item)) continue;
             if (!item.getStack().isOf(Blocks.SPAWNER.asItem())) continue;
+            double distSq = entity.squaredDistanceTo(player);
+            if (distSq < bestDist) {
+                bestDist = distSq;
+                best = item;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * Which hotbar slot holds the silk touch pickaxe.
+     *
+     * WHY A SLOT AND NOT A CHECK FOR THE ENCHANTMENT: reading enchantments in
+     * this version needs a chain of registry lookups I cannot verify here, and
+     * building on a guess is how a module ends up silently doing nothing --
+     * which is exactly what happened to Fast Use in the previous release.
+     *
+     * You know which pickaxe has silk touch. Put it in this slot and the module
+     * reaches for it with certainty rather than cleverness.
+     */
+    private int pickaxeSlot() {
+        return Math.max(1, Math.min(9, silkSlot.getInt())) - 1;
+    }
+
+    /** Does that slot actually hold a pickaxe? */
+    private boolean pickaxeReady(ClientPlayerEntity player) {
+        try {
+            ItemStack stack = player.getInventory().getStack(pickaxeSlot());
+            if (stack == null || stack.isEmpty()) return false;
+            var id = net.minecraft.registry.Registries.ITEM.getId(stack.getItem());
+            return id != null && id.getPath().endsWith("_pickaxe");
+        } catch (Throwable pvpErr) {
+            return false;
+        }
+    }
+
+    /** Nearest dropped totem, or null. */
+    private static ItemEntity findTotem(MinecraftClient client, ClientPlayerEntity player) {
+        ItemEntity best = null;
+        double bestDist = Double.MAX_VALUE;
+        for (Entity entity : client.world.getEntities()) {
+            if (!(entity instanceof ItemEntity item)) continue;
+            var id = net.minecraft.registry.Registries.ITEM.getId(item.getStack().getItem());
+            if (id == null || !id.getPath().equals("totem_of_undying")) continue;
             double distSq = entity.squaredDistanceTo(player);
             if (distSq < bestDist) {
                 bestDist = distSq;

@@ -33,14 +33,21 @@ public final class CrystalAuraAddonModule extends Module {
     public final BooleanSetting rotate = new BooleanSetting("Rotate", true);
 
     /**
-     * Only use spots where the opponent is standing on top.
+     * Only use spots that can actually reach the opponent.
      *
-     * A crystal set to the side does little: the blast falls off quickly, and
-     * a wall or the ground eats most of it. Directly underneath is where the
-     * damage actually lands -- and it stops the module wasting crystals on
-     * places that were never going to hurt anyone.
+     * MY EARLIER ATTEMPT AT THIS WAS IMPOSSIBLE: it demanded the obsidian sit
+     * exactly one block under the opponent's feet. A crystal placed there fills
+     * the two blocks above -- the space the opponent is standing in -- and the
+     * game refuses to place anything into an entity. The rule could never be
+     * satisfied, so nothing was ever placed.
+     *
+     * What matters is not where the spot sits relative to their feet, but
+     * whether the blast reaches them: close by, and not far below.
      */
-    public final BooleanSetting onlyUnderTarget = new BooleanSetting("Only Under Target", true);
+    public final BooleanSetting onlyUseful = new BooleanSetting("Only If It Can Hit", true);
+
+    /** How far the crystal may sit from the opponent, horizontally. */
+    public final NumberSetting maxSpread = new NumberSetting("Max Spread", 2.0, 1.0, 6.0, 0.5);
 
     /**
      * Refuse anything that would catch you as well.
@@ -74,7 +81,8 @@ public final class CrystalAuraAddonModule extends Module {
         addSetting(breakRange);
         addSetting(delay);
         addSetting(rotate);
-        addSetting(onlyUnderTarget);
+        addSetting(onlyUseful);
+        addSetting(maxSpread);
         addSetting(selfProtect);
         addSetting(minSelfDistance);
         addSetting(breakInstantly);
@@ -222,11 +230,13 @@ public final class CrystalAuraAddonModule extends Module {
                 if (sx * sx + sy * sy + sz * sz < safeSq) continue;
             }
 
-            // Only crystals standing where they actually reach the target.
-            if (onlyUnderTarget.get()) {
-                BlockPos base = crystal.getBlockPos().down();
-                BlockPos under = target.getBlockPos().down();
-                if (!base.equals(under)) continue;
+            // Only crystals that can actually reach the target.
+            if (onlyUseful.get()) {
+                double fx = crystal.getX() - tx;
+                double fz = crystal.getZ() - tz;
+                if (Math.sqrt(fx * fx + fz * fz) > maxSpread.get()) continue;
+                double dyy = target.getY() - crystal.getY();
+                if (dyy < -3.0 || dyy > 3.0) continue;
             }
             return crystal;
         }
@@ -240,9 +250,7 @@ public final class CrystalAuraAddonModule extends Module {
                 && spotIsUseful(client, player, target, under)) {
             return under;
         }
-        // With "only under target" on there is nothing else to look at: any
-        // other spot fails that test anyway, and searching would be wasted work.
-        if (onlyUnderTarget.get()) return null;
+
         int radius = Math.min(6, (int) Math.ceil(placeRange.get()));
         double maxSq = placeRange.get() * placeRange.get();
         BlockPos targetPos = target.getBlockPos();
@@ -350,10 +358,25 @@ public final class CrystalAuraAddonModule extends Module {
      */
     private boolean spotIsUseful(MinecraftClient client, ClientPlayerEntity player,
                                  Entity target, BlockPos pos) {
-        // The opponent has to be standing on it: same column, one block up.
-        if (onlyUnderTarget.get()) {
-            BlockPos under = target.getBlockPos().down();
-            if (!pos.equals(under)) return false;
+        // Can the blast reach them from here?
+        //
+        // Two conditions, both about the damage rather than about geometry for
+        // its own sake: close enough horizontally, and not so far below that
+        // the ground swallows it. An end crystal reaches about six blocks, and
+        // falls off sharply along the way.
+        if (onlyUseful.get()) {
+            double dx = pos.getX() + 0.5 - target.getX();
+            double dz = pos.getZ() + 0.5 - target.getZ();
+            double flat = Math.sqrt(dx * dx + dz * dz);
+            if (flat > maxSpread.get()) return false;
+
+            // The crystal sits on top of this block, so its middle is about
+            // one and a half blocks above it.
+            double crystalY = pos.getY() + 1.5;
+            double feet = target.getY();
+            // Level with them, or a little below. Above their head does almost
+            // nothing, and far below is blocked by whatever they stand on.
+            if (feet < crystalY - 3.0 || feet > crystalY + 3.0) return false;
         }
 
         // And it must not be close enough to catch us.

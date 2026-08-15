@@ -21,5 +21,11 @@
     "fabric-api": "*",
     "vortexclient": ">=2.20.0"
   },
-  "icon": "assets/vortexplus/icon.png"
+  "icon": "assets/vortexplus/icon.png",
+  "mixins": [
+    {
+      "config": "vortexplus.client.mixins.json",
+      "environment": "client"
+    }
+  ]
 }

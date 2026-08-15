@@ -34,9 +34,9 @@ public final class VortexPlusAddon implements ClientModInitializer {
         register(new ChestStealerAddonModule(),
                 "Empties an open chest into your inventory.");
         register(new FastUseAddonModule(),
-                "Throws bottles and pearls far faster than the game allows. High ban risk.");
+                "Removes the client-side pause between throws. Does not affect eating. High ban risk.");
         register(new SpawnerSaferAddonModule(),
-                "Collects spawners nearby and waits when a player hits you.");
+                "Spots an approaching player, then packs up every spawner nearby and logs out.");
     }
 
     /**

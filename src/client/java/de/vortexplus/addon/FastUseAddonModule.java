@@ -1,52 +1,61 @@
 package de.vortexplus.addon;
 
 import com.vortex.client.core.setting.BooleanSetting;
+import com.vortex.client.core.setting.NumberSetting;
 import com.vortex.client.module.Module;
+import de.vortexplus.addon.mixin.ItemUseCooldownAccessor;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.util.Hand;
+import net.minecraft.item.ItemStack;
 
 /**
- * Removes the pause between uses.
+ * Throws faster by removing the client's own pause.
  *
- * WHY THIS WAS REWRITTEN COMPLETELY: the previous version looked up two fields
- * by name -- "itemUseCooldown" and "blockBreakingCooldown". Those are the Yarn
- * names, which exist only while developing. In the finished game the fields are
- * called field_1752 and field_3716, so the lookup found nothing, returned null,
- * and every check silently did nothing. The module has never once worked, and
- * because the failure was caught and ignored, nothing ever said so.
+ * HOW THIS WORKS NOW, AND WHY THE LAST VERSION MISBEHAVED:
  *
- * This version does not go looking for private fields at all. It simply uses
- * the item again itself, which needs no internals and cannot break when the
- * next version renames something.
+ * After each use the client waits four ticks before sending another. That pause
+ * lives on your machine alone; the server neither knows nor enforces it.
+ *
+ * The previous version tried to get around it by sending extra "use item"
+ * messages itself. The server took some and discarded the rest, and what you
+ * saw were ghost items -- a handful thrown, then most of them back in your
+ * hand. Nothing was really thrown; the client had simply told itself a story
+ * the server never agreed to.
+ *
+ * This version sends nothing of its own. It sets the pause to zero and lets the
+ * game do the using, exactly as it would if you were clicking. Every throw goes
+ * through the normal path in the normal order, so there is nothing to take back.
+ *
+ * ON FOOD: eating is not repeated tapping, it is one long hold. There is no
+ * pause to remove, and hurrying it is not something the client can decide --
+ * the server times the eating and hands you the effect at the end. That is why
+ * golden apples never sped up, and why this no longer pretends otherwise.
  */
 public final class FastUseAddonModule extends Module {
 
     /**
-     * Uses per tick. One is the normal rate.
+     * How much of the pause to remove, in ticks.
      *
-     * Vanilla allows one use every four ticks, which for experience bottles
-     * means five a second. Throwing a stack that way takes over a minute.
+     * Vanilla waits four. Zero means no pause at all, which is one use per tick
+     * -- twenty a second against the usual five.
      */
-    public final com.vortex.client.core.setting.NumberSetting usesPerTick =
-            new com.vortex.client.core.setting.NumberSetting("Uses Per Tick", 4, 1, 20, 1);
+    public final NumberSetting cooldown = new NumberSetting("Cooldown (ticks)", 0, 0, 4, 1);
 
-    /** Only while the use key is actually held. */
+    /** Only while the use key is held. */
     public final BooleanSetting onlyWhileHeld = new BooleanSetting("Only While Held", true);
 
     /**
-     * Only speed up things that are thrown.
+     * Only for things that are thrown.
      *
-     * Bottles, pearls, snowballs and eggs. Left on, eating and drawing a bow
-     * keep their normal timing -- those are held down rather than tapped, and
-     * hurrying them does nothing useful while making everything you do look
-     * wrong at once.
+     * Bottles, pearls, snowballs, eggs and potions. Everything else keeps its
+     * normal timing -- for food and bows there is nothing here to speed up
+     * anyway, and touching their timing only makes the rest look wrong too.
      */
     public final BooleanSetting throwablesOnly = new BooleanSetting("Throwables Only", true);
 
     public FastUseAddonModule() {
         super("Fast Use", Category.CHEATS);
-        addSetting(usesPerTick);
+        addSetting(cooldown);
         addSetting(onlyWhileHeld);
         addSetting(throwablesOnly);
         ClientTickEvents.END_CLIENT_TICK.register(this::onTick);
@@ -63,15 +72,14 @@ public final class FastUseAddonModule extends Module {
                 return;
             }
 
-            var held = client.player.getMainHandStack();
+            ItemStack held = client.player.getMainHandStack();
             if (held == null || held.isEmpty()) return;
-
             if (throwablesOnly.get() && !isThrowable(held)) return;
 
-            // One extra use per tick beyond what the game does itself.
-            int extra = Math.max(0, usesPerTick.getInt() - 1);
-            for (int i = 0; i < extra; i++) {
-                client.interactionManager.interactItem(client.player, Hand.MAIN_HAND);
+            ItemUseCooldownAccessor acc = (ItemUseCooldownAccessor) client;
+            int want = cooldown.getInt();
+            if (acc.vortexplus$getItemUseCooldown() > want) {
+                acc.vortexplus$setItemUseCooldown(want);
             }
         } catch (Throwable pvpErr) {
             com.vortex.client.core.Errors.report("FastUse", pvpErr);
@@ -82,10 +90,9 @@ public final class FastUseAddonModule extends Module {
      * Is this something you throw?
      *
      * Matched by item id rather than by class: the item classes were merged in
-     * this version, so there is no single type left that covers them. The name
-     * is stable and cannot fail to compile.
+     * this version, so no single type covers them any more.
      */
-    private static boolean isThrowable(net.minecraft.item.ItemStack stack) {
+    private static boolean isThrowable(ItemStack stack) {
         try {
             var id = net.minecraft.registry.Registries.ITEM.getId(stack.getItem());
             if (id == null) return false;
