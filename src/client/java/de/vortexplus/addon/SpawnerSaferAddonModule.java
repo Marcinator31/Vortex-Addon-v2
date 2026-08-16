@@ -51,6 +51,14 @@ public final class SpawnerSaferAddonModule extends Module {
     public final BooleanSetting sneak = new BooleanSetting("Sneak", true);
 
     /**
+     * Close whatever is open when someone shows up.
+     *
+     * Chat, inventory, a chest, the escape menu -- all of it. Being in a menu
+     * is not a reason to keep standing next to the spawners.
+     */
+    public final BooleanSetting closeScreens = new BooleanSetting("Close Open Screens", true);
+
+    /**
      * Hotbar slot holding the silk touch pickaxe (1 to 9).
      *
      * Without silk touch a spawner breaks into nothing at all, so this is not
@@ -66,6 +74,18 @@ public final class SpawnerSaferAddonModule extends Module {
 
     /** Pick up dropped totems as well, not only the spawners. */
     public final BooleanSetting collectTotems = new BooleanSetting("Also Collect Totems", true);
+
+    /**
+     * Throw away totems when there is no room left for the spawners.
+     *
+     * Spawners do not stack -- ten of them need ten free slots. With a full
+     * inventory they drop on the floor instead, and the module then waits for
+     * a pickup that can never happen while nothing has moved.
+     *
+     * Totems are what gets thrown because they are the one thing usually
+     * carried by the stack, and a stack of them frees a whole slot at once.
+     */
+    public final BooleanSetting dropForSpace = new BooleanSetting("Drop Totems For Space", true);
 
     /** Log out once everything is collected. */
     public final BooleanSetting logoutWhenDone = new BooleanSetting("Log Out When Done", true);
@@ -91,10 +111,12 @@ public final class SpawnerSaferAddonModule extends Module {
         addSetting(range);
         addSetting(detectRange);
         addSetting(sneak);
+        addSetting(closeScreens);
         addSetting(silkSlot);
         addSetting(useSilkTouch);
         addSetting(requirePickaxe);
         addSetting(collectTotems);
+        addSetting(dropForSpace);
         addSetting(logoutWhenDone);
         ClientTickEvents.END_CLIENT_TICK.register(this::onTick);
     }
@@ -124,7 +146,20 @@ public final class SpawnerSaferAddonModule extends Module {
         if (!isEnabled()) return;
         ClientPlayerEntity player = client.player;
         if (player == null || client.interactionManager == null) return;
-        if (client.currentScreen != null) return;
+        // An open screen used to stop everything here.
+        //
+        // That is exactly backwards: standing in the escape menu, a chest or
+        // the chat is when you are least likely to notice someone arriving.
+        // The module now closes whatever is open and gets on with it.
+        if (client.currentScreen != null) {
+            if (!closeScreens.get()) return;
+            // Only once someone is actually coming -- otherwise it would fight
+            // you for the inventory every tick while nothing is happening.
+            if (!started && !enemyWithinRange(client, player)) return;
+            closeAnyScreen(client, player);
+            // The screen goes this tick; the work starts on the next one.
+            return;
+        }
 
         if (!started) {
             if (!enemyWithinRange(client, player)) return;
@@ -142,6 +177,15 @@ public final class SpawnerSaferAddonModule extends Module {
         // change underneath you, and finding out mid-break is too late.
         if (useSilkTouch.get() && pickaxeReady(player)) {
             Slots.select(player, pickaxeSlot());
+        }
+
+        // Make room before breaking anything.
+        //
+        // Checked against the number of spawners still standing, not against
+        // one: breaking the last of ten with nine free slots means the tenth
+        // lands on the floor.
+        if (dropForSpace.get()) {
+            makeRoom(client, player);
         }
 
         // Sneak while working, if that is wanted.
@@ -398,6 +442,85 @@ public final class SpawnerSaferAddonModule extends Module {
         return best;
     }
 
+    /** How many spawners are still standing in range. */
+    private int countSpawners(ClientPlayerEntity player) {
+        int r = (int) range.get();
+        BlockPos center = player.getBlockPos();
+        int n = 0;
+        for (int dx = -r; dx <= r; dx++) {
+            for (int dy = -SEARCH_RADIUS_Y; dy <= SEARCH_RADIUS_Y; dy++) {
+                for (int dz = -r; dz <= r; dz++) {
+                    if (isSpawner(player.getEntityWorld(), center.add(dx, dy, dz))) n++;
+                }
+            }
+        }
+        return n;
+    }
+
+    /** Empty slots in the main inventory, hotbar included. */
+    private static int freeSlots(ClientPlayerEntity player) {
+        int free = 0;
+        var inv = player.getInventory();
+        for (int i = 0; i < 36; i++) {
+            ItemStack stack = inv.getStack(i);
+            if (stack == null || stack.isEmpty()) free++;
+        }
+        return free;
+    }
+
+    /**
+     * Throws away totem stacks until the spawners will fit.
+     *
+     * One stack per tick, not all at once: each throw is a message to the
+     * server, and a burst of them in a single tick is both unnecessary and
+     * exactly the sort of thing that stands out.
+     */
+    private void makeRoom(MinecraftClient client, ClientPlayerEntity player) {
+        try {
+            int needed = countSpawners(player);
+            if (needed <= 0) return;
+            if (freeSlots(player) >= needed) return;
+
+            var inv = player.getInventory();
+            for (int i = 0; i < 36; i++) {
+                ItemStack stack = inv.getStack(i);
+                if (stack == null || stack.isEmpty()) continue;
+                var id = net.minecraft.registry.Registries.ITEM.getId(stack.getItem());
+                if (id == null || !id.getPath().equals("totem_of_undying")) continue;
+
+                // The player's own screen handler numbers its slots differently
+                // from the inventory: the hotbar sits at the end, not the start.
+                int slot = (i < 9) ? (36 + i) : i;
+                client.interactionManager.clickSlot(
+                        player.playerScreenHandler.syncId, slot, 1,
+                        net.minecraft.screen.slot.SlotActionType.THROW, player);
+                return;   // one per tick
+            }
+        } catch (Throwable pvpErr) {
+            com.vortex.client.core.Errors.report("SpawnerSafer.makeRoom", pvpErr);
+        }
+    }
+
+    /**
+     * Closes whatever screen is open.
+     *
+     * A container needs closeHandledScreen so the server is told as well --
+     * simply dropping the screen would leave it thinking you still have the
+     * chest open, and the next thing you do arrives out of order.
+     */
+    private static void closeAnyScreen(MinecraftClient client, ClientPlayerEntity player) {
+        try {
+            if (client.currentScreen instanceof
+                    net.minecraft.client.gui.screen.ingame.HandledScreen) {
+                player.closeHandledScreen();
+            } else {
+                client.setScreen(null);
+            }
+        } catch (Throwable pvpErr) {
+            com.vortex.client.core.Errors.report("SpawnerSafer.close", pvpErr);
+        }
+    }
+
     /**
      * Turns towards a block.
      *
@@ -433,6 +556,19 @@ public final class SpawnerSaferAddonModule extends Module {
 
     /** Server verlassen (Disconnect). */
     private void leave(MinecraftClient client) {
+        // Tell Auto Reconnect to stay out of this one.
+        //
+        // The whole point of leaving here is not being there. Without this the
+        // client would dial straight back in, drop you next to the player you
+        // just avoided, and the spawners would be in your inventory instead of
+        // safely away.
+        try {
+            com.vortex.client.hud.AutoReconnect.suppressNext();
+        } catch (Throwable pvpErr) {
+            // Older client without that call -- leaving still works.
+            com.vortex.client.core.Errors.report("SpawnerSafer.suppress", pvpErr);
+        }
+
         ClientPlayNetworkHandler handler = client.getNetworkHandler();
         if (handler != null) {
             handler.getConnection().disconnect(Text.literal("Spawner Safer: Fertig"));

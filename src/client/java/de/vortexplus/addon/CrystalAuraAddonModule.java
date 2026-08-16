@@ -249,12 +249,12 @@ public final class CrystalAuraAddonModule extends Module {
     }
 
     private BlockPos findSpot(MinecraftClient client, ClientPlayerEntity player, Entity target) {
-        // Bevorzugt den Block direkt unter dem Ziel.
-        BlockPos under = target.getBlockPos().down();
-        if (isCrystalSpot(client, under) && withinRange(player, under, placeRange.get())
-                && spotIsUseful(client, player, target, under)) {
-            return under;
-        }
+        // The block the target is standing on is deliberately NOT preferred.
+        //
+        // A crystal placed there would fill the two blocks above it -- the
+        // space the opponent occupies -- and the game refuses to put anything
+        // inside an entity. Trying it wastes the attempt every single time.
+        // The search below skips it and takes the nearest usable neighbour.
 
         int radius = Math.min(6, (int) Math.ceil(placeRange.get()));
         double maxSq = placeRange.get() * placeRange.get();
@@ -371,6 +371,9 @@ public final class CrystalAuraAddonModule extends Module {
         //    you rains down on you; one at your level or lower is largely
         //    blocked by whatever you are standing on.
         // 3) Close enough that the blast reaches at all.
+        // Never the block they are standing on: no room for the crystal.
+        if (pos.equals(target.getBlockPos().down())) return false;
+
         if (onlyUseful.get()) {
             double crystalBase = pos.getY() + 1.0;   // the crystal sits on top
 
