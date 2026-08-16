@@ -78,6 +78,9 @@ public final class SpawnerSaferAddonModule extends Module {
     private float lastHealth = -1.0f;
 
     private BlockPos breakTarget;
+
+    /** The block we have already started on, so the first hit happens once. */
+    private BlockPos attackedTarget;
     private BlockPos walkTarget;
     private int walkTicks;
     private int pickupId = -1;
@@ -103,6 +106,7 @@ public final class SpawnerSaferAddonModule extends Module {
         hit = false;
         waitTimer = 0;
         breakTarget = null;
+        attackedTarget = null;
         walkTarget = null;
         walkTicks = 0;
         pickupId = -1;
@@ -224,6 +228,7 @@ public final class SpawnerSaferAddonModule extends Module {
             if (!isSpawner(player.getEntityWorld(), breakTarget)) {
                 // Gone -- either broken or never there.
                 breakTarget = null;
+                attackedTarget = null;
                 client.interactionManager.cancelBlockBreaking();
                 return;
             }
@@ -231,8 +236,14 @@ public final class SpawnerSaferAddonModule extends Module {
             // Look at it, then keep hitting. The face does not matter much;
             // upwards is the one always reachable from beside the block.
             lookAt(player, breakTarget);
-            if (!client.interactionManager.isCurrentlyBreaking(breakTarget)) {
+
+            // Whether breaking has started is remembered here rather than
+            // asked of the game: isCurrentlyBreaking is private, and reaching
+            // past that would need a mixin for something we already know. The
+            // first hit starts it, every one after keeps it going.
+            if (!breakTarget.equals(attackedTarget)) {
                 client.interactionManager.attackBlock(breakTarget, Direction.UP);
+                attackedTarget = breakTarget;
             }
             client.interactionManager.updateBlockBreakingProgress(breakTarget, Direction.UP);
             player.swingHand(Hand.MAIN_HAND);
