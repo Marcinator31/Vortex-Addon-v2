@@ -16,6 +16,8 @@ import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
 import net.minecraft.item.ItemStack;
+import net.minecraft.util.Hand;
+import net.minecraft.util.math.Direction;
 
 /**
  * Spawner Safer:
@@ -210,13 +212,30 @@ public final class SpawnerSaferAddonModule extends Module {
             }
         }
 
-        // 3) Spawner in Reichweite abbrechen
+        // 3) Break the spawner in reach.
+        //
+        // WHY THIS WAS BROKEN: it called breakBlock(), which removes a block in
+        // one go. That only works in creative. In survival a block has to be
+        // hit and then held until it gives way, so the single call did nothing
+        // -- the spawner stayed, the target was cleared anyway, and the module
+        // decided it was finished and logged out. One swing, then gone, exactly
+        // as you saw.
         if (breakTarget != null) {
-            if (isSpawner(player.getEntityWorld(), breakTarget)) {
-                client.interactionManager.breakBlock(breakTarget);
-                breakCooldown = BREAK_DELAY;
+            if (!isSpawner(player.getEntityWorld(), breakTarget)) {
+                // Gone -- either broken or never there.
+                breakTarget = null;
+                client.interactionManager.cancelBlockBreaking();
+                return;
             }
-            breakTarget = null;
+
+            // Look at it, then keep hitting. The face does not matter much;
+            // upwards is the one always reachable from beside the block.
+            lookAt(player, breakTarget);
+            if (!client.interactionManager.isCurrentlyBreaking(breakTarget)) {
+                client.interactionManager.attackBlock(breakTarget, Direction.UP);
+            }
+            client.interactionManager.updateBlockBreakingProgress(breakTarget, Direction.UP);
+            player.swingHand(Hand.MAIN_HAND);
             return;
         }
 
@@ -366,6 +385,24 @@ public final class SpawnerSaferAddonModule extends Module {
             }
         }
         return best;
+    }
+
+    /**
+     * Turns towards a block.
+     *
+     * The server checks that you are looking at what you are breaking, so
+     * without this the swings are discarded and the spawner never gives way.
+     */
+    private static void lookAt(ClientPlayerEntity player, BlockPos pos) {
+        double dx = pos.getX() + 0.5 - player.getX();
+        double dy = pos.getY() + 0.5 - (player.getY() + player.getEyeHeight(player.getPose()));
+        double dz = pos.getZ() + 0.5 - player.getZ();
+        double flat = Math.sqrt(dx * dx + dz * dz);
+        float yaw = (float) Math.toDegrees(Math.atan2(dz, dx)) - 90.0f;
+        float pitch = (float) -Math.toDegrees(Math.atan2(dy, flat));
+        player.setYaw(yaw);
+        player.setPitch(pitch);
+        player.setHeadYaw(yaw);
     }
 
     private static boolean isSpawner(World world, BlockPos pos) {

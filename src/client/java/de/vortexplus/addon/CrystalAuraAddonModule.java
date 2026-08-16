@@ -230,13 +230,18 @@ public final class CrystalAuraAddonModule extends Module {
                 if (sx * sx + sy * sy + sz * sz < safeSq) continue;
             }
 
-            // Only crystals that can actually reach the target.
+            // Same three conditions as for placing.
             if (onlyUseful.get()) {
                 double fx = crystal.getX() - tx;
                 double fz = crystal.getZ() - tz;
                 if (Math.sqrt(fx * fx + fz * fz) > maxSpread.get()) continue;
-                double dyy = target.getY() - crystal.getY();
-                if (dyy < -3.0 || dyy > 3.0) continue;
+
+                // Opponent above the crystal, and the block it stands on at
+                // your level or higher -- so that block shields you.
+                double base = crystal.getY();
+                if (target.getY() < base - 0.1) continue;
+                if (base - 1.0 < player.getY() - 0.1) continue;
+                if (target.getY() > base + 4.0) continue;
             }
             return crystal;
         }
@@ -358,25 +363,35 @@ public final class CrystalAuraAddonModule extends Module {
      */
     private boolean spotIsUseful(MinecraftClient client, ClientPlayerEntity player,
                                  Entity target, BlockPos pos) {
-        // Can the blast reach them from here?
+        // Your rule, in three parts.
         //
-        // Two conditions, both about the damage rather than about geometry for
-        // its own sake: close enough horizontally, and not so far below that
-        // the ground swallows it. An end crystal reaches about six blocks, and
-        // falls off sharply along the way.
+        // 1) The opponent must stand ABOVE the obsidian -- at least one block.
+        //    A crystal below them catches their legs, where the damage lands.
+        // 2) The obsidian must NOT be above your own feet. An explosion above
+        //    you rains down on you; one at your level or lower is largely
+        //    blocked by whatever you are standing on.
+        // 3) Close enough that the blast reaches at all.
         if (onlyUseful.get()) {
+            double crystalBase = pos.getY() + 1.0;   // the crystal sits on top
+
+            // The opponent is on it or above it.
+            if (target.getY() < crystalBase - 0.1) return false;
+
+            // The obsidian must be at your level or ABOVE it -- never below.
+            //
+            // I had this the wrong way round. The block itself is what shields
+            // you: the crystal sits on top of it, so with the obsidian above
+            // you the block stands between you and the blast and swallows most
+            // of it. With the obsidian below you the crystal ends up level with
+            // you, nothing in between, and you take it full.
+            if (pos.getY() < player.getY() - 0.1) return false;
+
             double dx = pos.getX() + 0.5 - target.getX();
             double dz = pos.getZ() + 0.5 - target.getZ();
-            double flat = Math.sqrt(dx * dx + dz * dz);
-            if (flat > maxSpread.get()) return false;
+            if (Math.sqrt(dx * dx + dz * dz) > maxSpread.get()) return false;
 
-            // The crystal sits on top of this block, so its middle is about
-            // one and a half blocks above it.
-            double crystalY = pos.getY() + 1.5;
-            double feet = target.getY();
-            // Level with them, or a little below. Above their head does almost
-            // nothing, and far below is blocked by whatever they stand on.
-            if (feet < crystalY - 3.0 || feet > crystalY + 3.0) return false;
+            // And within reach of the blast at all.
+            if (target.getY() > crystalBase + 4.0) return false;
         }
 
         // And it must not be close enough to catch us.
