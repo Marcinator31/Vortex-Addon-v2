@@ -1,0 +1,13 @@
+Hier muss die gebaute Client-Jar liegen, unter dem Namen:
+
+    vortexclient.jar
+
+Das Addon erweitert Klassen des Clients (Module, Einstellungen, Errors) und
+braucht ihn deshalb zum Uebersetzen.
+
+So kommst du an die Datei:
+  1. Den Vortex Client 2.29.0 fuer 26.2 bauen
+  2. build/libs/vortexclient-....jar hierher kopieren
+  3. In vortexclient.jar umbenennen
+
+Ohne diese Datei bricht der Build mit "cannot find symbol: Module" ab.

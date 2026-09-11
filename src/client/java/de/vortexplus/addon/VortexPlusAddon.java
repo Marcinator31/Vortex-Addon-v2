@@ -6,52 +6,93 @@ import com.vortex.client.module.ModuleManager;
 import net.fabricmc.api.ClientModInitializer;
 
 /**
- * Vortex Plus -- extra combat modules for Vortex Client.
+ * Vortex Plus Addon fuer Minecraft 26.2.
  *
- * WHAT CHANGED FROM THE PREVIOUS VERSION, AND WHY:
+ * Enthaelt die Module der Kategorie Cheats. Sie lagen bis 2.28.17 im Vortex
+ * Client selbst; seit 2.29.0 wird der Client ohne sie ausgeliefert.
  *
- * The modules used to be pushed straight into the client's internal list, and a
- * category was forced into its enum at runtime using sun.misc.Unsafe -- roughly
- * a hundred lines of the most dangerous technique Java has, where a mistake
- * gives you memory corruption rather than an error message.
+ * WARUM DIE PAKETNAMEN GLEICH BLEIBEN: die Dateien heissen weiterhin
+ * com.vortex.client.*. Sie umzubenennen haette in jeder der 31 Dateien jede
+ * Zeile beruehrt -- und damit die wahrscheinlichste Fehlerquelle geschaffen.
+ * Java erlaubt dasselbe Paket in zwei Jars.
  *
- * None of that is needed. The client has had a Cheats category since 2.5.0 and
- * a public way to add modules, so this now asks properly instead of reaching
- * inside. A hundred lines of risk replaced by one word.
+ * OHNE DIESES ADDON: der Client blendet die leere Kategorie aus, und die
+ * gespeicherten Cheat-Einstellungen bleiben in den Presets erhalten -- der
+ * ConfigManager bewahrt Zeilen auf, zu denen er kein Modul kennt.
  */
-public final class VortexPlusAddon implements ClientModInitializer {
+public class VortexPlusAddon implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        register(new KillAuraAddonModule(),
-                "Attacks whatever you are looking at, within range. Very high ban risk.");
-        register(new CrystalAuraAddonModule(),
-                "Places end crystals under opponents and breaks them, without catching you. Extreme ban risk.");
-        register(new FastAnchorAddonModule(),
-                "Charges and triggers respawn anchors in one go. Extreme ban risk.");
-        register(new AutoToolAddonModule(),
-                "Switches to the best tool for the block you are breaking.");
-        register(new ChestStealerAddonModule(),
-                "Empties an open chest into your inventory.");
-        register(new FastUseAddonModule(),
-                "Removes the client-side pause between throws. Does not affect eating. High ban risk.");
-        register(new SpawnerSaferAddonModule(),
-                "Spots an approaching player, then packs up every spawner nearby and logs out.");
+        register(new com.vortex.client.module.modules.AimbotModule(),
+                "Aims at opponents automatically. Very high ban risk.");
+        register(new com.vortex.client.module.modules.AutoHitModule(),
+                "Attacks automatically when a target is in range. Very high ban risk.");
+        register(new com.vortex.client.module.modules.AutoTotemModule(),
+                "Moves a totem into your off hand automatically. High ban risk.");
+        register(new com.vortex.client.module.modules.BlockEspModule(),
+                "Highlights selected blocks, such as ores, through walls.");
+        register(new com.vortex.client.module.modules.ContainerEspModule(),
+                "Highlights chests, barrels and shulker boxes.");
+        register(new com.vortex.client.module.modules.CrystalMacroModule(),
+                "Places end crystals on obsidian and breaks them instantly. Extreme ban risk.");
+        register(new com.vortex.client.module.modules.EspModule(),
+                "Highlights mobs through walls.");
+        register(new com.vortex.client.module.modules.FlyModule(),
+                "Lets you fly. Detected almost immediately on most servers.");
+        register(new com.vortex.client.module.modules.FreecamModule(),
+                "Detaches the camera and lets you fly around freely.");
+        register(new com.vortex.client.module.modules.ItemEspModule(),
+                "Highlights dropped items on the ground.");
+        register(new com.vortex.client.module.modules.NoFallModule(),
+                "Prevents fall damage. High ban risk.");
+        register(new com.vortex.client.module.modules.SpawnerEspModule(),
+                "Highlights monster spawners.");
+        register(new com.vortex.client.module.modules.StashFinderModule(),
+                "Finds unusual accumulations of chests -- useful for locating bases.");
+        register(new com.vortex.client.module.modules.SusChunksModule(),
+                "Marks chunks that look suspicious based on their contents.");
+        register(new com.vortex.client.module.modules.TunnelDetectorModule(),
+                "Finds long straight tunnels that were dug by players.");
+
+        registriereRenderer();
+        System.out.println("[vortex-plus-addon] 15 Module angemeldet.");
     }
 
     /**
-     * Adds one module and the line shown under its name.
+     * Renderer und Tick-Aufgaben der Module.
      *
-     * Both in one place, so a module cannot end up in the list without a
-     * description -- which is exactly what happened before, and made the addon
-     * modules look unfinished next to the built-in ones.
+     * Diese Aufrufe standen vorher in VortexClientMod. Ohne sie werden die
+     * Module zwar angemeldet, zeichnen aber nichts -- ein Fehler, der keine
+     * Meldung erzeugt und deshalb leicht uebersehen wird.
      */
+    private static void registriereRenderer() {
+        try {
+            com.vortex.client.hud.BlockEspRenderer.register();
+            com.vortex.client.hud.StashFinder.register();
+            com.vortex.client.hud.BlockEntityEsp.register();
+            com.vortex.client.hud.ItemEsp.register();
+            com.vortex.client.hud.SusChunks.register();
+            com.vortex.client.hud.TunnelDetector.register();
+            com.vortex.client.hud.AutoTotem.register();
+            com.vortex.client.hud.Aimbot.register();
+            com.vortex.client.hud.AutoHit.register();
+            com.vortex.client.hud.Fly.register();
+            com.vortex.client.hud.WorldScan.register();
+            com.vortex.client.hud.CrystalMacro.register();
+            com.vortex.client.freecam.Freecam.registerSafety();
+        } catch (Throwable pvpErr) {
+            com.vortex.client.core.Errors.report("VortexPlusAddon.renderer", pvpErr);
+        }
+    }
+
     private static void register(Module module, String description) {
         try {
             ModuleManager.INSTANCE.register(module);
             ModuleInfo.register(module.getName(), description);
         } catch (Throwable pvpErr) {
-            com.vortex.client.core.Errors.report("VortexPlus.register", pvpErr);
+            com.vortex.client.core.Errors.report(
+                    "VortexPlusAddon.register:" + module.getName(), pvpErr);
         }
     }
 }
