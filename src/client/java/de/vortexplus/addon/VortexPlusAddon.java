@@ -80,7 +80,8 @@ public class VortexPlusAddon implements ClientModInitializer {
             com.vortex.client.hud.Fly.register();
             com.vortex.client.hud.WorldScan.register();
             com.vortex.client.hud.CrystalMacro.register();
-            com.vortex.client.freecam.Freecam.registerSafety();
+            // registerSafety ruft der Client selbst -- hier wuerde sie
+            // ein zweites Mal laufen und den Ereignis-Handler doppelt anmelden.
         } catch (Throwable pvpErr) {
             com.vortex.client.core.Errors.report("VortexPlusAddon.renderer", pvpErr);
         }
