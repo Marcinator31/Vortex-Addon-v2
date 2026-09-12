@@ -1,13 +1,26 @@
-Hier muss die gebaute Client-Jar liegen, unter dem Namen:
+HIER MUSS DIE CLIENT-JAR LIEGEN
 
-    vortexclient.jar
+    libs/vortexclient.jar
 
-Das Addon erweitert Klassen des Clients (Module, Einstellungen, Errors) und
-braucht ihn deshalb zum Uebersetzen.
+WARUM
+Das Addon enthaelt die Cheat-Module. Die erweitern Klassen des Vortex Client
+-- Module, ModuleManager, BooleanSetting, NumberSetting, ColorSetting und
+weitere. Ohne die Jar kennt der Compiler diese Klassen nicht und meldet
+hunderte "cannot find symbol".
 
-So kommst du an die Datei:
-  1. Den Vortex Client 2.29.0 fuer 26.2 bauen
-  2. build/libs/vortexclient-....jar hierher kopieren
-  3. In vortexclient.jar umbenennen
+SO GEHT ES
+  1. Vortex Client 2.29.2 fuer 26.2 bauen
+  2. Aus dem Build-Ergebnis  build/libs/vortexclient-*.jar  nehmen
+     (NICHT die "-sources"- oder "-dev"-Datei)
+  3. Hierher legen und in  vortexclient.jar  umbenennen
+  4. Mit einchecken -- die Datei ist unter 1 MB
 
-Ohne diese Datei bricht der Build mit "cannot find symbol: Module" ab.
+WAS DU NICHT TUN SOLLTEST
+Leere Ersatzklassen fuer Module oder die Settings anlegen. Diese Klassen
+gibt es bereits im Client. Zwei Fassungen derselben Klasse in zwei Mods
+fuehren dazu, dass der Loader die falsche nimmt -- das gibt Abstuerze, die
+deutlich schwerer zu finden sind als der Build-Fehler.
+
+BEI JEDEM CLIENT-UPDATE
+Wenn sich am Client etwas aendert, das das Addon benutzt, muss diese Jar
+erneuert werden. Sonst baut das Addon gegen einen alten Stand.

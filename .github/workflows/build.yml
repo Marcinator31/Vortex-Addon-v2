@@ -20,6 +20,14 @@ jobs:
       # JDK 25 -- Minecraft 26.x requires Java 25.
       # build.gradle setzt VERSION_25; mit JDK 21 bricht der Compiler mit
       # "release version 25 not supported" ab.
+      # Ohne libs/vortexclient.jar bricht der Build ab -- mit einer
+      # lesbaren Meldung aus build.gradle statt hunderter Compilerfehler.
+      - name: Check client jar
+        run: |
+          if [ ! -f libs/vortexclient.jar ]; then
+            echo "::error::libs/vortexclient.jar fehlt. Siehe libs/LIESMICH.txt"
+          fi
+
       - name: Set up JDK 25
         uses: actions/setup-java@v4
         with:
