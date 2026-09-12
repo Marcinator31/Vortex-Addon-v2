@@ -57,8 +57,8 @@ public class VortexPlusAddon implements ClientModInitializer {
 
         // --- Bots ------------------------------------------------------
         register(new com.vortex.client.module.modules.NetheriteFarmerModule(),
-                "Mines Ancient Debris on its own: walks there, digs, picks the drops up, "
-                + "eats, repairs with XP bottles and stops when something runs out.");
+                "Digs a tunnel at the set height until it hits Ancient Debris. Eats, "
+                + "repairs with XP bottles, avoids lava and stops when something runs out.");
 
         registriereRenderer();
         System.out.println("[vortex-plus-addon] 15 Module angemeldet.");

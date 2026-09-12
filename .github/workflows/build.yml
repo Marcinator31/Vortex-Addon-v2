@@ -26,7 +26,13 @@ jobs:
         run: |
           if [ ! -f libs/vortexclient.jar ]; then
             echo "::error::libs/vortexclient.jar fehlt. Siehe libs/LIESMICH.txt"
+            exit 1
           fi
+          python3 tools_check_against_jar.py || {
+            echo "::error::Die Client-Jar in libs/ passt nicht zum Quelltext -- vermutlich veraltet."
+            exit 1
+          }
+
 
       - name: Set up JDK 25
         uses: actions/setup-java@v4

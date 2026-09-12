@@ -60,6 +60,7 @@ public final class NetheriteFarmer {
         } catch (Throwable ignored) { }
         zustand = Zustand.AUS;
         ziel = null;
+        richtung = null;
         gemeldet = false;
     }
 
@@ -233,8 +234,20 @@ public final class NetheriteFarmer {
         double grenze = mod.repairBelow.get() / 100.0;
         ItemStack hand = player.getMainHandItem();
         if (beschaedigt(hand, grenze)) return true;
-        for (ItemStack st : player.getArmorSlots()) {
-            if (beschaedigt(st, mod.armorBelow.get() / 100.0)) return true;
+        // Ruestung ueber die Ausruestungsplaetze lesen.
+        //
+        // getArmorSlots() gibt es hier nicht -- getItemBySlot(EquipmentSlot)
+        // ist der im Projekt belegte Weg (ArmorHud und
+        // LivingEntityRendererMixin machen es genauso).
+        net.minecraft.world.entity.EquipmentSlot[] plaetze = {
+            net.minecraft.world.entity.EquipmentSlot.HEAD,
+            net.minecraft.world.entity.EquipmentSlot.CHEST,
+            net.minecraft.world.entity.EquipmentSlot.LEGS,
+            net.minecraft.world.entity.EquipmentSlot.FEET
+        };
+        for (net.minecraft.world.entity.EquipmentSlot platz : plaetze) {
+            if (beschaedigt(player.getItemBySlot(platz),
+                    mod.armorBelow.get() / 100.0)) return true;
         }
         return false;
     }
@@ -251,75 +264,194 @@ public final class NetheriteFarmer {
     // 4. Abbauen
     // ------------------------------------------------------------------
 
+    /**
+     * Kern: einen Stollen auf der eingestellten Hoehe graben.
+     *
+     * WARUM NICHT SUCHEN: Auf den allermeisten Servern liefert der Server
+     * die Bloecke hinter Stein gar nicht aus -- ein Bot, der auf eine
+     * Blocksuche wartet, steht ewig herum. Gegraben wird deshalb blind, so
+     * wie es ein Mensch auch tut. Gefunden wird, was beim Graben auftaucht.
+     *
+     * Ablauf je Tick:
+     *   1. Liegt freigelegtes Debris in kurzer Reichweite? -> hinsehen, abbauen
+     *   2. Bin ich auf der falschen Hoehe? -> hin
+     *   3. Sonst: geradeaus weitergraben
+     */
     private static void abbauen(Minecraft mc, LocalPlayer player,
                                 NetheriteFarmerModule mod) {
-        // Ziel pruefen: abgebaut oder zu weit weg -> neues suchen.
-        if (ziel != null) {
-            if (mc.level.getBlockState(ziel).getBlock() != Blocks.ANCIENT_DEBRIS) {
-                ziel = null;
-            }
+        // --- 1. Freigelegtes Debris hat Vorrang ---------------------------
+        if (ziel != null
+                && mc.level.getBlockState(ziel).getBlock() != Blocks.ANCIENT_DEBRIS) {
+            ziel = null;
         }
         if (ziel == null) {
-            zustand = Zustand.SUCHT;
-            ziel = sucheDebris(mc, player, mod);
-            if (ziel == null) {
-                tastenLos(mc);
-                return;
+            ziel = debrisInDerNaehe(mc, player, mod);
+        }
+        if (ziel != null) {
+            zustand = Zustand.GRAEBT;
+            blickeAuf(player, ziel);
+            waehleSpitzhacke(player);
+            double d = Math.sqrt(player.distanceToSqr(
+                    ziel.getX() + 0.5, ziel.getY() + 0.5, ziel.getZ() + 0.5));
+            if (d <= 4.0) {
+                mc.options.keyUp.setDown(false);
+                mc.options.keyAttack.setDown(true);
+            } else {
+                mc.options.keyAttack.setDown(false);
+                mc.options.keyUp.setDown(!lavaImWeg(mc, player, mod));
             }
+            return;
         }
 
-        // Hinsehen -- danach entscheidet die Entfernung, ob gegraben oder
-        // gegangen wird.
-        blickeAuf(player, ziel);
-
-        double dist = Math.sqrt(player.distanceToSqr(
-                ziel.getX() + 0.5, ziel.getY() + 0.5, ziel.getZ() + 0.5));
-
-        if (dist <= 4.0) {
+        // --- 2. Auf die richtige Hoehe ------------------------------------
+        int zielY = mod.mineY.getInt();
+        int istY = (int) Math.floor(player.getY());
+        if (istY > zielY + 1) {
+            // Nach unten graben, aber NIE senkrecht unter sich: darunter kann
+            // Lava liegen, und dann faellt man hinein. Stattdessen schraeg:
+            // den Block vor den Fuessen abbauen und nachruecken.
             zustand = Zustand.GRAEBT;
-            waehleSpitzhacke(player);
+            grabeRichtung(mc, player, mod, -1);
+            return;
+        }
+        if (istY < zielY - 1) {
+            zustand = Zustand.GEHT;
+            grabeRichtung(mc, player, mod, +1);
+            return;
+        }
+
+        // --- 3. Stollen weitergraben --------------------------------------
+        zustand = Zustand.GRAEBT;
+        grabeRichtung(mc, player, mod, 0);
+    }
+
+    /**
+     * Graebt in Blickrichtung weiter.
+     *
+     * @param dy -1 = leicht abwaerts, 0 = waagerecht, +1 = leicht aufwaerts
+     *
+     * Die Richtung wird auf eine der vier Himmelsrichtungen gerundet und
+     * festgehalten. Ohne das dreht sich der Bot bei jeder kleinen Abweichung
+     * weiter und graebt im Kreis.
+     */
+    private static void grabeRichtung(Minecraft mc, LocalPlayer player,
+                                      NetheriteFarmerModule mod, int dy) {
+        if (richtung == null) richtung = himmelsrichtung(player.getYRot());
+        // Fest auf die gemerkte Richtung ausrichten.
+        player.setYRot(richtungZuYaw(richtung));
+
+        int px = (int) Math.floor(player.getX());
+        int py = (int) Math.floor(player.getY());
+        int pz = (int) Math.floor(player.getZ());
+        int vx = px + richtung[0];
+        int vz = pz + richtung[1];
+
+        // Lava vor oder neben dem Stollen: anhalten statt hineinzugraben.
+        if (mod.avoidLava.get() && lavaUm(mc, vx, py + dy, vz)) {
+            mc.options.keyAttack.setDown(false);
+            mc.options.keyUp.setDown(false);
+            melde(mc, "Lava voraus -- Richtung gewechselt.");
+            richtung = drehe(richtung);
+            return;
+        }
+
+        // Zwei Bloecke hoch graben, damit man durchpasst: erst Kopfhoehe,
+        // dann Fusshoehe. Ein ein Block hoher Gang laesst sich nicht begehen.
+        BlockPos kopf = new BlockPos(vx, py + dy + 1, vz);
+        BlockPos fuss = new BlockPos(vx, py + dy, vz);
+        BlockPos zielBlock = fest(mc, kopf) ? kopf : (fest(mc, fuss) ? fuss : null);
+
+        waehleSpitzhacke(player);
+        if (zielBlock != null) {
+            blickeAuf(player, zielBlock);
             mc.options.keyUp.setDown(false);
             mc.options.keyAttack.setDown(true);
         } else {
-            zustand = Zustand.GEHT;
+            // Frei: vorruecken.
             mc.options.keyAttack.setDown(false);
-            // Lava im Weg: stehenbleiben statt hineinzulaufen. Ein Bot, der
-            // in Lava rennt, verliert alles -- lieber ein Ziel aufgeben.
-            if (mod.avoidLava.get() && lavaVoraus(mc, player)) {
-                mc.options.keyUp.setDown(false);
-                ziel = null;
-                return;
-            }
+            player.setXRot(dy < 0 ? 30f : (dy > 0 ? -30f : 0f));
             mc.options.keyUp.setDown(true);
         }
     }
 
-    /** Sucht den naechsten Ancient-Debris-Block in Reichweite. */
-    private static BlockPos sucheDebris(Minecraft mc, LocalPlayer player,
-                                        NetheriteFarmerModule mod) {
-        int r = mod.searchRange.getInt();
-        int maxY = mod.maxY.getInt();
-        BlockPos mitte = player.blockPosition();
-        BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
-        BlockPos besteStelle = null;
-        double besteDistanz = Double.MAX_VALUE;
+    /** Steht dort ein fester Block, der abgebaut werden muss? */
+    private static boolean fest(Minecraft mc, BlockPos p) {
+        var st = mc.level.getBlockState(p);
+        if (st.isAir()) return false;
+        // Fluessigkeiten nicht anschlagen -- Lava wird vorher geprueft.
+        if (st.getBlock() == Blocks.LAVA) return false;
+        return true;
+    }
 
-        for (int dx = -r; dx <= r; dx++) {
-            for (int dz = -r; dz <= r; dz++) {
-                for (int dy = -r; dy <= r; dy++) {
-                    int y = mitte.getY() + dy;
-                    if (y > maxY) continue;
-                    p.set(mitte.getX() + dx, y, mitte.getZ() + dz);
-                    if (mc.level.getBlockState(p).getBlock() != Blocks.ANCIENT_DEBRIS) continue;
-                    double d = p.distSqr(mitte);
-                    if (d < besteDistanz) {
-                        besteDistanz = d;
-                        besteStelle = p.immutable();
-                    }
+    /** Lava direkt am geplanten Stollenabschnitt? */
+    private static boolean lavaUm(Minecraft mc, int x, int y, int z) {
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                for (int dy = 0; dy <= 2; dy++) {
+                    if (mc.level.getBlockState(new BlockPos(x + dx, y + dy, z + dz))
+                            .getBlock() == Blocks.LAVA) return true;
                 }
             }
         }
-        return besteStelle;
+        return false;
+    }
+
+    /** Ist auf dem Weg zum Ziel Lava? */
+    private static boolean lavaImWeg(Minecraft mc, LocalPlayer player,
+                                     NetheriteFarmerModule mod) {
+        if (!mod.avoidLava.get()) return false;
+        return lavaVoraus(mc, player);
+    }
+
+    /**
+     * Sucht freigelegtes Ancient Debris in kurzer Reichweite.
+     *
+     * Bewusst klein: das ist kein Ersatz fuer das Graben, sondern greift
+     * mit, was beim Graben ohnehin sichtbar wird.
+     */
+    private static BlockPos debrisInDerNaehe(Minecraft mc, LocalPlayer player,
+                                             NetheriteFarmerModule mod) {
+        int r = mod.pickupRange.getInt();
+        BlockPos mitte = player.blockPosition();
+        BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
+        BlockPos beste = null;
+        double besteD = Double.MAX_VALUE;
+        for (int dx = -r; dx <= r; dx++) {
+            for (int dy = -r; dy <= r; dy++) {
+                for (int dz = -r; dz <= r; dz++) {
+                    p.set(mitte.getX() + dx, mitte.getY() + dy, mitte.getZ() + dz);
+                    if (mc.level.getBlockState(p).getBlock() != Blocks.ANCIENT_DEBRIS) continue;
+                    double d = p.distSqr(mitte);
+                    if (d < besteD) { besteD = d; beste = p.immutable(); }
+                }
+            }
+        }
+        return beste;
+    }
+
+    // --- Richtungen -------------------------------------------------------
+
+    /** Gemerkte Grabrichtung als {dx, dz}. */
+    private static int[] richtung = null;
+
+    private static int[] himmelsrichtung(float yaw) {
+        float y = ((yaw % 360) + 360) % 360;
+        if (y < 45 || y >= 315) return new int[]{0, 1};    // Sued
+        if (y < 135) return new int[]{-1, 0};              // West
+        if (y < 225) return new int[]{0, -1};              // Nord
+        return new int[]{1, 0};                            // Ost
+    }
+
+    private static float richtungZuYaw(int[] r) {
+        if (r[0] == 0 && r[1] == 1) return 0f;
+        if (r[0] == -1) return 90f;
+        if (r[1] == -1) return 180f;
+        return -90f;
+    }
+
+    /** Vierteldrehung -- wenn Lava den Weg versperrt. */
+    private static int[] drehe(int[] r) {
+        return new int[]{-r[1], r[0]};
     }
 
     /** Ist direkt vor dem Spieler Lava? */

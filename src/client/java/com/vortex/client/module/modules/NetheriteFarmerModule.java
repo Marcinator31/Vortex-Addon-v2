@@ -28,13 +28,26 @@ public class NetheriteFarmerModule extends Module {
 
     // --- Suche -----------------------------------------------------------
 
-    /** Wie weit nach Ancient Debris gesucht wird. */
-    public final NumberSetting searchRange =
-            new NumberSetting("Search Range", 32, 8, 64, 4);
+    /**
+     * Hoehe, auf der der Stollen gegraben wird.
+     *
+     * 15 ist ueblich: Ancient Debris kommt zwischen Y 8 und 22 vor, mit der
+     * groessten Haeufigkeit um 15. Auf dieser Hoehe gibt es ausserdem kaum
+     * noch Lavaseen -- die liegen meist tiefer.
+     */
+    public final NumberSetting mineY =
+            new NumberSetting("Mine Y", 15, 8, 22, 1);
 
-    /** Unterhalb dieser Hoehe wird gesucht. Debris kommt tief vor. */
-    public final NumberSetting maxY =
-            new NumberSetting("Max Y", 22, 8, 119, 1);
+    /**
+     * Wie weit um den Stollen herum nach freigelegtem Debris gesucht wird.
+     *
+     * KLEIN HALTEN. Der Bot soll graben, nicht durch Waende sehen: auf den
+     * meisten Servern liefert der Server die Bloecke hinter Stein ohnehin
+     * nicht aus. Diese Reichweite ist dafuer da, Debris mitzunehmen, das
+     * beim Graben nebenan auftaucht.
+     */
+    public final NumberSetting pickupRange =
+            new NumberSetting("Nearby Debris Range", 5, 2, 12, 1);
 
     // --- Ueberleben ------------------------------------------------------
 
@@ -104,8 +117,8 @@ public class NetheriteFarmerModule extends Module {
 
     public NetheriteFarmerModule() {
         super("Netherite Farmer", Category.BOTS);
-        addSetting(searchRange);
-        addSetting(maxY);
+        addSetting(mineY);
+        addSetting(pickupRange);
         addSetting(eatBelow);
         addSetting(gappleBelow);
         addSetting(avoidLava);
