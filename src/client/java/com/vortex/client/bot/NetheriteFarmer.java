@@ -86,6 +86,18 @@ public final class NetheriteFarmer {
             }
             LocalPlayer player = mc.player;
             if (player == null || mc.level == null) return;
+
+            // Nur im Nether. Ancient Debris gibt es nirgendwo sonst -- in der
+            // Oberwelt wuerde der Bot stundenlang Stein wegraeumen und dabei
+            // Werkzeug und Nahrung verbrauchen, ohne je etwas zu finden.
+            if (!imNether(mc)) {
+                if (!gemeldet) {
+                    gemeldet = true;
+                    melde(mc, "Nur im Nether. Modul bleibt aus.");
+                    tastenLos(mc);
+                }
+                return;
+            }
             tick++;
 
             // --- 1. Aufhoeren -------------------------------------------
@@ -115,6 +127,10 @@ public final class NetheriteFarmer {
 
             // --- 4. Abbauen ----------------------------------------------
             abbauen(mc, player, mod);
+
+            // Blick zuletzt bewegen: bis hier haben die Teilaufgaben nur
+            // ihren Wunsch hinterlegt.
+            wendeBlick(player, mod);
 
         } catch (Throwable pvpErr) {
             com.vortex.client.core.Errors.report("NetheriteFarmer", pvpErr);
@@ -369,7 +385,7 @@ public final class NetheriteFarmer {
                                       NetheriteFarmerModule mod, int dy) {
         if (richtung == null) richtung = himmelsrichtung(player.getYRot());
         // Fest auf die gemerkte Richtung ausrichten.
-        player.setYRot(richtungZuYaw(richtung));
+        willBlicken(richtungZuYaw(richtung), wunschPitch);
 
         int px = (int) Math.floor(player.getX());
         int py = (int) Math.floor(player.getY());
@@ -400,7 +416,7 @@ public final class NetheriteFarmer {
         } else {
             // Frei: vorruecken.
             mc.options.keyAttack.setDown(false);
-            player.setXRot(dy < 0 ? 30f : (dy > 0 ? -30f : 0f));
+            willBlicken(richtungZuYaw(richtung), dy < 0 ? 30f : (dy > 0 ? -30f : 0f));
             mc.options.keyUp.setDown(true);
         }
     }
@@ -517,8 +533,8 @@ public final class NetheriteFarmer {
         double dy = pos.getY() + 0.5 - player.getEyePosition().y;
         double dz = pos.getZ() + 0.5 - player.getZ();
         double flach = Math.sqrt(dx * dx + dz * dz);
-        player.setYRot((float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0));
-        player.setXRot((float) -Math.toDegrees(Math.atan2(dy, flach)));
+        willBlicken((float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0),
+                    (float) -Math.toDegrees(Math.atan2(dy, flach)));
     }
 
     private static void waehleSpitzhacke(LocalPlayer player) {
@@ -677,8 +693,65 @@ public final class NetheriteFarmer {
         double dy = y - player.getEyePosition().y;
         double dz = z - player.getZ();
         double flach = Math.sqrt(dx * dx + dz * dz);
-        player.setYRot((float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0));
-        player.setXRot((float) -Math.toDegrees(Math.atan2(dy, flach)));
+        willBlicken((float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0),
+                    (float) -Math.toDegrees(Math.atan2(dy, flach)));
+    }
+
+
+    // --- Blickfuehrung ----------------------------------------------------
+    //
+    // ALLE Blickaenderungen laufen ueber willBlicken. Frueher setzte jede
+    // Stelle den Blick selbst -- in grabeRichtung gleich zweimal im selben
+    // Tick, erst die Grabrichtung, dann der Zielblock. Das Ergebnis war ein
+    // Kopf, der sich im Kreis drehte.
+    //
+    // Jetzt wird nur der WUNSCH gemerkt; einmal am Ende des Ticks bewegt
+    // sich der Blick um hoechstens turnSpeed Grad darauf zu.
+
+    private static float wunschYaw = 0f;
+    private static float wunschPitch = 0f;
+    private static boolean wunschGesetzt = false;
+
+    private static void willBlicken(float yaw, float pitch) {
+        wunschYaw = yaw;
+        wunschPitch = pitch;
+        wunschGesetzt = true;
+    }
+
+    /** Bewegt den Blick auf den Wunschwert zu. Einmal je Tick. */
+    private static void wendeBlick(LocalPlayer player, NetheriteFarmerModule mod) {
+        if (!wunschGesetzt) return;
+        wunschGesetzt = false;
+
+        float max = (float) mod.turnSpeed.get();
+        if (max <= 0f) {                     // 0 = sofort, wie frueher
+            player.setYRot(wunschYaw);
+            player.setXRot(wunschPitch);
+            return;
+        }
+
+        // Kuerzesten Weg nehmen: ohne diese Normierung dreht der Bot bei
+        // einem Sprung von 170 auf -170 Grad einmal komplett herum.
+        float dYaw = ((wunschYaw - player.getYRot()) % 360f + 540f) % 360f - 180f;
+        float dPitch = wunschPitch - player.getXRot();
+
+        player.setYRot(player.getYRot() + Math.max(-max, Math.min(max, dYaw)));
+        player.setXRot(player.getXRot() + Math.max(-max, Math.min(max, dPitch)));
+    }
+
+
+    /**
+     * Sind wir im Nether?
+     *
+     * Ueber die Kennung der Dimension statt ueber einen festen Schluessel:
+     * WaypointRenderer macht es genauso, also ist der Weg im Projekt belegt.
+     */
+    private static boolean imNether(Minecraft mc) {
+        try {
+            return mc.level.dimension().identifier().toString().contains("the_nether");
+        } catch (Throwable pvpErr) {
+            return false;
+        }
     }
 
 }

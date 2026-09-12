@@ -17,6 +17,9 @@ import com.vortex.client.module.Module;
  * Ohne diese feste Rangfolge kaempfen die Teilaufgaben gegeneinander -- der
  * Bot faengt an zu essen, bricht ab, um zu graben, und verhungert dabei.
  *
+ * NUR IM NETHER: ausserhalb bleibt er aus und sagt es einmal im Chat.
+ * Ancient Debris gibt es nirgendwo sonst.
+ *
  * WAS ER NICHT TUT
  * Er ahmt keine menschlichen Bewegungsmuster nach. Die Abstaende zwischen
  * seinen Aktionen sind so gewaehlt, dass sie FUNKTIONIEREN -- eine
@@ -63,6 +66,20 @@ public class NetheriteFarmerModule extends Module {
      */
     public final NumberSetting gappleBelow =
             new NumberSetting("Gapple Below Health", 12, 4, 19, 1);
+
+    /**
+     * Wie schnell sich der Blick hoechstens dreht (Grad je Tick).
+     *
+     * 0 = sofort umschnappen. Das ist die alte Fassung -- und sie war
+     * unbrauchbar: mehrere Stellen setzten den Blick im selben Tick
+     * nacheinander, wodurch sich der Kopf im Kreis drehte und man nicht mehr
+     * erkennen konnte, was der Bot gerade tut.
+     *
+     * Mit einem Wert dreht sich der Blick gleichmaessig auf das Ziel zu.
+     * Nebeneffekt: gegenlaeufige Ziele heben sich nicht mehr gegenseitig auf.
+     */
+    public final NumberSetting turnSpeed =
+            new NumberSetting("Turn Speed (deg/tick)", 12, 0, 90, 2);
 
     /** Lava im Weg meiden statt hindurchzulaufen. */
     public final BooleanSetting avoidLava =
@@ -121,6 +138,7 @@ public class NetheriteFarmerModule extends Module {
         addSetting(pickupRange);
         addSetting(eatBelow);
         addSetting(gappleBelow);
+        addSetting(turnSpeed);
         addSetting(avoidLava);
         addSetting(repairBelow);
         addSetting(bottleDelay);
