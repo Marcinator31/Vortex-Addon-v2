@@ -421,8 +421,17 @@ public final class NetheriteFarmer {
                 for (int dz = -r; dz <= r; dz++) {
                     p.set(mitte.getX() + dx, mitte.getY() + dy, mitte.getZ() + dz);
                     if (mc.level.getBlockState(p).getBlock() != Blocks.ANCIENT_DEBRIS) continue;
-                    double d = p.distSqr(mitte);
-                    if (d < besteD) { besteD = d; beste = p.immutable(); }
+                    // Abstand selbst rechnen statt distSqr, und die Position
+                    // neu bauen statt immutable(): beides benutzt nur
+                    // Methoden, die anderswo im Projekt vorkommen.
+                    double ddx = p.getX() - mitte.getX();
+                    double ddy = p.getY() - mitte.getY();
+                    double ddz = p.getZ() - mitte.getZ();
+                    double d = ddx * ddx + ddy * ddy + ddz * ddz;
+                    if (d < besteD) {
+                        besteD = d;
+                        beste = new BlockPos(p.getX(), p.getY(), p.getZ());
+                    }
                 }
             }
         }
@@ -472,7 +481,9 @@ public final class NetheriteFarmer {
 
     private static void blickeAuf(LocalPlayer player, BlockPos pos) {
         double dx = pos.getX() + 0.5 - player.getX();
-        double dy = pos.getY() + 0.5 - (player.getY() + player.getEyeHeight());
+        // getEyePosition statt getEyeHeight: in Freecam.java belegt, also
+        // sicher vorhanden.
+        double dy = pos.getY() + 0.5 - player.getEyePosition().y;
         double dz = pos.getZ() + 0.5 - player.getZ();
         double flach = Math.sqrt(dx * dx + dz * dz);
         player.setYRot((float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0));
