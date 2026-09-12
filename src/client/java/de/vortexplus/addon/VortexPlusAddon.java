@@ -55,6 +55,11 @@ public class VortexPlusAddon implements ClientModInitializer {
         register(new com.vortex.client.module.modules.TunnelDetectorModule(),
                 "Finds long straight tunnels that were dug by players.");
 
+        // --- Bots ------------------------------------------------------
+        register(new com.vortex.client.module.modules.NetheriteFarmerModule(),
+                "Mines Ancient Debris on its own: walks there, digs, picks the drops up, "
+                + "eats, repairs with XP bottles and stops when something runs out.");
+
         registriereRenderer();
         System.out.println("[vortex-plus-addon] 15 Module angemeldet.");
     }
@@ -80,6 +85,7 @@ public class VortexPlusAddon implements ClientModInitializer {
             com.vortex.client.hud.Fly.register();
             com.vortex.client.hud.WorldScan.register();
             com.vortex.client.hud.CrystalMacro.register();
+            com.vortex.client.bot.NetheriteFarmer.register();
             // registerSafety ruft der Client selbst -- hier wuerde sie
             // ein zweites Mal laufen und den Ereignis-Handler doppelt anmelden.
         } catch (Throwable pvpErr) {

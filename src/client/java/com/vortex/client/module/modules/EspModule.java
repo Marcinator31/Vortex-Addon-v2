@@ -14,7 +14,7 @@ import net.minecraft.resources.Identifier;
  * Die Auswahl wird als Menge von Entity-Type-IDs gehalten und ueber das
  * id-Setting (kommasepariert) persistiert.
  */
-public class EspModule extends Module implements com.vortex.client.module.ExtraData {
+public class EspModule extends Module implements com.vortex.client.module.ExtraData, com.vortex.client.module.HasOwnScreen {
 
     public final ColorSetting color = new ColorSetting("Glow Color", 0xFFFF0000);
 
@@ -80,6 +80,25 @@ public class EspModule extends Module implements com.vortex.client.module.ExtraD
     @Override
     public void clearExtra() {
         getEnabledMobs().clear();
+    }
+
+
+    // --- HasOwnScreen: eigener Auswahlbildschirm ---------------------------
+    //
+    // Ohne diese beiden Methoden erscheint im ClickGUI KEIN Auswahlknopf --
+    // das Modul laesst sich dann nur an- und ausschalten, aber man kann
+    // nichts auswaehlen. Genau das war nach dem Umzug ins Addon der Fall:
+    // die Bildschirme sind mitgewandert, aber kein Modul verwies mehr auf
+    // sie, weil der Client die Klassen nicht mehr kennt.
+
+    @Override
+    public String screenButtonLabel() {
+        return "Select mobs";
+    }
+
+    @Override
+    public net.minecraft.client.gui.screens.Screen createScreen(net.minecraft.client.gui.screens.Screen parent) {
+        return new com.vortex.client.gui.EspScreen(parent);
     }
 
 }

@@ -19,7 +19,7 @@ import net.minecraft.resources.Identifier;
  * Funktioniert wie das Mob-ESP, nur fuer Bloecke -- statt eines Glow-Effekts
  * (den Bloecke nicht haben) zeichnet der BlockEspRenderer die Outlines selbst.
  */
-public class BlockEspModule extends Module implements com.vortex.client.module.ExtraData {
+public class BlockEspModule extends Module implements com.vortex.client.module.ExtraData, com.vortex.client.module.HasOwnScreen {
 
     public final ColorSetting color = new ColorSetting("Color", 0xFF00FFFF);
     public final NumberSetting range = new NumberSetting("Range", 64, 16, 512, 16);
@@ -124,6 +124,25 @@ public class BlockEspModule extends Module implements com.vortex.client.module.E
     @Override
     public void clearExtra() {
         getEnabledBlocks().clear();
+    }
+
+
+    // --- HasOwnScreen: eigener Auswahlbildschirm ---------------------------
+    //
+    // Ohne diese beiden Methoden erscheint im ClickGUI KEIN Auswahlknopf --
+    // das Modul laesst sich dann nur an- und ausschalten, aber man kann
+    // nichts auswaehlen. Genau das war nach dem Umzug ins Addon der Fall:
+    // die Bildschirme sind mitgewandert, aber kein Modul verwies mehr auf
+    // sie, weil der Client die Klassen nicht mehr kennt.
+
+    @Override
+    public String screenButtonLabel() {
+        return "Select blocks";
+    }
+
+    @Override
+    public net.minecraft.client.gui.screens.Screen createScreen(net.minecraft.client.gui.screens.Screen parent) {
+        return new com.vortex.client.gui.BlockEspScreen(parent);
     }
 
 }
