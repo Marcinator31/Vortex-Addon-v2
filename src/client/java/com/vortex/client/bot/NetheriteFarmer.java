@@ -279,6 +279,22 @@ public final class NetheriteFarmer {
      */
     private static void abbauen(Minecraft mc, LocalPlayer player,
                                 NetheriteFarmerModule mod) {
+        // --- 0. Herabgefallene Brocken einsammeln -------------------------
+        //
+        // Abgebautes Debris liegt als Gegenstand am Boden. Minecraft hebt es
+        // nur auf, wenn man darueberlaeuft -- ohne diesen Schritt graebt der
+        // Bot weiter und laesst die Ausbeute liegen. Frueher wurde nur
+        // zufaellig etwas aufgesammelt, naemlich wenn der Weg ohnehin
+        // darueber fuehrte.
+        net.minecraft.world.entity.item.ItemEntity brocken = nahesterBrocken(mc, player);
+        if (brocken != null) {
+            zustand = Zustand.GEHT;
+            mc.options.keyAttack.setDown(false);
+            blickeAufPunkt(player, brocken.getX(), brocken.getY(), brocken.getZ());
+            mc.options.keyUp.setDown(true);
+            return;
+        }
+
         // --- 1. Freigelegtes Debris hat Vorrang ---------------------------
         if (ziel != null
                 && mc.level.getBlockState(ziel).getBlock() != Blocks.ANCIENT_DEBRIS) {
@@ -289,14 +305,29 @@ public final class NetheriteFarmer {
         }
         if (ziel != null) {
             zustand = Zustand.GRAEBT;
-            blickeAuf(player, ziel);
             waehleSpitzhacke(player);
             double d = Math.sqrt(player.distanceToSqr(
                     ziel.getX() + 0.5, ziel.getY() + 0.5, ziel.getZ() + 0.5));
+
             if (d <= 4.0) {
+                // In Reichweite: direkt draufschlagen.
+                blickeAuf(player, ziel);
+                mc.options.keyUp.setDown(false);
+                mc.options.keyAttack.setDown(true);
+                return;
+            }
+
+            // Zu weit weg. FRUEHER wurde hier nur gelaufen -- stand Stein
+            // dazwischen, lief der Bot dagegen und kam nie an. Jetzt wird der
+            // Weg freigeraeumt: liegt ein Block zwischen Spieler und Ziel,
+            // wird DER abgebaut, nicht das Ziel.
+            BlockPos imWeg = naechsterBlockRichtung(mc, player, ziel);
+            if (imWeg != null) {
+                blickeAuf(player, imWeg);
                 mc.options.keyUp.setDown(false);
                 mc.options.keyAttack.setDown(true);
             } else {
+                blickeAuf(player, ziel);
                 mc.options.keyAttack.setDown(false);
                 mc.options.keyUp.setDown(!lavaImWeg(mc, player, mod));
             }
@@ -580,4 +611,74 @@ public final class NetheriteFarmer {
             }
         } catch (Throwable ignored) { }
     }
+
+    /**
+     * Der naechste eingesammelte Brocken in Laufweite.
+     *
+     * Nur Netherit-Bruchstuecke und Ancient Debris -- der Bot soll nicht
+     * jedem Kies hinterherlaufen, der beim Graben herunterfaellt.
+     */
+    private static net.minecraft.world.entity.item.ItemEntity nahesterBrocken(
+            Minecraft mc, LocalPlayer player) {
+        try {
+            net.minecraft.world.entity.item.ItemEntity beste = null;
+            double besteD = 36.0;   // 6 Bloecke -- weiter zu laufen lohnt nicht
+            for (net.minecraft.world.entity.item.ItemEntity e
+                    : com.vortex.client.core.EntityCache.items()) {
+                ItemStack st = e.getItem();
+                if (st == null || st.isEmpty()) continue;
+                if (st.getItem() != Items.ANCIENT_DEBRIS
+                        && st.getItem() != Items.NETHERITE_SCRAP) continue;
+                double d = e.distanceToSqr(player);
+                if (d < besteD) { besteD = d; beste = e; }
+            }
+            return beste;
+        } catch (Throwable pvpErr) {
+            return null;
+        }
+    }
+
+    /**
+     * Der erste feste Block auf der Geraden zum Ziel.
+     *
+     * Damit raeumt der Bot den Weg frei, statt gegen Stein zu laufen. Nur
+     * die Bloecke auf Fuss- und Kopfhoehe zaehlen -- alles andere steht
+     * nicht im Weg.
+     */
+    private static BlockPos naechsterBlockRichtung(Minecraft mc, LocalPlayer player,
+                                                   BlockPos ziel) {
+        double px = player.getX(), py = player.getY(), pz = player.getZ();
+        double dx = ziel.getX() + 0.5 - px;
+        double dy = ziel.getY() + 0.5 - py;
+        double dz = ziel.getZ() + 0.5 - pz;
+        double laenge = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (laenge < 0.001) return null;
+        dx /= laenge; dy /= laenge; dz /= laenge;
+
+        // In halben Bloecken vortasten, hoechstens vier Bloecke weit --
+        // weiter reicht der Arm ohnehin nicht.
+        for (double t = 0.5; t <= 4.0; t += 0.5) {
+            int bx = (int) Math.floor(px + dx * t);
+            int by = (int) Math.floor(py + dy * t);
+            int bz = (int) Math.floor(pz + dz * t);
+            for (int h = 0; h <= 1; h++) {
+                BlockPos p = new BlockPos(bx, by + h, bz);
+                if (p.getX() == ziel.getX() && p.getY() == ziel.getY()
+                        && p.getZ() == ziel.getZ()) continue;
+                if (fest(mc, p)) return p;
+            }
+        }
+        return null;
+    }
+
+    /** Wie blickeAuf, aber auf einen freien Punkt statt auf einen Block. */
+    private static void blickeAufPunkt(LocalPlayer player, double x, double y, double z) {
+        double dx = x - player.getX();
+        double dy = y - player.getEyePosition().y;
+        double dz = z - player.getZ();
+        double flach = Math.sqrt(dx * dx + dz * dz);
+        player.setYRot((float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0));
+        player.setXRot((float) -Math.toDegrees(Math.atan2(dy, flach)));
+    }
+
 }
