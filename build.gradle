@@ -36,9 +36,16 @@ dependencies {
     implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 
     // Der Vortex Client. Das Addon erweitert dessen Klassen.
+    //
+    // NUR compileOnly: die Jar wird zum Uebersetzen gebraucht, nicht zum
+    // Ausfuehren -- im Spiel laedt Fabric den Client ohnehin als eigene Mod.
+    // Sie mit einzupacken wuerde den Client doppelt ausliefern.
+    //
+    // compileOnly ist Standard-Gradle. Loom-eigene Konfigurationen wie
+    // modLocalRuntime gibt es nicht in jeder Fassung -- genau daran ist der
+    // vorige Build gescheitert.
     if (vortexJar.exists()) {
         compileOnly files(vortexJar)
-        modLocalRuntime files(vortexJar)
     }
 }
 
