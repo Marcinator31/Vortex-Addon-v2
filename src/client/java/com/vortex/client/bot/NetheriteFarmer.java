@@ -67,7 +67,8 @@ public final class NetheriteFarmer {
         aktionSlot = -1;
         stehtSeit = 0;
         drehVersuche = 0;
-        lavaSeit = 0;
+        drinSeit = 0;
+        nahSeit = 0;
         lavaRuheBis = 0;
         schlaegtAuf = null;
     }
@@ -127,13 +128,66 @@ public final class NetheriteFarmer {
             }
             gemeldet = false;
 
+            // Ab hier kann jeder Zweig vorzeitig zurueckkehren. Damit der
+            // Blick TROTZDEM bewegt wird, laeuft der Rest in try/finally.
+            //
+            // FRUEHER stand wendeBlick nur ganz am Ende. Jede vorzeitige
+            // Rueckkehr -- Flucht, Essen, Nachfuellen -- uebersprang sie. Der
+            // Bot hinterlegte seinen Blickwunsch und wandte ihn nie an: er
+            // stand mit dem Gesicht in die falsche Richtung und lief dorthin,
+            // waehrend er eigentlich fliehen wollte.
+            try {
+                entscheiden(mc, player, mod);
+            } finally {
+                pruefeFeststecken(mc, player);
+                // Nie gleichzeitig schlagen und springen -- ein Sprung
+                // bricht jeden Abbau ab.
+                if (mc.options.keyAttack.isDown()) {
+                    mc.options.keyJump.setDown(false);
+                }
+                wendeBlick(player, mod);
+            }
+        } catch (Throwable pvpErr) {
+            com.vortex.client.core.Errors.report("NetheriteFarmer", pvpErr);
+            stop();
+        }
+    }
+
+    /** Alle Entscheidungen eines Ticks. Darf jederzeit zurueckkehren. */
+    private static void entscheiden(Minecraft mc, LocalPlayer player,
+                                    NetheriteFarmerModule mod) {
+        try {
             // Laeuft schon etwas? Dann nicht dazwischenfunken.
             //
             // AUSNAHME Lava: dort muss er sich weiterbewegen duerfen, auch
             // waehrend er isst. Sonst stand er essend in der Lava, bis beides
             // zu Ende war.
-            boolean inGefahr = player.isInLava() || lavaInDerNaehe(mc, player, 3) != null;
+            boolean inGefahr = player.isInLava() || erreichbareLava(mc, player, 3) != null;
             if (aktionLaeuft(mc, player) && !inGefahr) return;
+
+            // --- TOTEM ZUERST, vor allem anderen ---------------------------
+            //
+            // Ein Totem poppt genau dann, wenn es gefaehrlich ist -- und
+            // frueher lief das Nachlegen erst NACH der Gefahrenbehandlung.
+            // Die kehrte aber vorzeitig zurueck, also blieb die Off-Hand in
+            // genau der Lage leer, in der das naechste Totem gebraucht wird.
+            //
+            // Steht hier ganz oben und kostet fast nichts: eine Abfrage der
+            // Off-Hand je Tick.
+            if (mod.keepTotem.get()) {
+                ItemStack off = player.getOffhandItem();
+                if ((off == null || off.isEmpty()
+                        || off.getItem() != Items.TOTEM_OF_UNDYING)
+                        && tick - letzteUmlagerung >= 10) {
+                    int quelle = findeSlot(player, Items.TOTEM_OF_UNDYING);
+                    if (quelle >= 0) {
+                        lagereUm(mc, player, quelle, OFFHAND_SLOT);
+                        letzteUmlagerung = tick;
+                        melde(mc, "Totem nachgelegt.");
+                        return;
+                    }
+                }
+            }
 
             // ALLE Bewegungstasten zuruecksetzen.
             //
@@ -161,16 +215,8 @@ public final class NetheriteFarmer {
             // --- 4. Abbauen ----------------------------------------------
             abbauen(mc, player, mod);
 
-            // Kommt er ueberhaupt voran?
-            pruefeFeststecken(mc, player);
-
-            // Blick zuletzt bewegen: bis hier haben die Teilaufgaben nur
-            // ihren Wunsch hinterlegt.
-            wendeBlick(player, mod);
-
         } catch (Throwable pvpErr) {
-            com.vortex.client.core.Errors.report("NetheriteFarmer", pvpErr);
-            stop();
+            com.vortex.client.core.Errors.report("NetheriteFarmer.entscheiden", pvpErr);
         }
     }
 
@@ -238,86 +284,86 @@ public final class NetheriteFarmer {
         // naechsten -- bis alle weg waren und er starb. Essen heilt schneller
         // als Lava schadet, aber nur solange Vorrat da ist. Rauskommen ist
         // die einzige Loesung.
-        // --- Lava in der Naehe? Dann WEG, bevor sie ankommt ---------------
+        // --- GOLDENER APFEL ZUERST ----------------------------------------
         //
-        // Frueher wurde nur geprueft, ob er DRINSTEHT -- da ist es zu spaet.
-        // Fliessende Lava braucht rund eine halbe Sekunde je Block; wer erst
-        // beim Beruehren reagiert, hat keine Zeit mehr.
-        boolean drin = player.isInLava();
-        BlockPos lava = lavaInDerNaehe(mc, player, drin ? 4 : 3);
-
-        if (drin || lava != null) {
-            zustand = Zustand.GEHT;
-            // Essen NICHT abbrechen: in Lava ist der goldene Apfel das
-            // Einzige, was Zeit kauft. Nur wenn gar nichts laeuft, wird die
-            // Benutzen-Taste freigegeben.
-            if (aktionSlot < 0) mc.options.keyUse.setDown(false);
-
-            if (drin) {
-                mc.options.keyJump.setDown(true);   // in Lava haelt Springen oben
-
-                // ESSEN WAEHREND DER FLUCHT.
-                //
-                // Frueher kehrte dieser Zweig zurueck, bevor die Essensprufung
-                // ueberhaupt erreicht wurde -- der Bot verbrannte, ohne je
-                // einen goldenen Apfel anzuruehren. In Minecraft kann man
-                // beim Essen laufen, die beiden schliessen sich nicht aus.
-                //
-                // Deshalb hier direkt: Leben niedrig -> Apfel, und danach
-                // trotzdem weiterfliehen.
-                if (player.getHealth() <= mod.gappleBelow.get() && aktionSlot < 0) {
-                    int apfel = findeHotbar(player, Items.GOLDEN_APPLE);
-                    if (apfel < 0) apfel = findeHotbar(player, Items.ENCHANTED_GOLDEN_APPLE);
-                    if (apfel >= 0) {
-                        player.getInventory().setSelectedSlot(apfel);
-                        aktionSlot = apfel;
-                        aktionBis = tick + 32;
-                        aktionHalten = true;
-                        mc.options.keyUse.setDown(true);
-                        melde(mc, "Esse waehrend der Flucht.");
-                    }
-                }
-
-                if (lavaSeit == 0) {
-                    lavaSeit = tick;
-                    melde(mc, "In Lava -- grabe mich heraus.");
-                }
-                if (tick - lavaSeit > 100) {
-                    melde(mc, "Komme aus der Lava nicht heraus -- Bot stoppt.");
-                    NetheriteFarmerModule m = modul();
-                    if (m != null) m.setEnabled(false);
-                    stop();
-                    return true;
-                }
-            } else if (lavaSeit == 0) {
-                lavaSeit = tick;
-                melde(mc, "Lava kommt naeher -- weiche aus.");
-            }
-
-            if (lava != null && fliehen(mc, player, lava)) {
-                return true;
-            }
-            // Keine Lava mehr zu sehen, aber noch drin: senkrecht hoch.
-            if (drin) {
-                willBlicken(player.getYRot(), -90f);
-                waehleSpitzhacke(player);
-                mc.options.keyAttack.setDown(true);
-                return true;
+        // Vor allem anderen, auch vor der Lavaflucht. Wer stirbt, waehrend er
+        // ausweicht, hat nichts gewonnen. Essen und Laufen gehen gleichzeitig.
+        if (player.getHealth() <= mod.gappleBelow.get() && aktionSlot < 0) {
+            int apfel = findeHotbar(player, Items.GOLDEN_APPLE);
+            if (apfel < 0) apfel = findeHotbar(player, Items.ENCHANTED_GOLDEN_APPLE);
+            if (apfel >= 0) {
+                player.getInventory().setSelectedSlot(apfel);
+                aktionSlot = apfel;
+                aktionBis = tick + 32;
+                aktionHalten = true;
+                mc.options.keyUse.setDown(true);
+                zustand = Zustand.ISST;
+                // KEIN return: er soll dabei weiterlaufen oder fliehen.
             }
         }
 
-        if (lavaSeit != 0 && !drin && lava == null) {
-            lavaSeit = 0;
-            // Nach der Lava: Richtung umkehren und kurz weglaufen, sonst
-            // graebt er sofort wieder hinein.
-            if (richtung != null) {
-                richtung = new int[]{-richtung[0], -richtung[1]};
+        // --- Lava ---------------------------------------------------------
+        //
+        // ZWEI GETRENNTE ZAEHLER. Frueher war es einer, und das hatte eine
+        // boese Folge: stand irgendwo Lava in der Naehe, lief die Frist schon
+        // los. Beruehrte er sie Minuten spaeter, war sie laengst abgelaufen
+        // und der Bot stoppte sofort mit "komme nicht heraus" -- obwohl er
+        // gerade erst hineingeraten war.
+        boolean drin = player.isInLava();
+        BlockPos lava = erreichbareLava(mc, player, drin ? 4 : 3);
+
+        if (drin) {
+            if (drinSeit == 0) {
+                drinSeit = tick;
+                melde(mc, "In Lava -- grabe mich heraus.");
             }
+            zustand = Zustand.GEHT;
+            mc.options.keyJump.setDown(true);     // in Lava haelt Springen oben
+
+            // Erst nach fuenf Sekunden IM Feuer aufgeben, nicht nach fuenf
+            // Sekunden seit irgendeiner Lavasichtung.
+            if (tick - drinSeit > 100) {
+                melde(mc, "Komme aus der Lava nicht heraus -- Bot stoppt.");
+                NetheriteFarmerModule m = modul();
+                if (m != null) m.setEnabled(false);
+                stop();
+                return true;
+            }
+            if (lava != null && fliehen(mc, player, lava)) return true;
+            // Keine Lava mehr zu sehen, aber noch drin: senkrecht hoch.
+            willBlicken(player.getYRot(), -90f);
+            waehleSpitzhacke(player);
+            mc.options.keyAttack.setDown(true);
+            return true;
+        }
+
+        if (drinSeit != 0) {
+            drinSeit = 0;
+            // Gerade heraus: Richtung umkehren und kurz weglaufen.
+            if (richtung != null) richtung = new int[]{-richtung[0], -richtung[1]};
             lavaRuheBis = tick + 60;
             ziel = null;
             schlagenZuruecksetzen();
-            melde(mc, "Lava hinter mir -- grabe woanders weiter.");
+            melde(mc, "Aus der Lava heraus -- grabe woanders weiter.");
         }
+
+        if (lava != null) {
+            if (nahSeit == 0) {
+                nahSeit = tick;
+                melde(mc, "Lava kommt naeher -- weiche aus.");
+            }
+            zustand = Zustand.GEHT;
+            if (fliehen(mc, player, lava)) return true;
+            // Kein Fluchtweg gefunden: nach zehn Sekunden Richtung wechseln,
+            // statt bewegungslos stehenzubleiben.
+            if (tick - nahSeit > 200 && richtung != null) {
+                nahSeit = 0;
+                richtung = drehe(richtung);
+                melde(mc, "Kein Ausweg -- andere Richtung.");
+            }
+            return true;
+        }
+        nahSeit = 0;
 
         // Nach der Lava eine Weile nur laufen, nicht graben.
         if (tick < lavaRuheBis) {
@@ -453,6 +499,18 @@ public final class NetheriteFarmer {
         }
         if (ziel == null) {
             ziel = debrisInDerNaehe(mc, player, mod);
+            zielSeit = tick;
+        }
+        // Unerreichbares Ziel nach 15 Sekunden aufgeben.
+        //
+        // Debris hoch an der Decke oder hinter einer Lavawand kann man nicht
+        // immer erreichen. Ohne diese Grenze versucht es der Bot bis zum
+        // Verhungern -- und graebt in der Zeit keinen Meter Stollen.
+        if (ziel != null && tick - zielSeit > 300) {
+            melde(mc, "Komme an das Debris nicht heran -- grabe weiter.");
+            ziel = null;
+            schlagenZuruecksetzen();
+            return;
         }
         if (ziel != null) {
             zustand = Zustand.GRAEBT;
@@ -480,7 +538,15 @@ public final class NetheriteFarmer {
             } else {
                 blickeAuf(player, ziel);
                 mc.options.keyAttack.setDown(false);
-                mc.options.keyUp.setDown(!lavaImWeg(mc, player, mod));
+                // ERST ausrichten, DANN laufen.
+                //
+                // Vorher lief er sofort los, waehrend sich der Blick noch
+                // drehte -- und damit in die alte Richtung. Bei 12 Grad je
+                // Tick sind das bis zu anderthalb Sekunden Irrweg.
+                //
+                // Erst ab etwa 30 Grad Restwinkel geht es vorwaerts.
+                boolean ausgerichtet = Math.abs(restWinkel(player)) < 30f;
+                mc.options.keyUp.setDown(ausgerichtet && !lavaImWeg(mc, player, mod));
             }
             return;
         }
@@ -636,7 +702,9 @@ public final class NetheriteFarmer {
                 return;
             }
 
-            mc.options.keyUp.setDown(true);
+            // Erst ausrichten, dann laufen -- sonst laeuft er schraeg aus
+            // dem Stollen heraus, waehrend sich der Blick noch dreht.
+            mc.options.keyUp.setDown(Math.abs(restWinkel(player)) < 30f);
             // Liegt eine Stufe voraus, druebersteigen statt dagegenzulaufen.
             // Nur wenn oben wirklich Platz ist, sonst springt er gegen die
             // Decke und kommt nicht weiter.
@@ -960,7 +1028,12 @@ public final class NetheriteFarmer {
             int bx = (int) Math.floor(px + dx * t);
             int by = (int) Math.floor(py + dy * t);
             int bz = (int) Math.floor(pz + dz * t);
-            for (int h = 0; h <= 1; h++) {
+            // Bis ZWEI Bloecke ueber der Linie pruefen, nicht nur einen.
+            //
+            // Liegt das Debris ueber dem Bot -- etwa an der Decke -- steckt
+            // der Block im Weg auch ueber Kopfhoehe. Frueher wurde der nie
+            // gefunden, der Bot lief dagegen und sprang endlos.
+            for (int h = 0; h <= 2; h++) {
                 BlockPos p = new BlockPos(bx, by + h, bz);
                 if (p.getX() == ziel.getX() && p.getY() == ziel.getY()
                         && p.getZ() == ziel.getZ()) continue;
@@ -1048,7 +1121,8 @@ public final class NetheriteFarmer {
     private static int stehtSeit = 0;
     private static int letzteDrehung = -100;
     private static int drehVersuche = 0;
-    private static int lavaSeit = 0;
+    private static int drinSeit = 0;    // seit wann IN der Lava
+    private static int nahSeit = 0;     // seit wann Lava in der Naehe
     private static int lavaRuheBis = 0;
 
     private static void pruefeFeststecken(Minecraft mc, LocalPlayer player) {
@@ -1067,6 +1141,23 @@ public final class NetheriteFarmer {
             stehtSeit = 0;
             return;
         }
+
+        // ABBAUEN IST FORTSCHRITT, auch wenn er sich dabei nicht bewegt.
+        //
+        // Das war die Endlosschleife: beim Graben steht er still, die
+        // Feststeck-Erkennung sprang an und drueckte die Sprungtaste -- ein
+        // Sprung bricht den Schlag ab, der Block faengt von vorne an, er
+        // bewegt sich wieder nicht, und so weiter. Besonders bei Kies, der
+        // ohnehin staendig nachrutscht.
+        //
+        // Solange er auf einen Block schlaegt und die Zeitgrenze nicht
+        // gerissen ist, gilt das als Arbeit.
+        if (mc.options.keyAttack.isDown() && schlaegtAuf != null
+                && tick - schlaegtSeit <= 160) {
+            stehtSeit = 0;
+            return;
+        }
+
         stehtSeit++;
 
         // KIES ZUERST -- und sofort, nicht erst nach drei Sekunden.
@@ -1201,6 +1292,7 @@ public final class NetheriteFarmer {
 
     private static BlockPos schlaegtAuf = null;
     private static int schlaegtSeit = 0;
+    private static int zielSeit = 0;
 
     /**
      * Meldet, dass gerade auf diesen Block geschlagen wird.
@@ -1432,20 +1524,7 @@ public final class NetheriteFarmer {
         // verschluckt der Server.
         if (tick - letzteUmlagerung < 10) return false;
 
-        // 1) Totem in die Off-Hand. Das Wichtigste zuerst -- ohne Totem ist
-        //    der naechste Fehler toedlich.
-        if (mod.keepTotem.get()) {
-            ItemStack off = player.getOffhandItem();
-            if (off == null || off.isEmpty() || off.getItem() != Items.TOTEM_OF_UNDYING) {
-                int quelle = findeSlot(player, Items.TOTEM_OF_UNDYING);
-                if (quelle >= 0) {
-                    lagereUm(mc, player, quelle, OFFHAND_SLOT);
-                    letzteUmlagerung = tick;
-                    melde(mc, "Totem nachgelegt.");
-                    return true;
-                }
-            }
-        }
+        // Das Totem wird bereits ganz oben im Tick nachgelegt.
 
         // 2) Verbrauchsgueter in die Hotbar holen, wenn dort keine mehr sind.
         net.minecraft.world.item.Item[] wichtig = {
@@ -1484,6 +1563,64 @@ public final class NetheriteFarmer {
             if (slot >= 0) return slot;
         }
         return -1;
+    }
+
+
+    /**
+     * Wie lavaInDerNaehe, aber nur Lava, die den Bot auch ERREICHEN kann.
+     *
+     * Das war der zweite grosse Fehler: Lava hinter einer Steinwand loeste
+     * dauernd "Lava kommt naeher" aus. Der Bot blieb in Dauerflucht, graebt
+     * nichts mehr und lief nur noch vorwaerts -- obwohl ihm nichts passieren
+     * konnte.
+     *
+     * Geprueft wird die Sichtlinie: liegt zwischen Bot und Lava ein fester
+     * Block, kommt sie nicht durch und wird ignoriert. Das ist grob, aber es
+     * trifft genau den Fall, der gestoert hat.
+     */
+    private static BlockPos erreichbareLava(Minecraft mc, LocalPlayer player, int r) {
+        int px = (int) Math.floor(player.getX());
+        int py = (int) Math.floor(player.getY());
+        int pz = (int) Math.floor(player.getZ());
+        BlockPos beste = null;
+        double besteD = Double.MAX_VALUE;
+        for (int dx = -r; dx <= r; dx++) {
+            for (int dy = -1; dy <= 2; dy++) {
+                for (int dz = -r; dz <= r; dz++) {
+                    BlockPos q = new BlockPos(px + dx, py + dy, pz + dz);
+                    if (!istLava(mc, q)) continue;
+                    double d = dx * dx + dy * dy + dz * dz;
+                    if (d >= besteD) continue;
+                    if (!freieSicht(mc, px, py, pz, q)) continue;   // Wand dazwischen
+                    besteD = d;
+                    beste = q;
+                }
+            }
+        }
+        return beste;
+    }
+
+    /** Liegt zwischen zwei Punkten ein fester Block? */
+    private static boolean freieSicht(Minecraft mc, int px, int py, int pz, BlockPos ziel) {
+        double dx = ziel.getX() - px, dy = ziel.getY() - py, dz = ziel.getZ() - pz;
+        double laenge = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (laenge < 1.5) return true;               // direkt daneben
+        dx /= laenge; dy /= laenge; dz /= laenge;
+        for (double t = 1.0; t < laenge - 0.5; t += 0.5) {
+            BlockPos q = new BlockPos((int) Math.floor(px + dx * t),
+                                      (int) Math.floor(py + dy * t),
+                                      (int) Math.floor(pz + dz * t));
+            if (istLava(mc, q)) continue;            // Lava selbst blockiert nicht
+            if (fest(mc, q)) return false;           // feste Wand dazwischen
+        }
+        return true;
+    }
+
+
+    /** Wie viele Grad fehlen noch bis zur gewuenschten Blickrichtung? */
+    private static float restWinkel(LocalPlayer player) {
+        if (!wunschGesetzt) return 0f;
+        return ((wunschYaw - player.getYRot()) % 360f + 540f) % 360f - 180f;
     }
 
 }
