@@ -68,6 +68,8 @@ public final class NetheriteFarmer {
         stehtSeit = 0;
         drehVersuche = 0;
         lavaSeit = 0;
+        lavaRuheBis = 0;
+        schlaegtAuf = null;
     }
 
     private static NetheriteFarmerModule modul() {
@@ -127,6 +129,20 @@ public final class NetheriteFarmer {
 
             // Laeuft schon etwas? Dann nicht dazwischenfunken.
             if (aktionLaeuft(mc, player)) return;
+
+            // ALLE Bewegungstasten zuruecksetzen.
+            //
+            // Vorher setzte jede Stelle ihre Tasten selbst, aber niemand
+            // nahm sie zurueck. Folge: die Sprungtaste blieb gedrueckt,
+            // waehrend der Bot abbaute -- er sprang dauernd und brach den
+            // Abbau jedes Mal ab. Dasselbe mit Vorwaerts und Rueckwaerts.
+            //
+            // Jetzt gilt: jeder Tick faengt bei null an, und nur wer eine
+            // Taste WIRKLICH braucht, drueckt sie.
+            mc.options.keyUp.setDown(false);
+            mc.options.keyDown.setDown(false);
+            mc.options.keyJump.setDown(false);
+            mc.options.keyAttack.setDown(false);
 
             // --- 2. Ueberleben -------------------------------------------
             if (ueberleben(mc, player, mod)) return;
@@ -265,6 +281,30 @@ public final class NetheriteFarmer {
             lavaSeit = 0;
             mc.options.keyJump.setDown(false);
             mc.options.keyDown.setDown(false);
+
+            // GERADE HERAUSGEKOMMEN -- nicht sofort zurueck.
+            //
+            // Vorher lief der Bot rueckwaerts heraus und im naechsten Tick
+            // wieder vorwaerts hinein: die Grabrichtung zeigte ja weiterhin
+            // auf die Lava. Er pendelte, bis er starb.
+            //
+            // Deshalb: Richtung umkehren und kurz Ruhe, damit er sich vom
+            // Lavasee entfernt, bevor er weitergraebt.
+            if (richtung != null) {
+                richtung = new int[]{-richtung[0], -richtung[1]};
+            }
+            lavaRuheBis = tick + 60;      // drei Sekunden weglaufen
+            ziel = null;                  // kein Debris hinter der Lava
+            melde(mc, "Aus der Lava heraus -- gehe erst einmal weg.");
+        }
+
+        // Nach der Lava eine Weile nur laufen, nicht graben.
+        if (tick < lavaRuheBis) {
+            zustand = Zustand.GEHT;
+            if (richtung == null) richtung = himmelsrichtung(player.getYRot());
+            willBlicken(richtungZuYaw(richtung), 0f);
+            mc.options.keyUp.setDown(true);
+            return true;
         }
 
         // Goldener Apfel bei Schaden -- auch mit vollem Hunger. In Lava ist
@@ -544,10 +584,18 @@ public final class NetheriteFarmer {
 
         waehleSpitzhacke(player);
         if (zielBlock != null) {
+            if (!schlagen(mc, zielBlock)) {
+                // Kommt nicht durch -- andere Richtung versuchen.
+                melde(mc, "Block bricht nicht -- neue Richtung.");
+                richtung = drehe(richtung);
+                letzteDrehung = tick;
+                return;
+            }
             blickeAuf(player, zielBlock);
             mc.options.keyUp.setDown(false);
             mc.options.keyAttack.setDown(true);
         } else {
+            schlagenZuruecksetzen();
             // Frei: vorruecken.
             mc.options.keyAttack.setDown(false);
             willBlicken(richtungZuYaw(richtung), dy < 0 ? 30f : (dy > 0 ? -30f : 0f));
@@ -571,6 +619,10 @@ public final class NetheriteFarmer {
             // Liegt eine Stufe voraus, druebersteigen statt dagegenzulaufen.
             // Nur wenn oben wirklich Platz ist, sonst springt er gegen die
             // Decke und kommt nicht weiter.
+            //
+            // NIEMALS gleichzeitig mit dem Abbauen: ein Sprung unterbricht
+            // den Schlag, und der Block faengt von vorne an. Hier wird nicht
+            // abgebaut, deshalb ist es an dieser Stelle unbedenklich.
             boolean stufe = fest(mc, new BlockPos(vx, py + dy, vz))
                     && !fest(mc, new BlockPos(vx, py + dy + 1, vz))
                     && !fest(mc, new BlockPos(vx, py + dy + 2, vz));
@@ -976,6 +1028,7 @@ public final class NetheriteFarmer {
     private static int letzteDrehung = -100;
     private static int drehVersuche = 0;
     private static int lavaSeit = 0;
+    private static int lavaRuheBis = 0;
 
     private static void pruefeFeststecken(Minecraft mc, LocalPlayer player) {
         double dx = player.getX() - letzteX;
@@ -1005,7 +1058,10 @@ public final class NetheriteFarmer {
             willBlicken(player.getYRot(), 0f);
             waehleSpitzhacke(player);
             mc.options.keyUp.setDown(false);
-            mc.options.keyJump.setDown(true);   // beim Freiwerden mit hoch
+            // NICHT springen waehrend des Abbauens -- der Sprung bricht den
+            // Schlag ab und der Block faengt von vorne an. Erst graben, das
+            // Hochkommen ergibt sich danach von selbst.
+            mc.options.keyJump.setDown(false);
             mc.options.keyAttack.setDown(true);
             return;
         }
@@ -1093,6 +1149,45 @@ public final class NetheriteFarmer {
             if (b == Blocks.GRAVEL || b == Blocks.SAND || b == Blocks.RED_SAND) return true;
         }
         return false;
+    }
+
+
+    // --- Abbau-Zeitgrenze -------------------------------------------------
+    //
+    // Manchmal bricht ein Block nicht: falsche Blickrichtung, ausser
+    // Reichweite, oder der Server laesst es nicht zu. Der Bot schlug dann
+    // ewig weiter und stand still -- ohne dass die Feststeck-Erkennung
+    // ansprang, denn er "arbeitete" ja.
+    //
+    // Deshalb: wird derselbe Block zu lange geschlagen, gilt er als
+    // unbrechbar. Richtung wechseln und weiter.
+
+    private static BlockPos schlaegtAuf = null;
+    private static int schlaegtSeit = 0;
+
+    /**
+     * Meldet, dass gerade auf diesen Block geschlagen wird.
+     *
+     * @return false, wenn zu lange erfolglos -- dann aufgeben.
+     */
+    private static boolean schlagen(Minecraft mc, BlockPos p) {
+        if (schlaegtAuf == null || !schlaegtAuf.equals(p)) {
+            schlaegtAuf = p;
+            schlaegtSeit = tick;
+            return true;
+        }
+        // 8 Sekunden. Netherrack braucht Bruchteile davon, Ancient Debris
+        // mit Netherit-Spitzhacke rund eine Sekunde. Wer so lange braucht,
+        // kommt nicht durch.
+        if (tick - schlaegtSeit > 160) {
+            schlaegtAuf = null;
+            return false;
+        }
+        return true;
+    }
+
+    private static void schlagenZuruecksetzen() {
+        schlaegtAuf = null;
     }
 
 }
