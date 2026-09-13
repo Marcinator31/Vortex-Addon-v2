@@ -56,12 +56,18 @@ public final class NetheriteFarmer {
                 mc.options.keyUse.setDown(false);
                 mc.options.keyUp.setDown(false);
                 mc.options.keyShift.setDown(false);
+                mc.options.keyJump.setDown(false);
+                mc.options.keyDown.setDown(false);
             }
         } catch (Throwable ignored) { }
         zustand = Zustand.AUS;
         ziel = null;
         richtung = null;
         gemeldet = false;
+        aktionSlot = -1;
+        stehtSeit = 0;
+        drehVersuche = 0;
+        lavaSeit = 0;
     }
 
     private static NetheriteFarmerModule modul() {
@@ -119,6 +125,9 @@ public final class NetheriteFarmer {
             }
             gemeldet = false;
 
+            // Laeuft schon etwas? Dann nicht dazwischenfunken.
+            if (aktionLaeuft(mc, player)) return;
+
             // --- 2. Ueberleben -------------------------------------------
             if (ueberleben(mc, player, mod)) return;
 
@@ -127,6 +136,9 @@ public final class NetheriteFarmer {
 
             // --- 4. Abbauen ----------------------------------------------
             abbauen(mc, player, mod);
+
+            // Kommt er ueberhaupt voran?
+            pruefeFeststecken(mc, player);
 
             // Blick zuletzt bewegen: bis hier haben die Teilaufgaben nur
             // ihren Wunsch hinterlegt.
@@ -195,12 +207,73 @@ public final class NetheriteFarmer {
     /** @return true, wenn der Bot in diesem Tick mit Ueberleben beschaeftigt ist. */
     private static boolean ueberleben(Minecraft mc, LocalPlayer player,
                                       NetheriteFarmerModule mod) {
+        // --- In Lava? Dann RAUS, nicht essen ------------------------------
+        //
+        // Das war der toedlichste Fehler: der Bot stand in Lava, verlor
+        // Leben, ass einen goldenen Apfel, verlor weiter Leben, ass den
+        // naechsten -- bis alle weg waren und er starb. Essen heilt schneller
+        // als Lava schadet, aber nur solange Vorrat da ist. Rauskommen ist
+        // die einzige Loesung.
+        if (player.isInLava()) {
+            zustand = Zustand.GEHT;
+            mc.options.keyAttack.setDown(false);
+            mc.options.keyUse.setDown(false);
+            aktionSlot = -1;                 // Essen abbrechen
+
+            // RUECKWAERTS, nicht drehen und vorwaerts.
+            //
+            // Vorher wurde der Blick um 180 Grad gedreht und gleichzeitig
+            // vorwaerts gelaufen. Die Drehung dauert bei 12 Grad je Tick
+            // fuenfzehn Ticks -- und in dieser Zeit lief der Bot WEITER in
+            // die Lava hinein. Genau das Verhalten, das aussieht, als liefe
+            // er gegen den Strom.
+            //
+            // Rueckwaerts braucht keine Drehung und wirkt sofort. Ausserdem
+            // liegt hinter ihm der Stollen, den er selbst gegraben hat --
+            // die mit Abstand sicherste Richtung.
+            mc.options.keyUp.setDown(false);
+            mc.options.keyDown.setDown(true);
+            mc.options.keyJump.setDown(true);   // in Lava haelt Springen oben
+
+            // Den Blick NICHT drehen: er bestimmt, wohin "rueckwaerts" zeigt.
+            // Wird er gedreht, dreht sich auch die Fluchtrichtung mit.
+
+            if (lavaSeit == 0) {
+                lavaSeit = tick;
+                melde(mc, "In Lava -- gehe rueckwaerts heraus.");
+            }
+
+            // Bringt Rueckwaerts nach zwei Sekunden nichts, ist der Weg
+            // dahinter zu. Dann nach oben freigraben: senkrecht hoch ist
+            // aus einem Lavasee der kuerzeste Weg an die Oberflaeche.
+            if (tick - lavaSeit > 40) {
+                willBlicken(player.getYRot(), -90f);
+                waehleSpitzhacke(player);
+                mc.options.keyAttack.setDown(true);
+            }
+            // Kommt er nach fuenf Sekunden nicht raus, ist es aussichtslos.
+            // Dann lieber stoppen, als den ganzen Vorrat zu verbrennen.
+            if (tick - lavaSeit > 100) {
+                melde(mc, "Komme aus der Lava nicht heraus -- Bot stoppt.");
+                NetheriteFarmerModule m = modul();
+                if (m != null) m.setEnabled(false);
+                stop();
+            }
+            return true;
+        }
+        if (lavaSeit != 0) {
+            lavaSeit = 0;
+            mc.options.keyJump.setDown(false);
+            mc.options.keyDown.setDown(false);
+        }
+
         // Goldener Apfel bei Schaden -- auch mit vollem Hunger. In Lava ist
         // das der einzige Weg, der wirklich hilft.
         if (player.getHealth() <= mod.gappleBelow.get()) {
             int slot = findeSlot(player, Items.GOLDEN_APPLE);
             if (slot < 0) slot = findeSlot(player, Items.ENCHANTED_GOLDEN_APPLE);
-            if (slot >= 0 && benutze(mc, player, slot)) {
+            // 32 Ticks: so lange dauert Essen. Kuerzer und es bricht ab.
+            if (slot >= 0 && starteAktion(mc, player, slot, 32, true)) {
                 zustand = Zustand.ISST;
                 return true;
             }
@@ -208,7 +281,7 @@ public final class NetheriteFarmer {
         // Normales Essen bei Hunger.
         if (player.getFoodData().getFoodLevel() <= mod.eatBelow.get()) {
             int slot = findeEssen(player);
-            if (slot >= 0 && benutze(mc, player, slot)) {
+            if (slot >= 0 && starteAktion(mc, player, slot, 32, true)) {
                 zustand = Zustand.ISST;
                 return true;
             }
@@ -237,7 +310,8 @@ public final class NetheriteFarmer {
 
         int slot = findeSlot(player, Items.EXPERIENCE_BOTTLE);
         if (slot < 0) return false;
-        if (!benutze(mc, player, slot)) return false;
+        // Ein Druck, dann loslassen -- sonst wirft er alle auf einmal.
+        if (!starteAktion(mc, player, slot, 4, false)) return false;
 
         letzteFlasche = tick;
         zustand = Zustand.REPARIERT;
@@ -397,8 +471,56 @@ public final class NetheriteFarmer {
         if (mod.avoidLava.get() && lavaUm(mc, vx, py + dy, vz)) {
             mc.options.keyAttack.setDown(false);
             mc.options.keyUp.setDown(false);
-            melde(mc, "Lava voraus -- Richtung gewechselt.");
-            richtung = drehe(richtung);
+            // NUR EINMAL drehen, dann eine Weile Ruhe.
+            //
+            // Frueher wurde hier jeden Tick gedreht und gemeldet: der Bot
+            // schrieb "Lava voraus" in Dauerschleife und drehte sich dabei
+            // im Kreis, weil nach der Drehung sofort wieder Lava im neuen
+            // Blickfeld lag.
+            if (tick - letzteDrehung > 20) {
+                letzteDrehung = tick;
+                drehVersuche++;
+                richtung = drehe(richtung);
+                if (drehVersuche == 1) melde(mc, "Lava -- weiche aus.");
+                // Nach vier Drehungen ist man einmal im Kreis: hier kommt
+                // man nicht weiter. Lieber aufhoeren als verbrennen.
+                if (drehVersuche >= 4) {
+                    melde(mc, "Von Lava eingeschlossen -- Bot stoppt.");
+                    NetheriteFarmerModule m = modul();
+                    if (m != null) m.setEnabled(false);
+                    stop();
+                }
+            }
+            return;
+        }
+        drehVersuche = 0;
+
+        // --- Gefahr von OBEN pruefen, bevor der Block faellt --------------
+        //
+        // Zwei Dinge toeten den Bot beim Vorwaertsgraben:
+        //
+        //  - Lava ueber dem Stollen. Bricht man den Block darunter weg,
+        //    laeuft sie herein. Das merkt man erst, wenn man drinsteht.
+        //  - Kies oder Sand. Der faellt nach, verschuettet den Gang und den
+        //    Bot gleich mit -- genau der Fall, der ihn ersticken liess.
+        //
+        // Deshalb wird die Decke geprueft, BEVOR gegraben wird.
+        BlockPos ueberKopf = new BlockPos(vx, py + dy + 2, vz);
+        if (mod.avoidLava.get() && mc.level.getBlockState(ueberKopf).getBlock() == Blocks.LAVA) {
+            mc.options.keyAttack.setDown(false);
+            mc.options.keyUp.setDown(false);
+            if (tick - letzteDrehung > 20) {
+                letzteDrehung = tick;
+                drehVersuche++;
+                richtung = drehe(richtung);
+                if (drehVersuche == 1) melde(mc, "Lava ueber dem Stollen -- weiche aus.");
+                if (drehVersuche >= 4) {
+                    melde(mc, "Ueberall Lava -- Bot stoppt.");
+                    NetheriteFarmerModule m = modul();
+                    if (m != null) m.setEnabled(false);
+                    stop();
+                }
+            }
             return;
         }
 
@@ -406,7 +528,19 @@ public final class NetheriteFarmer {
         // dann Fusshoehe. Ein ein Block hoher Gang laesst sich nicht begehen.
         BlockPos kopf = new BlockPos(vx, py + dy + 1, vz);
         BlockPos fuss = new BlockPos(vx, py + dy, vz);
-        BlockPos zielBlock = fest(mc, kopf) ? kopf : (fest(mc, fuss) ? fuss : null);
+
+        // Fallendes Material zuerst wegraeumen.
+        //
+        // Liegt Kies oder Sand ueber dem Stollen, faellt er beim Graben nach.
+        // Ihn von OBEN abzubauen statt von vorne loest den Stau, statt ihn
+        // immer wieder nachrutschen zu lassen.
+        BlockPos faellt = fallendesUeber(mc, vx, py + dy, vz);
+        BlockPos zielBlock;
+        if (faellt != null) {
+            zielBlock = faellt;
+        } else {
+            zielBlock = fest(mc, kopf) ? kopf : (fest(mc, fuss) ? fuss : null);
+        }
 
         waehleSpitzhacke(player);
         if (zielBlock != null) {
@@ -417,7 +551,30 @@ public final class NetheriteFarmer {
             // Frei: vorruecken.
             mc.options.keyAttack.setDown(false);
             willBlicken(richtungZuYaw(richtung), dy < 0 ? 30f : (dy > 0 ? -30f : 0f));
+            // Loch voraus? Dann NICHT hineinlaufen.
+            //
+            // Unter einem Loch liegt im Nether oft Lava. Zwei Bloecke tief
+            // ist ein Sprung noch harmlos, darunter wird es gefaehrlich --
+            // dann lieber die Richtung wechseln.
+            BlockPos boden = new BlockPos(vx, py + dy - 1, vz);
+            if (!fest(mc, boden) && !fest(mc, new BlockPos(vx, py + dy - 2, vz))) {
+                mc.options.keyUp.setDown(false);
+                if (tick - letzteDrehung > 20) {
+                    letzteDrehung = tick;
+                    richtung = drehe(richtung);
+                    melde(mc, "Abgrund voraus -- neue Richtung.");
+                }
+                return;
+            }
+
             mc.options.keyUp.setDown(true);
+            // Liegt eine Stufe voraus, druebersteigen statt dagegenzulaufen.
+            // Nur wenn oben wirklich Platz ist, sonst springt er gegen die
+            // Decke und kommt nicht weiter.
+            boolean stufe = fest(mc, new BlockPos(vx, py + dy, vz))
+                    && !fest(mc, new BlockPos(vx, py + dy + 1, vz))
+                    && !fest(mc, new BlockPos(vx, py + dy + 2, vz));
+            mc.options.keyJump.setDown(stufe);
         }
     }
 
@@ -546,13 +703,64 @@ public final class NetheriteFarmer {
     }
 
     /** Gegenstand aus der Hotbar auswaehlen und benutzen. */
-    private static boolean benutze(Minecraft mc, LocalPlayer player, int slot) {
+    // --- Aktionssperre ---------------------------------------------------
+    //
+    // Essen und Flaschenwerfen brauchen mehrere Ticks. Ohne Sperre passierte
+    // zweierlei:
+    //
+    //  - Die Benutzen-Taste wurde gedrueckt und NIE losgelassen. Der Bot warf
+    //    XP-Flaschen, bis keine mehr da war.
+    //  - Im naechsten Tick schaltete eine andere Stelle zurueck auf die
+    //    Spitzhacke, bevor die Aktion ueberhaupt begonnen hatte. Der Bot
+    //    wechselte hin und her, ohne je etwas zu benutzen.
+    //
+    // Solange eine Aktion laeuft, gehoert ihr der Hotbar-Platz allein.
+
+    private static int aktionSlot = -1;
+    private static int aktionBis = 0;
+    private static boolean aktionHalten = false;   // Taste gedrueckt halten?
+
+    /**
+     * Startet eine Aktion.
+     *
+     * @param dauer   Ticks, die sie belegt
+     * @param halten  true = Taste gedrueckt halten (Essen),
+     *                false = ein Tastendruck (Flasche werfen)
+     */
+    private static boolean starteAktion(Minecraft mc, LocalPlayer player,
+                                        int slot, int dauer, boolean halten) {
         if (slot > 8) return false;   // nur aus der Hotbar
-        if (player.getInventory().getSelectedSlot() != slot) {
-            player.getInventory().setSelectedSlot(slot);
-        }
+        if (aktionSlot >= 0) return true;   // laeuft schon
+        player.getInventory().setSelectedSlot(slot);
+        aktionSlot = slot;
+        aktionBis = tick + dauer;
+        aktionHalten = halten;
         mc.options.keyAttack.setDown(false);
+        mc.options.keyUp.setDown(false);
         mc.options.keyUse.setDown(true);
+        return true;
+    }
+
+    /**
+     * Haelt eine laufende Aktion aufrecht.
+     *
+     * @return true, solange sie laeuft -- dann macht der Bot sonst nichts.
+     */
+    private static boolean aktionLaeuft(Minecraft mc, LocalPlayer player) {
+        if (aktionSlot < 0) return false;
+
+        if (tick >= aktionBis) {
+            mc.options.keyUse.setDown(false);
+            aktionSlot = -1;
+            return false;
+        }
+        // Platz festhalten, damit niemand dazwischenschaltet.
+        if (player.getInventory().getSelectedSlot() != aktionSlot) {
+            player.getInventory().setSelectedSlot(aktionSlot);
+        }
+        // Werfen ist EIN Druck: nach dem ersten Tick loslassen, sonst
+        // fliegen alle Flaschen hintereinander weg.
+        if (!aktionHalten) mc.options.keyUse.setDown(false);
         return true;
     }
 
@@ -560,6 +768,8 @@ public final class NetheriteFarmer {
         mc.options.keyAttack.setDown(false);
         mc.options.keyUse.setDown(false);
         mc.options.keyUp.setDown(false);
+        mc.options.keyJump.setDown(false);
+        mc.options.keyDown.setDown(false);
     }
 
     /** Sucht einen Gegenstand im ganzen Inventar. -1 wenn nicht vorhanden. */
@@ -752,6 +962,137 @@ public final class NetheriteFarmer {
         } catch (Throwable pvpErr) {
             return false;
         }
+    }
+
+
+    // --- Feststecken ------------------------------------------------------
+    //
+    // Faellt Kies von oben auf den Bot, steht er im Block fest. Er graebt
+    // dann ins Leere, kommt nicht voran -- und erstickt irgendwann. Ohne
+    // diese Pruefung merkt das niemand.
+
+    private static double letzteX, letzteY, letzteZ;
+    private static int stehtSeit = 0;
+    private static int letzteDrehung = -100;
+    private static int drehVersuche = 0;
+    private static int lavaSeit = 0;
+
+    private static void pruefeFeststecken(Minecraft mc, LocalPlayer player) {
+        double dx = player.getX() - letzteX;
+        double dy = player.getY() - letzteY;
+        double dz = player.getZ() - letzteZ;
+        double bewegt = dx * dx + dy * dy + dz * dz;
+        letzteX = player.getX(); letzteY = player.getY(); letzteZ = player.getZ();
+
+        // Nur beim Graben und Gehen zaehlen -- beim Essen steht er zu Recht.
+        if (zustand != Zustand.GRAEBT && zustand != Zustand.GEHT) {
+            stehtSeit = 0;
+            return;
+        }
+        if (bewegt > 0.0004) {          // rund 2 cm je Tick
+            stehtSeit = 0;
+            return;
+        }
+        stehtSeit++;
+
+        // KIES ZUERST -- und sofort, nicht erst nach drei Sekunden.
+        //
+        // Steht der Bot im Kies, hilft kein Springen: der Block ist um ihn
+        // herum. Er muss ihn abbauen, und zwar auf Kopfhoehe, damit der Weg
+        // nach oben frei wird. Je frueher, desto weniger rutscht nach.
+        if (imKiesStecken(mc, player) && stehtSeit >= 5) {
+            if (stehtSeit == 5) melde(mc, "Im Kies -- grabe mich frei.");
+            willBlicken(player.getYRot(), 0f);
+            waehleSpitzhacke(player);
+            mc.options.keyUp.setDown(false);
+            mc.options.keyJump.setDown(true);   // beim Freiwerden mit hoch
+            mc.options.keyAttack.setDown(true);
+            return;
+        }
+
+        // Nach einer halben Sekunde: springen. Loest Stufen und einen Block
+        // vor den Fuessen.
+        if (stehtSeit == 10) {
+            mc.options.keyJump.setDown(true);
+            return;
+        }
+        if (stehtSeit == 14) {
+            mc.options.keyJump.setDown(false);
+            return;
+        }
+
+        // Nach zwei Sekunden: nach oben freigraben, falls dort etwas liegt.
+        if (stehtSeit > 40 && stehtSeit % 10 == 0) {
+            BlockPos ueber = new BlockPos((int) Math.floor(player.getX()),
+                    (int) Math.floor(player.getY()) + 2,
+                    (int) Math.floor(player.getZ()));
+            if (fest(mc, ueber)) {
+                melde(mc, "Steckengeblieben -- grabe nach oben frei.");
+                willBlicken(player.getYRot(), -90f);   // gerade nach oben
+                waehleSpitzhacke(player);
+                mc.options.keyUp.setDown(false);
+                mc.options.keyAttack.setDown(true);
+            }
+        }
+
+        // Nach vier Sekunden: Richtung wechseln. Manchmal ist der Weg
+        // schlicht versperrt und ein anderer Stollen ist die Loesung.
+        if (stehtSeit == 80 && richtung != null) {
+            richtung = drehe(richtung);
+            melde(mc, "Komme nicht weiter -- neue Richtung.");
+        }
+
+        // Nach zehn Sekunden ohne Bewegung ist etwas grundlegend falsch.
+        if (stehtSeit > 200) {
+            melde(mc, "Komme nicht frei -- Bot stoppt.");
+            NetheriteFarmerModule m = modul();
+            if (m != null) m.setEnabled(false);
+            stop();
+        }
+    }
+
+
+    /**
+     * Sucht fallendes Material (Kies, Sand) ueber der Grabstelle.
+     *
+     * Bis zu vier Bloecke hoch: hoehere Saeulen kommen vor, und wer nur den
+     * untersten wegnimmt, bekommt sofort den naechsten auf den Kopf.
+     * Zurueckgegeben wird der UNTERSTE -- der liegt in Reichweite.
+     */
+    private static BlockPos fallendesUeber(Minecraft mc, int x, int y, int z) {
+        for (int h = 1; h <= 4; h++) {
+            BlockPos p = new BlockPos(x, y + h, z);
+            var b = mc.level.getBlockState(p).getBlock();
+            if (b == Blocks.GRAVEL || b == Blocks.SAND || b == Blocks.RED_SAND) {
+                // Den untersten der Saeule nehmen.
+                for (int k = h; k >= 1; k--) {
+                    BlockPos q = new BlockPos(x, y + k, z);
+                    var bb = mc.level.getBlockState(q).getBlock();
+                    if (bb == Blocks.GRAVEL || bb == Blocks.SAND || bb == Blocks.RED_SAND) {
+                        return q;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Steckt der Bot selbst in fallendem Material?
+     *
+     * Anders als beim allgemeinen Feststecken laesst sich das gezielt
+     * beheben: den Block auf Kopfhoehe abbauen, dann ist der Weg nach oben
+     * frei und man kann heraus.
+     */
+    private static boolean imKiesStecken(Minecraft mc, LocalPlayer player) {
+        int x = (int) Math.floor(player.getX());
+        int y = (int) Math.floor(player.getY());
+        int z = (int) Math.floor(player.getZ());
+        for (int h = 0; h <= 1; h++) {
+            var b = mc.level.getBlockState(new BlockPos(x, y + h, z)).getBlock();
+            if (b == Blocks.GRAVEL || b == Blocks.SAND || b == Blocks.RED_SAND) return true;
+        }
+        return false;
     }
 
 }
