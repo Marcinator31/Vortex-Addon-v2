@@ -69,6 +69,9 @@ public final class NetheriteFarmer {
         drehVersuche = 0;
         drinSeit = 0;
         nahSeit = 0;
+        fluchtWeg = null;
+        drehungenZuletzt = 0;
+        ebenenWechsel = 0;
         lavaRuheBis = 0;
         schlaegtAuf = null;
     }
@@ -322,12 +325,18 @@ public final class NetheriteFarmer {
 
             // Erst nach fuenf Sekunden IM Feuer aufgeben, nicht nach fuenf
             // Sekunden seit irgendeiner Lavasichtung.
+            // NIEMALS wegen Lava abschalten.
+            //
+            // Der Bot soll es weiter versuchen, statt sich selbst zu beenden
+            // -- ein stehender Bot in der Lava stirbt sicher, ein kaempfender
+            // vielleicht nicht.
+            //
+            // Nach fuenf Sekunden wird nur die Fluchtrichtung neu gewaehlt,
+            // falls die bisherige nichts gebracht hat.
             if (tick - drinSeit > 100) {
-                melde(mc, "Komme aus der Lava nicht heraus -- Bot stoppt.");
-                NetheriteFarmerModule m = modul();
-                if (m != null) m.setEnabled(false);
-                stop();
-                return true;
+                drinSeit = tick;
+                fluchtWeg = null;
+                melde(mc, "Immer noch in Lava -- neue Richtung.");
             }
             if (lava != null && fliehen(mc, player, lava)) return true;
             // Keine Lava mehr zu sehen, aber noch drin: senkrecht hoch.
@@ -350,7 +359,13 @@ public final class NetheriteFarmer {
         if (lava != null) {
             if (nahSeit == 0) {
                 nahSeit = tick;
-                melde(mc, "Lava kommt naeher -- weiche aus.");
+                // Hoechstens alle zehn Sekunden melden. Vorher wechselte der
+                // Zustand staendig zwischen "Lava da" und "keine Lava", und
+                // jede Flanke schrieb eine neue Zeile in den Chat.
+                if (tick - letzteLavaMeldung > 200) {
+                    letzteLavaMeldung = tick;
+                    melde(mc, "Lava in der Naehe -- weiche aus.");
+                }
             }
             zustand = Zustand.GEHT;
             if (fliehen(mc, player, lava)) return true;
@@ -358,7 +373,7 @@ public final class NetheriteFarmer {
             // statt bewegungslos stehenzubleiben.
             if (tick - nahSeit > 200 && richtung != null) {
                 nahSeit = 0;
-                richtung = drehe(richtung);
+                richtung = neueRichtung(mc, richtung);
                 melde(mc, "Kein Ausweg -- andere Richtung.");
             }
             return true;
@@ -518,10 +533,17 @@ public final class NetheriteFarmer {
             double d = Math.sqrt(player.distanceToSqr(
                     ziel.getX() + 0.5, ziel.getY() + 0.5, ziel.getZ() + 0.5));
 
-            if (d <= 4.0) {
-                // In Reichweite: direkt draufschlagen.
+            // IN REICHWEITE WIRD IMMER ABGEBAUT, nie gelaufen.
+            //
+            // 4,5 statt 4,0: die Reichweite wird vom Auge aus gemessen,
+            // nicht von den Fuessen. Steht das Debris direkt ueber dem Bot,
+            // lag es knapp ausserhalb -- er lief vorwaerts, kam nie hin und
+            // drehte sich dabei im Kreis.
+            if (d <= 4.5) {
                 blickeAuf(player, ziel);
                 mc.options.keyUp.setDown(false);
+                mc.options.keyJump.setDown(false);
+                waehleSpitzhacke(player);
                 mc.options.keyAttack.setDown(true);
                 return;
             }
@@ -570,7 +592,8 @@ public final class NetheriteFarmer {
 
         // --- 3. Stollen weitergraben --------------------------------------
         zustand = Zustand.GRAEBT;
-        grabeRichtung(mc, player, mod, 0);
+        // Nach einem Ausbruch kurz abwaerts, um den alten Gang zu verlassen.
+        grabeRichtung(mc, player, mod, wechseltEbene() ? -1 : 0);
     }
 
     /**
@@ -607,15 +630,16 @@ public final class NetheriteFarmer {
             if (tick - letzteDrehung > 20) {
                 letzteDrehung = tick;
                 drehVersuche++;
-                richtung = drehe(richtung);
+                richtung = neueRichtung(mc, richtung);
                 if (drehVersuche == 1) melde(mc, "Lava -- weiche aus.");
                 // Nach vier Drehungen ist man einmal im Kreis: hier kommt
                 // man nicht weiter. Lieber aufhoeren als verbrennen.
                 if (drehVersuche >= 4) {
-                    melde(mc, "Von Lava eingeschlossen -- Bot stoppt.");
-                    NetheriteFarmerModule m = modul();
-                    if (m != null) m.setEnabled(false);
-                    stop();
+                    // Im Kreis gedreht: eine Ebene tiefer weitergraben statt
+                    // aufzugeben. Unten ist meist frei, wo oben Lava steht.
+                    drehVersuche = 0;
+                    ebenenWechsel = tick;
+                    melde(mc, "Ringsum Lava -- weiche nach unten aus.");
                 }
             }
             return;
@@ -639,13 +663,12 @@ public final class NetheriteFarmer {
             if (tick - letzteDrehung > 20) {
                 letzteDrehung = tick;
                 drehVersuche++;
-                richtung = drehe(richtung);
+                richtung = neueRichtung(mc, richtung);
                 if (drehVersuche == 1) melde(mc, "Lava ueber dem Stollen -- weiche aus.");
                 if (drehVersuche >= 4) {
-                    melde(mc, "Ueberall Lava -- Bot stoppt.");
-                    NetheriteFarmerModule m = modul();
-                    if (m != null) m.setEnabled(false);
-                    stop();
+                    drehVersuche = 0;
+                    ebenenWechsel = tick;
+                    melde(mc, "Ringsum Lava -- weiche nach unten aus.");
                 }
             }
             return;
@@ -674,7 +697,7 @@ public final class NetheriteFarmer {
             if (!schlagen(mc, zielBlock)) {
                 // Kommt nicht durch -- andere Richtung versuchen.
                 melde(mc, "Block bricht nicht -- neue Richtung.");
-                richtung = drehe(richtung);
+                richtung = neueRichtung(mc, richtung);
                 letzteDrehung = tick;
                 return;
             }
@@ -696,7 +719,7 @@ public final class NetheriteFarmer {
                 mc.options.keyUp.setDown(false);
                 if (tick - letzteDrehung > 20) {
                     letzteDrehung = tick;
-                    richtung = drehe(richtung);
+                    richtung = neueRichtung(mc, richtung);
                     melde(mc, "Abgrund voraus -- neue Richtung.");
                 }
                 return;
@@ -831,8 +854,14 @@ public final class NetheriteFarmer {
         double dy = pos.getY() + 0.5 - player.getEyePosition().y;
         double dz = pos.getZ() + 0.5 - player.getZ();
         double flach = Math.sqrt(dx * dx + dz * dz);
-        willBlicken((float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0),
-                    (float) -Math.toDegrees(Math.atan2(dy, flach)));
+        // Steht das Ziel fast senkrecht ueber oder unter dem Bot, ist die
+        // Richtung unbestimmt: atan2(0,0) springt bei jedem Tick auf einen
+        // anderen Wert, und der Bot dreht sich im Kreis, statt hochzusehen.
+        // Dann die Drehung beibehalten und nur die Neigung aendern.
+        float yaw = (flach < 0.3)
+                ? player.getYRot()
+                : (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
+        willBlicken(yaw, (float) -Math.toDegrees(Math.atan2(dy, flach)));
     }
 
     private static void waehleSpitzhacke(LocalPlayer player) {
@@ -1123,6 +1152,7 @@ public final class NetheriteFarmer {
     private static int drehVersuche = 0;
     private static int drinSeit = 0;    // seit wann IN der Lava
     private static int nahSeit = 0;     // seit wann Lava in der Naehe
+    private static int letzteLavaMeldung = -1000;
     private static int lavaRuheBis = 0;
 
     private static void pruefeFeststecken(Minecraft mc, LocalPlayer player) {
@@ -1222,7 +1252,7 @@ public final class NetheriteFarmer {
         // Nach vier Sekunden: Richtung wechseln. Manchmal ist der Weg
         // schlicht versperrt und ein anderer Stollen ist die Loesung.
         if (stehtSeit == 80 && richtung != null) {
-            richtung = drehe(richtung);
+            richtung = neueRichtung(mc, richtung);
             melde(mc, "Komme nicht weiter -- neue Richtung.");
         }
 
@@ -1423,8 +1453,20 @@ public final class NetheriteFarmer {
      *
      * @return true, solange er fluechtet
      */
+    private static int[] fluchtWeg = null;
+    private static int fluchtBis = 0;
+
     private static boolean fliehen(Minecraft mc, LocalPlayer player, BlockPos lava) {
-        int[] weg = fluchtRichtung(mc, player, lava);
+        // Einmal gewaehlte Fluchtrichtung eine Weile BEIBEHALTEN.
+        //
+        // Vorher wurde sie jeden Tick neu berechnet. Stehen zwei Richtungen
+        // etwa gleich gut da, wechselte sie staendig -- und der Bot drehte
+        // sich auf der Stelle im Kreis, statt wegzukommen.
+        if (fluchtWeg == null || tick > fluchtBis) {
+            fluchtWeg = fluchtRichtung(mc, player, lava);
+            fluchtBis = tick + 30;          // anderthalb Sekunden durchhalten
+        }
+        int[] weg = fluchtWeg;
         if (weg == null) return false;
 
         int px = (int) Math.floor(player.getX());
@@ -1589,6 +1631,17 @@ public final class NetheriteFarmer {
                 for (int dz = -r; dz <= r; dz++) {
                     BlockPos q = new BlockPos(px + dx, py + dy, pz + dz);
                     if (!istLava(mc, q)) continue;
+
+                    // Lava UNTER dem Boden oder UEBER der Decke ist harmlos,
+                    // solange etwas Festes dazwischen liegt.
+                    //
+                    // Genau das liess den Bot im Kreis drehen: ein Lavasee
+                    // unter dem Stollen loeste dauernd Flucht aus, obwohl
+                    // ein Block Boden dazwischen lag. Er meldete endlos
+                    // "Lava kommt naeher" und drehte sich.
+                    if (dy < 0 && fest(mc, new BlockPos(px + dx, py, pz + dz))) continue;
+                    if (dy > 1 && fest(mc, new BlockPos(px + dx, py + 2, pz + dz))) continue;
+
                     double d = dx * dx + dy * dy + dz * dz;
                     if (d >= besteD) continue;
                     if (!freieSicht(mc, px, py, pz, q)) continue;   // Wand dazwischen
@@ -1621,6 +1674,62 @@ public final class NetheriteFarmer {
     private static float restWinkel(LocalPlayer player) {
         if (!wunschGesetzt) return 0f;
         return ((wunschYaw - player.getYRot()) % 360f + 540f) % 360f - 180f;
+    }
+
+
+    // ======================================================================
+    // Schutz gegen Hin-und-Her
+    // ======================================================================
+    //
+    // Stiess der Bot am Ende des Stollens auf Lava, drehte er um -- und lief
+    // denselben Gang zurueck. Am anderen Ende wieder Lava, wieder umdrehen.
+    // Eine Schleife, die nie endet und keinen Meter neuen Stollen bringt.
+    //
+    // Die Loesung: er merkt sich, in welche Richtungen er zuletzt gedreht
+    // hat. Wechselt er zu haeufig, geht er QUER -- also senkrecht zur
+    // bisherigen Achse -- oder eine Ebene tiefer.
+
+    private static int drehungenZuletzt = 0;
+    private static int drehFensterAb = 0;
+    private static int ebenenWechsel = 0;
+
+    /**
+     * Meldet eine Richtungsaenderung und liefert die neue Richtung.
+     *
+     * Bei den ersten Wechseln wird einfach gedreht. Haeufen sie sich, wird
+     * quer ausgewichen: das bricht das Pendeln zwischen zwei Enden auf.
+     */
+    private static int[] neueRichtung(Minecraft mc, int[] alt) {
+        if (tick - drehFensterAb > 600) {      // halbe Minute ohne Wechsel
+            drehungenZuletzt = 0;
+            drehFensterAb = tick;
+        }
+        drehungenZuletzt++;
+
+        if (drehungenZuletzt <= 2) {
+            return drehe(alt);                  // normale Vierteldrehung
+        }
+
+        // Zu oft gewechselt: quer zur bisherigen Achse ausbrechen und
+        // ausserdem die Ebene wechseln, damit er nicht wieder im selben
+        // Gang landet.
+        drehungenZuletzt = 0;
+        drehFensterAb = tick;
+        ebenenWechsel = tick;
+        melde(mc, "Pendle zwischen Hindernissen -- breche quer aus.");
+        // Aus Nord/Sued wird Ost/West und umgekehrt; zusaetzlich gespiegelt,
+        // damit er nicht in den gerade verlassenen Ast zurueckgeht.
+        return new int[]{alt[1], -alt[0]};
+    }
+
+    /**
+     * Soll gerade die Ebene gewechselt werden?
+     *
+     * Nach einem Ausbruch graebt der Bot kurz abwaerts. Damit verlaesst er
+     * den alten Stollen wirklich, statt nur die Richtung zu tauschen.
+     */
+    private static boolean wechseltEbene() {
+        return ebenenWechsel != 0 && tick - ebenenWechsel < 100;
     }
 
 }

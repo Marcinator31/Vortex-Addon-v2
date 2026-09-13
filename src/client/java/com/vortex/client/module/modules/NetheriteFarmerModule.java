@@ -44,13 +44,18 @@ public class NetheriteFarmerModule extends Module {
     /**
      * Wie weit um den Stollen herum nach freigelegtem Debris gesucht wird.
      *
-     * KLEIN HALTEN. Der Bot soll graben, nicht durch Waende sehen: auf den
-     * meisten Servern liefert der Server die Bloecke hinter Stein ohnehin
-     * nicht aus. Diese Reichweite ist dafuer da, Debris mitzunehmen, das
-     * beim Graben nebenan auftaucht.
+     * 20 Bloecke: sieht der Client Debris in diesem Umkreis, geht der Bot
+     * hin und baut es ab. Weiter entferntes wird nicht verfolgt -- der Weg
+     * dorthin kostet mehr, als der Fund einbringt, und fuehrt oft durch
+     * unbekanntes Gelaende.
+     *
+     * Auf Servern mit Chunk-Schutz liefert der Server die Bloecke hinter
+     * Stein ohnehin nicht aus. Dann bleibt es beim blinden Graben auf der
+     * eingestellten Hoehe -- und diese Reichweite greift nur, wenn beim
+     * Graben etwas freigelegt wird.
      */
     public final NumberSetting pickupRange =
-            new NumberSetting("Nearby Debris Range", 5, 2, 12, 1);
+            new NumberSetting("Debris Range", 20, 4, 32, 2);
 
     // --- Ueberleben ------------------------------------------------------
 
