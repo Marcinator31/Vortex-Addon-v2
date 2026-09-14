@@ -91,6 +91,7 @@ public final class NetheriteFarmer {
                 mc.options.keyShift.setDown(false);
                 mc.options.keyJump.setDown(false);
                 mc.options.keyDown.setDown(false);
+                mc.options.keyDrop.setDown(false);
             }
         } catch (Throwable ignored) { }
         zustand = Zustand.AUS;
@@ -107,6 +108,8 @@ public final class NetheriteFarmer {
         ebenenWechsel = 0;
         erholungen = 0;
         letzterFund = 0;
+        brockenSeit = 0;
+        brockenBesteDistanz = Double.MAX_VALUE;
         lavaRuheBis = 0;
         schlaegtAuf = null;
     }
@@ -253,6 +256,10 @@ public final class NetheriteFarmer {
             mc.options.keyDown.setDown(false);
             mc.options.keyJump.setDown(false);
             mc.options.keyAttack.setDown(false);
+            // Wegwerfen MUSS hier stehen: bleibt die Taste gedrueckt, wirft
+            // der Bot Gegenstand um Gegenstand aus dem Inventar, bis nichts
+            // mehr da ist.
+            mc.options.keyDrop.setDown(false);
 
             // --- 2. Ueberleben -------------------------------------------
             if (ueberleben(mc, player, mod)) return;
@@ -373,6 +380,26 @@ public final class NetheriteFarmer {
                 fluchtWeg = null;
                 melde(mc, "Immer noch in Lava -- neue Richtung.");
             }
+            // Zwischen zwei Bloecken in der Lava: rundum freiraeumen.
+            //
+            // Die Flucht waehlt EINE Richtung. Steckt er wirklich fest, ist
+            // die womoeglich auch zu -- dann hilft nur, alles ringsum
+            // wegzunehmen.
+            if (stehtSeit > 6 && aktionSlot < 0) {
+                int px = (int) Math.floor(player.getX());
+                int py = (int) Math.floor(player.getY());
+                int pz = (int) Math.floor(player.getZ());
+                int[][] rund = {{1,0},{-1,0},{0,1},{0,-1}};
+                for (int[] r : rund) {
+                    BlockPos q = new BlockPos(px + r[0], py, pz + r[1]);
+                    if (!fest(mc, q)) continue;
+                    blickeAuf(player, q);
+                    waehleSpitzhacke(player);
+                    mc.options.keyAttack.setDown(true);
+                    return true;
+                }
+            }
+
             // Solange der goldene Apfel laeuft, NICHT graben -- sonst
             // bricht der Schlag das Essen ab. Laufen und Springen bleiben
             // erlaubt, das stoert nicht.
@@ -528,6 +555,7 @@ public final class NetheriteFarmer {
         // zufaellig etwas aufgesammelt, naemlich wenn der Weg ohnehin
         // darueber fuehrte.
         net.minecraft.world.entity.item.ItemEntity brocken = nahesterBrocken(mc, player);
+        if (brocken != null && schaffePlatz(mc, player)) return;
         if (brocken != null) {
             BlockPos bp = new BlockPos((int) Math.floor(brocken.getX()),
                                        (int) Math.floor(brocken.getY()),
@@ -550,11 +578,69 @@ public final class NetheriteFarmer {
 
             fundGemeldet(mc);
             zustand = Zustand.GEHT;
+
+            // DER BROCKEN BRAUCHT DIESELBE BEHANDLUNG WIE EIN BLOCK.
+            //
+            // Frueher lief der Bot nur hin. Lag der Brocken auf einem Block
+            // ueber ihm, rannte er darunter herum, sah ihn an und kam nie
+            // heran -- weder raeumte er den Weg frei noch baute er sich hoch.
+            //
+            // Jetzt gilt dieselbe Reihenfolge wie beim Debris-Block:
+            //   1. liegt er hoeher? -> hochbauen
+            //   2. steht etwas im Weg? -> abbauen
+            //   3. sonst hinlaufen
+            int bHoehe = bp.getY() - (int) Math.floor(player.getY());
+            double bWaagerecht = Math.hypot(brocken.getX() - player.getX(),
+                                            brocken.getZ() - player.getZ());
+
+            if (bHoehe >= 2 && bWaagerecht < 2.5) {
+                if (baueHoch(mc, player)) return;
+                sperre(mc, bp, "Brocken liegt zu hoch -- lasse ihn liegen.");
+                return;
+            }
+
+            BlockPos bImWeg = blockDirektDavor(mc, player, bp);
+            if (bImWeg == null && bHoehe >= 1) {
+                // Liegt er eine Stufe hoeher, steht oft genau der Block
+                // darunter im Weg -- der laesst sich abbauen.
+                BlockPos unterBrocken = new BlockPos(bp.getX(), bp.getY() - 1, bp.getZ());
+                if (fest(mc, unterBrocken)
+                        && player.distanceToSqr(unterBrocken.getX() + 0.5,
+                                unterBrocken.getY() + 0.5, unterBrocken.getZ() + 0.5) <= 20.0) {
+                    bImWeg = unterBrocken;
+                }
+            }
+
+            if (bImWeg != null) {
+                blickeAuf(player, bImWeg);
+                waehleSpitzhacke(player);
+                mc.options.keyUp.setDown(false);
+                mc.options.keyJump.setDown(false);
+                mc.options.keyAttack.setDown(true);
+                return;
+            }
+
             mc.options.keyAttack.setDown(false);
             blickeAufPunkt(player, brocken.getX(), brocken.getY(), brocken.getZ());
             mc.options.keyUp.setDown(Math.abs(restWinkel(player)) < 40f);
+
+            // Kommt er nicht naeher, aufgeben statt endlos daneben zu stehen.
+            double bd = player.distanceToSqr(brocken.getX(), brocken.getY(), brocken.getZ());
+            if (bd < brockenBesteDistanz - 0.25) {
+                brockenBesteDistanz = bd;
+                brockenSeit = tick;
+            } else if (brockenSeit != 0 && tick - brockenSeit > 200) {
+                sperre(mc, bp, "Komme an einen Brocken nicht heran -- lasse ihn liegen.");
+                brockenSeit = 0;
+                brockenBesteDistanz = Double.MAX_VALUE;
+            } else if (brockenSeit == 0) {
+                brockenSeit = tick;
+                brockenBesteDistanz = bd;
+            }
             return;
         }
+        brockenSeit = 0;
+        brockenBesteDistanz = Double.MAX_VALUE;
 
         // --- 1. Freigelegtes Debris hat Vorrang ---------------------------
         if (ziel != null
@@ -603,6 +689,22 @@ public final class NetheriteFarmer {
             waehleSpitzhacke(player);
             double d = Math.sqrt(player.distanceToSqr(
                     ziel.getX() + 0.5, ziel.getY() + 0.5, ziel.getZ() + 0.5));
+
+            // Zu hoch? Dann hochbauen statt danebenzustehen.
+            //
+            // Zwei Bloecke ueber dem Kopf ist ausser Reichweite, und ein
+            // Sprung bringt nur einen. Ohne Hochbauen stand der Bot hier
+            // frueher endlos.
+            int hoehenDiff = ziel.getY() - (int) Math.floor(player.getY());
+            double waagerecht = Math.hypot(ziel.getX() + 0.5 - player.getX(),
+                                           ziel.getZ() + 0.5 - player.getZ());
+            if (hoehenDiff >= 3 && waagerecht < 2.5) {
+                zustand = Zustand.GEHT;
+                if (baueHoch(mc, player)) return;
+                // Kein Fuellmaterial: Ziel aufgeben statt zu warten.
+                sperre(mc, ziel, "Debris zu hoch und kein Baumaterial -- lasse es liegen.");
+                return;
+            }
 
             // IN REICHWEITE WIRD IMMER ABGEBAUT, nie gelaufen.
             //
@@ -1029,6 +1131,7 @@ public final class NetheriteFarmer {
         mc.options.keyUp.setDown(false);
         mc.options.keyJump.setDown(false);
         mc.options.keyDown.setDown(false);
+        mc.options.keyDrop.setDown(false);
     }
 
     /** Sucht einen Gegenstand im ganzen Inventar. -1 wenn nicht vorhanden. */
@@ -2009,6 +2112,155 @@ public final class NetheriteFarmer {
             for (int h = 0; h <= 1; h++) {
                 if (istLava(mc, new BlockPos(bx, by + h, bz))) return true;
             }
+        }
+        return false;
+    }
+
+
+    // ======================================================================
+    // Hochsaeulen
+    // ======================================================================
+    //
+    // Liegt das Debris zwei oder mehr Bloecke ueber dem Bot, kommt er nicht
+    // heran: springen reicht nur fuer einen Block, und graben geht nach oben
+    // nicht weiter, weil man in den entstandenen Schacht nicht hinaufkommt.
+    //
+    // Frueher stand er dann einfach da. Jetzt baut er sich hoch -- Block
+    // unter sich setzen, waehrend er springt. Das ist der uebliche Weg und
+    // braucht nur Fuellmaterial, von dem im Nether reichlich anfaellt.
+
+    /** Bloecke, die zum Hochbauen taugen. Netherrack faellt beim Graben an. */
+    private static final net.minecraft.world.item.Item[] FUELLER = {
+        Items.NETHERRACK, Items.COBBLESTONE, Items.BLACKSTONE,
+        Items.BASALT, Items.DIRT, Items.STONE
+    };
+
+    private static int letzterBau = -100;
+
+    /** Fuellmaterial in der Hotbar, oder -1. */
+    private static int findeFueller(LocalPlayer player) {
+        for (net.minecraft.world.item.Item item : FUELLER) {
+            int slot = findeHotbar(player, item);
+            if (slot >= 0) return slot;
+        }
+        return -1;
+    }
+
+    /**
+     * Baut einen Block unter dem Bot, waehrend er springt.
+     *
+     * @return true, wenn gerade gebaut wird -- dann sonst nichts tun.
+     */
+    private static boolean baueHoch(Minecraft mc, LocalPlayer player) {
+        int slot = findeFueller(player);
+        if (slot < 0) return false;
+
+        // Nicht zu schnell hintereinander: der Block muss erst gesetzt sein,
+        // sonst setzt er ins Leere und verliert nur Material.
+        if (tick - letzterBau < 8) {
+            mc.options.keyJump.setDown(true);
+            return true;
+        }
+
+        player.getInventory().setSelectedSlot(slot);
+        // Gerade nach unten sehen -- dorthin kommt der Block.
+        willBlicken(player.getYRot(), 90f);
+        mc.options.keyUp.setDown(false);
+        mc.options.keyAttack.setDown(false);
+        mc.options.keyJump.setDown(true);
+
+        // Erst setzen, wenn er auch wirklich nach unten sieht. Sonst landet
+        // der Block an der Wand und der Bot steht weiter unten.
+        if (player.getXRot() < 80f) return true;
+
+        try {
+            var hit = mc.hitResult;
+            if (hit instanceof net.minecraft.world.phys.BlockHitResult bhr) {
+                mc.gameMode.useItemOn(player, net.minecraft.world.InteractionHand.MAIN_HAND, bhr);
+                letzterBau = tick;
+            }
+        } catch (Throwable pvpErr) {
+            com.vortex.client.core.Errors.report("NetheriteFarmer.baueHoch", pvpErr);
+            return false;
+        }
+        return true;
+    }
+
+
+    // ======================================================================
+    // Platz schaffen
+    // ======================================================================
+    //
+    // Ist das Inventar voll, bleibt das Debris am Boden liegen -- der Bot
+    // laeuft darueber und nichts passiert. Fuer stundenlangen Betrieb ist
+    // das der haeufigste Grund, warum am Ende wenig herauskommt.
+    //
+    // Weggeworfen wird zuerst, was am wenigsten wert ist: ueberzaehlige
+    // Totems. EINES bleibt immer -- ohne Totem stirbt der Bot beim naechsten
+    // Fehler endgueltig.
+
+    private static int letzterWurf = -100;
+    private static int brockenSeit = 0;
+    private static double brockenBesteDistanz = Double.MAX_VALUE;
+
+    /** Ist noch ein Platz frei? */
+    private static boolean inventarVoll(LocalPlayer player) {
+        int size = Math.min(player.getInventory().getContainerSize(), 36);
+        for (int i = 0; i < size; i++) {
+            ItemStack st = player.getInventory().getItem(i);
+            if (st == null || st.isEmpty()) return false;
+        }
+        return true;
+    }
+
+    /** Wie viele Totems hat er insgesamt? */
+    private static int zaehleTotems(LocalPlayer player) {
+        int n = 0;
+        int size = Math.min(player.getInventory().getContainerSize(), 36);
+        for (int i = 0; i < size; i++) {
+            ItemStack st = player.getInventory().getItem(i);
+            if (st != null && !st.isEmpty() && st.getItem() == Items.TOTEM_OF_UNDYING) {
+                n += st.getCount();
+            }
+        }
+        ItemStack off = player.getOffhandItem();
+        if (off != null && !off.isEmpty() && off.getItem() == Items.TOTEM_OF_UNDYING) {
+            n += off.getCount();
+        }
+        return n;
+    }
+
+    /**
+     * Macht einen Platz frei, wenn das Inventar voll ist.
+     *
+     * @return true, wenn gerade etwas weggeworfen wird.
+     */
+    private static boolean schaffePlatz(Minecraft mc, LocalPlayer player) {
+        if (!inventarVoll(player)) return false;
+        if (tick - letzterWurf < 10) return true;
+
+        // Ueberzaehlige Totems -- aber nie das letzte.
+        if (zaehleTotems(player) > 1) {
+            for (int i = 0; i < 9; i++) {
+                ItemStack st = player.getInventory().getItem(i);
+                if (st == null || st.isEmpty()) continue;
+                if (st.getItem() != Items.TOTEM_OF_UNDYING) continue;
+                player.getInventory().setSelectedSlot(i);
+                mc.options.keyDrop.setDown(true);
+                letzterWurf = tick;
+                melde(mc, "Inventar voll -- werfe ein Totem weg.");
+                return true;
+            }
+        }
+
+        // Sonst Fuellmaterial: davon faellt beim Graben staendig neues an.
+        for (net.minecraft.world.item.Item item : FUELLER) {
+            int slot = findeHotbar(player, item);
+            if (slot < 0) continue;
+            player.getInventory().setSelectedSlot(slot);
+            mc.options.keyDrop.setDown(true);
+            letzterWurf = tick;
+            return true;
         }
         return false;
     }
