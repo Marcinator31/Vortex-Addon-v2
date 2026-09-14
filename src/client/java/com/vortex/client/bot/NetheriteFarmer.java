@@ -110,6 +110,7 @@ public final class NetheriteFarmer {
         letzterFund = 0;
         brockenSeit = 0;
         brockenBesteDistanz = Double.MAX_VALUE;
+        bautGerade = false;
         lavaRuheBis = 0;
         schlaegtAuf = null;
     }
@@ -593,11 +594,15 @@ public final class NetheriteFarmer {
             double bWaagerecht = Math.hypot(brocken.getX() - player.getX(),
                                             brocken.getZ() - player.getZ());
 
-            if (bHoehe >= 2 && bWaagerecht < 2.5) {
+            boolean bBrauchtHoehe = bautGerade ? (bHoehe >= 1)
+                                               : (bHoehe >= 2 && bWaagerecht < 2.5);
+            if (bBrauchtHoehe) {
                 if (baueHoch(mc, player)) return;
+                bautGerade = false;
                 sperre(mc, bp, "Brocken liegt zu hoch -- lasse ihn liegen.");
                 return;
             }
+            bautGerade = false;
 
             BlockPos bImWeg = blockDirektDavor(mc, player, bp);
             if (bImWeg == null && bHoehe >= 1) {
@@ -698,13 +703,27 @@ public final class NetheriteFarmer {
             int hoehenDiff = ziel.getY() - (int) Math.floor(player.getY());
             double waagerecht = Math.hypot(ziel.getX() + 0.5 - player.getX(),
                                            ziel.getZ() + 0.5 - player.getZ());
-            if (hoehenDiff >= 3 && waagerecht < 2.5) {
+
+            // HYSTERESE: einmal begonnen, wird durchgebaut.
+            //
+            // Ohne sie kippte der Bot an der Schwelle hin und her -- ein Tick
+            // hochbauen (Blick nach unten), naechster Tick abbauen (Blick
+            // nach oben) -- und kam nie an.
+            //
+            // Begonnen wird ab drei Bloecken Hoehenunterschied, beendet erst,
+            // wenn das Ziel wirklich in Reichweite ist (d <= 4.0, also mit
+            // Abstand zur Abbaugrenze von 4,5).
+            boolean brauchtHoehe = bautGerade ? (hoehenDiff >= 2 && d > 4.0)
+                                              : (hoehenDiff >= 3 && waagerecht < 2.5);
+            if (brauchtHoehe) {
                 zustand = Zustand.GEHT;
                 if (baueHoch(mc, player)) return;
                 // Kein Fuellmaterial: Ziel aufgeben statt zu warten.
+                bautGerade = false;
                 sperre(mc, ziel, "Debris zu hoch und kein Baumaterial -- lasse es liegen.");
                 return;
             }
+            bautGerade = false;
 
             // IN REICHWEITE WIRD IMMER ABGEBAUT, nie gelaufen.
             //
@@ -2137,6 +2156,18 @@ public final class NetheriteFarmer {
 
     private static int letzterBau = -100;
 
+    /**
+     * Laeuft gerade ein Bauvorgang?
+     *
+     * WICHTIG fuer die Blickfuehrung. Ohne diesen Zustand wechselte der Bot
+     * jeden Tick: hochbauen heisst nach unten sehen, abbauen heisst nach
+     * oben sehen. Beides abwechselnd ergab einen Bot, der nur noch den Kopf
+     * auf und ab warf und nichts zustande brachte.
+     *
+     * Einmal begonnen, wird durchgebaut, bis das Ziel in Reichweite ist.
+     */
+    private static boolean bautGerade = false;
+
     /** Fuellmaterial in der Hotbar, oder -1. */
     private static int findeFueller(LocalPlayer player) {
         for (net.minecraft.world.item.Item item : FUELLER) {
@@ -2152,25 +2183,64 @@ public final class NetheriteFarmer {
      * @return true, wenn gerade gebaut wird -- dann sonst nichts tun.
      */
     private static boolean baueHoch(Minecraft mc, LocalPlayer player) {
-        int slot = findeFueller(player);
-        if (slot < 0) return false;
+        int px = (int) Math.floor(player.getX());
+        int py = (int) Math.floor(player.getY());
+        int pz = (int) Math.floor(player.getZ());
 
-        // Nicht zu schnell hintereinander: der Block muss erst gesetzt sein,
-        // sonst setzt er ins Leere und verliert nur Material.
+        // 1) DECKE ZUERST WEGNEHMEN.
+        //
+        // Sitzt ein Block ueber dem Kopf, stoesst der Bot beim Springen
+        // dagegen und kommt nie hoeher -- er baute endlos weiter, ohne dass
+        // sich etwas bewegte. Also erst Platz schaffen.
+        BlockPos ueberKopf = new BlockPos(px, py + 2, pz);
+        if (fest(mc, ueberKopf)) {
+            bautGerade = true;
+            waehleSpitzhacke(player);
+            blickeAuf(player, ueberKopf);
+            mc.options.keyJump.setDown(false);
+            mc.options.keyUp.setDown(false);
+            mc.options.keyAttack.setDown(true);
+            return true;
+        }
+
+        // 2) Steckt er seitlich fest, erst dort freiraeumen.
+        //
+        // Beim Hochbauen in einer engen Spalte klemmt er sonst zwischen zwei
+        // Bloecken und springt nur noch auf der Stelle.
+        if (stehtSeit > 6) {
+            int[][] rund = {{1,0},{-1,0},{0,1},{0,-1}};
+            for (int[] r : rund) {
+                BlockPos q = new BlockPos(px + r[0], py + 1, pz + r[1]);
+                if (!fest(mc, q)) continue;
+                bautGerade = true;
+                waehleSpitzhacke(player);
+                blickeAuf(player, q);
+                mc.options.keyJump.setDown(false);
+                mc.options.keyAttack.setDown(true);
+                return true;
+            }
+        }
+
+        // 3) Block setzen.
+        int slot = findeFueller(player);
+        if (slot < 0) {
+            bautGerade = false;
+            return false;
+        }
+        bautGerade = true;
+
         if (tick - letzterBau < 8) {
             mc.options.keyJump.setDown(true);
             return true;
         }
 
         player.getInventory().setSelectedSlot(slot);
-        // Gerade nach unten sehen -- dorthin kommt der Block.
-        willBlicken(player.getYRot(), 90f);
+        willBlicken(player.getYRot(), 90f);      // gerade nach unten
         mc.options.keyUp.setDown(false);
         mc.options.keyAttack.setDown(false);
         mc.options.keyJump.setDown(true);
 
-        // Erst setzen, wenn er auch wirklich nach unten sieht. Sonst landet
-        // der Block an der Wand und der Bot steht weiter unten.
+        // Erst setzen, wenn er auch wirklich nach unten sieht.
         if (player.getXRot() < 80f) return true;
 
         try {
@@ -2181,6 +2251,7 @@ public final class NetheriteFarmer {
             }
         } catch (Throwable pvpErr) {
             com.vortex.client.core.Errors.report("NetheriteFarmer.baueHoch", pvpErr);
+            bautGerade = false;
             return false;
         }
         return true;
