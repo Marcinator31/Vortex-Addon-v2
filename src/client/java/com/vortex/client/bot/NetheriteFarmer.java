@@ -72,6 +72,8 @@ public final class NetheriteFarmer {
         fluchtWeg = null;
         drehungenZuletzt = 0;
         ebenenWechsel = 0;
+        erholungen = 0;
+        letzterFund = 0;
         lavaRuheBis = 0;
         schlaegtAuf = null;
     }
@@ -114,8 +116,17 @@ public final class NetheriteFarmer {
 
             // --- 1. Aufhoeren -------------------------------------------
             if (mod.logoutOnPlayer.get() && fremderSpielerNah(mc, mod)) {
-                melde(mc, "Spieler in der Naehe -- logge aus.");
-                logout(mc);
+                // /afk statt Verbindungstrennung.
+                //
+                // Ausloggen war zu hart: der Bot war weg, die Welt lud aus,
+                // und beim naechsten Start stand er irgendwo im Nichts. /afk
+                // haelt ihn drin und beendet nur die Arbeit.
+                if (!gemeldet) {
+                    gemeldet = true;
+                    melde(mc, "Spieler in der Naehe -- gehe auf /afk.");
+                    tastenLos(mc);
+                    sendeBefehl(mc, "afk");
+                }
                 return;
             }
             String fehlt = wasFehlt(player, mod);
@@ -258,20 +269,7 @@ public final class NetheriteFarmer {
         return null;
     }
 
-    private static void logout(Minecraft mc) {
-        try {
-            tastenLos(mc);
-            stop();
-            // Verbindung trennen. Der Bildschirm danach uebernimmt der
-            // normale Ablauf des Spiels.
-            if (mc.getConnection() != null) {
-                mc.getConnection().getConnection().disconnect(
-                        net.minecraft.network.chat.Component.literal("Vortex: Spieler in der Naehe"));
-            }
-        } catch (Throwable pvpErr) {
-            com.vortex.client.core.Errors.report("NetheriteFarmer.logout", pvpErr);
-        }
-    }
+
 
     // ------------------------------------------------------------------
     // 2. Ueberleben
@@ -500,6 +498,7 @@ public final class NetheriteFarmer {
         // darueber fuehrte.
         net.minecraft.world.entity.item.ItemEntity brocken = nahesterBrocken(mc, player);
         if (brocken != null) {
+            fundGemeldet(mc);
             zustand = Zustand.GEHT;
             mc.options.keyAttack.setDown(false);
             blickeAufPunkt(player, brocken.getX(), brocken.getY(), brocken.getZ());
@@ -521,10 +520,12 @@ public final class NetheriteFarmer {
         // Debris hoch an der Decke oder hinter einer Lavawand kann man nicht
         // immer erreichen. Ohne diese Grenze versucht es der Bot bis zum
         // Verhungern -- und graebt in der Zeit keinen Meter Stollen.
-        if (ziel != null && tick - zielSeit > 300) {
-            melde(mc, "Komme an das Debris nicht heran -- grabe weiter.");
-            ziel = null;
-            schlagenZuruecksetzen();
+        // Nach acht Sekunden aufgeben UND sperren.
+        //
+        // Frueher wurde nur das Ziel geleert -- im naechsten Tick fand er
+        // dasselbe Debris wieder. Die Sperre bricht diese Schleife.
+        if (ziel != null && tick - zielSeit > 160) {
+            sperre(mc, ziel, "Komme an ein Debris nicht heran -- grabe weiter.");
             return;
         }
         if (ziel != null) {
@@ -552,12 +553,29 @@ public final class NetheriteFarmer {
             // dazwischen, lief der Bot dagegen und kam nie an. Jetzt wird der
             // Weg freigeraeumt: liegt ein Block zwischen Spieler und Ziel,
             // wird DER abgebaut, nicht das Ziel.
-            BlockPos imWeg = naechsterBlockRichtung(mc, player, ziel);
+            // Erst den Block DIREKT vor den Fuessen und vor dem Kopf pruefen.
+            //
+            // Die Strahlpruefung tastet die Luftlinie ab und verfehlt Kanten,
+            // gegen die man tatsaechlich laeuft. Genau daran blieb er haengen.
+            BlockPos imWeg = blockDirektDavor(mc, player, ziel);
+            if (imWeg == null) imWeg = naechsterBlockRichtung(mc, player, ziel);
             if (imWeg != null) {
                 blickeAuf(player, imWeg);
                 mc.options.keyUp.setDown(false);
                 mc.options.keyAttack.setDown(true);
             } else {
+                // Liegt Lava zwischen Bot und Ziel, ist dieses Debris
+                // vorerst nicht zu holen. GANZ WICHTIG: das Ziel sperren,
+                // nicht nur ausweichen.
+                //
+                // Vorher wich er aus, behielt aber das Ziel -- im naechsten
+                // Tick lief er wieder hin, sah wieder Lava, wich wieder aus.
+                // Genau die Schleife, die du beschrieben hast.
+                if (mod.avoidLava.get() && lavaAufDemWeg(mc, player, ziel)) {
+                    sperre(mc, ziel, "Lava vor einem Debris -- lasse es liegen.");
+                    return;
+                }
+
                 blickeAuf(player, ziel);
                 mc.options.keyAttack.setDown(false);
                 // ERST ausrichten, DANN laufen.
@@ -789,6 +807,7 @@ public final class NetheriteFarmer {
                 for (int dz = -r; dz <= r; dz++) {
                     p.set(mitte.getX() + dx, mitte.getY() + dy, mitte.getZ() + dz);
                     if (mc.level.getBlockState(p).getBlock() != Blocks.ANCIENT_DEBRIS) continue;
+                    if (istGesperrt(p)) continue;        // schon aufgegeben
                     // Abstand selbst rechnen statt distSqr, und die Position
                     // neu bauen statt immutable(): beides benutzt nur
                     // Methoden, die anderswo im Projekt vorkommen.
@@ -1228,14 +1247,33 @@ public final class NetheriteFarmer {
         // Jetzt wird der Reihe nach probiert: vorne Fusshoehe, vorne
         // Kopfhoehe, dann oben. Der erste feste Block gewinnt.
         if (stehtSeit > 20 && stehtSeit % 5 == 0) {
-            if (richtung == null) richtung = himmelsrichtung(player.getYRot());
             int px = (int) Math.floor(player.getX());
             int py = (int) Math.floor(player.getY());
             int pz = (int) Math.floor(player.getZ());
+
+            // RICHTUNG ZUM ZIEL, nicht die Stollenrichtung.
+            //
+            // Das war der Grund, warum er beim Weg zum Debris fast immer
+            // haengenblieb: er grub sich in die Grabrichtung frei, das Debris
+            // lag aber ganz woanders. Er raeumte also die falsche Seite.
+            int rx, rz;
+            if (ziel != null) {
+                int dxz = ziel.getX() - px, dzz = ziel.getZ() - pz;
+                if (Math.abs(dxz) >= Math.abs(dzz)) {
+                    rx = Integer.signum(dxz); rz = 0;
+                } else {
+                    rx = 0; rz = Integer.signum(dzz);
+                }
+                if (rx == 0 && rz == 0) { rx = 0; rz = 0; }   // genau darunter
+            } else {
+                if (richtung == null) richtung = himmelsrichtung(player.getYRot());
+                rx = richtung[0]; rz = richtung[1];
+            }
+
             BlockPos[] versuche = {
-                new BlockPos(px + richtung[0], py, pz + richtung[1]),       // vorne unten
-                new BlockPos(px + richtung[0], py + 1, pz + richtung[1]),   // vorne oben
-                new BlockPos(px, py + 2, pz)                                // ueber mir
+                new BlockPos(px + rx, py, pz + rz),          // vorne unten
+                new BlockPos(px + rx, py + 1, pz + rz),      // vorne oben
+                new BlockPos(px, py + 2, pz)                 // ueber mir
             };
             for (BlockPos z : versuche) {
                 if (!fest(mc, z)) continue;
@@ -1256,12 +1294,28 @@ public final class NetheriteFarmer {
             melde(mc, "Komme nicht weiter -- neue Richtung.");
         }
 
-        // Nach zehn Sekunden ohne Bewegung ist etwas grundlegend falsch.
+        // Nach zehn Sekunden ohne Bewegung: ERHOLUNG statt Abschalten.
+        //
+        // Fuer stundenlangen Betrieb ist ein Bot, der sich beendet, wertlos.
+        // Deshalb wird der ganze Zustand zurueckgesetzt: neues Ziel, neue
+        // Richtung, eine Ebene tiefer. Das loest praktisch jede Sackgasse.
+        //
+        // Erst wenn das mehrfach hintereinander nichts bringt, ist etwas
+        // grundlegend falsch -- dann meldet er sich ab, ohne sich
+        // abzuschalten.
         if (stehtSeit > 200) {
-            melde(mc, "Komme nicht frei -- Bot stoppt.");
-            NetheriteFarmerModule m = modul();
-            if (m != null) m.setEnabled(false);
-            stop();
+            stehtSeit = 0;
+            erholungen++;
+            ziel = null;
+            schlaegtAuf = null;
+            fluchtWeg = null;
+            if (richtung != null) richtung = new int[]{richtung[1], -richtung[0]};
+            ebenenWechsel = tick;
+            melde(mc, "Haenge fest -- setze mich neu auf (" + erholungen + ").");
+            if (erholungen >= 5) {
+                        melde(mc, "Komme hier nicht weiter -- /afk.");
+                sendeBefehl(mc, "afk");
+            }
         }
     }
 
@@ -1692,6 +1746,7 @@ public final class NetheriteFarmer {
     private static int drehungenZuletzt = 0;
     private static int drehFensterAb = 0;
     private static int ebenenWechsel = 0;
+    private static int erholungen = 0;
 
     /**
      * Meldet eine Richtungsaenderung und liefert die neue Richtung.
@@ -1730,6 +1785,151 @@ public final class NetheriteFarmer {
      */
     private static boolean wechseltEbene() {
         return ebenenWechsel != 0 && tick - ebenenWechsel < 100;
+    }
+
+
+    // ======================================================================
+    // Wachhund
+    // ======================================================================
+    //
+    // Fuer stundenlangen Betrieb reicht es nicht, einzelne Sackgassen zu
+    // erkennen. Es gibt Faelle, in denen alles "funktioniert" und trotzdem
+    // nichts passiert: ein Stollen, der seit zehn Minuten nur Netherrack
+    // liefert, weil der Bot im Kreis gegraben hat.
+    //
+    // Der Wachhund misst das Einzige, was zaehlt: Kommt Ausbeute herein?
+    // Wenn zwei Minuten lang nichts, wird gross umgestellt.
+
+    private static int letzterFund = 0;
+    private static int gefunden = 0;
+
+    /** Meldet, dass Debris aufgesammelt wurde. */
+    private static void fundGemeldet(Minecraft mc) {
+        gefunden++;
+        letzterFund = tick;
+    }
+
+    private static void wachhund(Minecraft mc, LocalPlayer player) {
+        if (letzterFund == 0) letzterFund = tick;
+        // Zwei Minuten ohne Fund.
+        if (tick - letzterFund < 2400) return;
+        letzterFund = tick;
+
+        // Richtung um 90 Grad kippen UND die Ebene wechseln. Beides
+        // zusammen, weil eine Aenderung allein oft im selben Gebiet bleibt.
+        if (richtung == null) richtung = himmelsrichtung(player.getYRot());
+        richtung = new int[]{richtung[1], -richtung[0]};
+        ebenenWechsel = tick;
+        ziel = null;
+        schlaegtAuf = null;
+        melde(mc, "Lange nichts gefunden -- suche woanders weiter.");
+    }
+
+
+    // ======================================================================
+    // Sperrliste fuer unerreichbare Ziele
+    // ======================================================================
+    //
+    // DER KERNFEHLER aller drei Endlosschleifen: der Bot gab ein Ziel nie
+    // auf. Er wich der Lava aus, drehte die Grabrichtung -- und im naechsten
+    // Tick fand er dasselbe Debris wieder und lief erneut hin.
+    //
+    // Dasselbe bei Debris zwei Bloecke ueber ihm: er meldete "komme nicht
+    // heran", verwarf das Ziel, fand es sofort wieder und stand fuer immer.
+    //
+    // Jetzt wird ein aufgegebenes Ziel GEMERKT und eine Weile nicht mehr
+    // angefasst. Der Bot graebt stattdessen weiter -- und kommt spaeter von
+    // einer anderen Seite womoeglich doch heran.
+
+    private static final java.util.Map<Long, Integer> GESPERRT = new java.util.HashMap<>();
+
+    private static long schluessel(BlockPos p) {
+        return ((long) p.getX() & 0x3FFFFFF) << 38
+             | ((long) p.getY() & 0xFFF) << 26
+             | ((long) p.getZ() & 0x3FFFFFF);
+    }
+
+    /** Ziel aufgeben und fuer eine Weile sperren. */
+    private static void sperre(Minecraft mc, BlockPos p, String grund) {
+        if (p == null) return;
+        GESPERRT.put(schluessel(p), tick);
+        ziel = null;
+        schlaegtAuf = null;
+        if (tick - letzteSperrMeldung > 200) {
+            letzteSperrMeldung = tick;
+            melde(mc, grund);
+        }
+        // Liste klein halten: alte Eintraege nach fuenf Minuten vergessen.
+        if (GESPERRT.size() > 128) {
+            GESPERRT.entrySet().removeIf(e -> tick - e.getValue() > 6000);
+        }
+    }
+
+    private static boolean istGesperrt(BlockPos p) {
+        Integer seit = GESPERRT.get(schluessel(p));
+        if (seit == null) return false;
+        // Nach zwei Minuten darf er es erneut versuchen -- vielleicht steht
+        // er dann guenstiger.
+        if (tick - seit > 2400) {
+            GESPERRT.remove(schluessel(p));
+            return false;
+        }
+        return true;
+    }
+
+    private static int letzteSperrMeldung = -1000;
+
+
+    /**
+     * Der Block unmittelbar vor dem Bot in Zielrichtung.
+     *
+     * Die Strahlpruefung tastet die Luftlinie ab und geht an Kanten vorbei --
+     * der Bot lief dagegen und stand. Hier wird stattdessen genau das
+     * geprueft, wogegen er laeuft: der Block vor den Fuessen und der vor dem
+     * Kopf, in der Himmelsrichtung des Ziels.
+     */
+    private static BlockPos blockDirektDavor(Minecraft mc, LocalPlayer player, BlockPos ziel) {
+        int px = (int) Math.floor(player.getX());
+        int py = (int) Math.floor(player.getY());
+        int pz = (int) Math.floor(player.getZ());
+        int dxz = ziel.getX() - px, dzz = ziel.getZ() - pz;
+        if (dxz == 0 && dzz == 0) return null;        // genau darueber
+        int rx, rz;
+        if (Math.abs(dxz) >= Math.abs(dzz)) { rx = Integer.signum(dxz); rz = 0; }
+        else { rx = 0; rz = Integer.signum(dzz); }
+
+        BlockPos fuss = new BlockPos(px + rx, py, pz + rz);
+        BlockPos kopf = new BlockPos(px + rx, py + 1, pz + rz);
+        if (fest(mc, kopf)) return kopf;
+        if (fest(mc, fuss)) return fuss;
+        return null;
+    }
+
+
+    /**
+     * Liegt Lava auf der Strecke zwischen Bot und Ziel?
+     *
+     * Nur auf Fuss- und Kopfhoehe der Strecke -- Lava zwei Bloecke tiefer
+     * unter festem Boden ist kein Hindernis und hat den Bot frueher grundlos
+     * umkehren lassen.
+     */
+    private static boolean lavaAufDemWeg(Minecraft mc, LocalPlayer player, BlockPos ziel) {
+        double px = player.getX(), py = player.getY(), pz = player.getZ();
+        double dx = ziel.getX() + 0.5 - px;
+        double dy = ziel.getY() + 0.5 - py;
+        double dz = ziel.getZ() + 0.5 - pz;
+        double laenge = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (laenge < 0.001) return false;
+        dx /= laenge; dy /= laenge; dz /= laenge;
+        for (double t = 0.5; t <= laenge; t += 0.5) {
+            int bx = (int) Math.floor(px + dx * t);
+            int by = (int) Math.floor(py + dy * t);
+            int bz = (int) Math.floor(pz + dz * t);
+            for (int h = 0; h <= 1; h++) {
+                if (istLava(mc, new BlockPos(bx, by + h, bz))) return true;
+            }
+        }
+        return false;
     }
 
 }
