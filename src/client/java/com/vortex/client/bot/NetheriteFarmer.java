@@ -89,8 +89,6 @@ public final class NetheriteFarmer {
         ebenenWechsel = 0;
         erholungen = 0;
         letzterFund = 0;
-        brockenSeit = 0;
-        brockenBesteDistanz = Double.MAX_VALUE;
         bautGerade = false;
         aktuell = null;
     }
