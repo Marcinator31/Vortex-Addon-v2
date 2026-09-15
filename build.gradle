@@ -1,0 +1,106 @@
+plugins {
+    id 'net.fabricmc.fabric-loom' version "${loom_version}"
+    id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+repositories {
+    // Loom supplies the essential Minecraft and Fabric repositories.
+}
+
+loom {
+    splitEnvironmentSourceSets()
+
+    mods {
+        "vortexclient" {
+            sourceSet sourceSets.main
+            sourceSet sourceSets.client
+        }
+    }
+}
+
+// Die Client-Jar MUSS vorhanden sein, sonst kennt der Compiler weder Module
+// noch die Einstellungsklassen. Ohne diese Pruefung meldet er stattdessen
+// hunderte "cannot find symbol" -- und man sucht an der falschen Stelle.
+def vortexJar = file("libs/vortexclient.jar")
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+    // Der Vortex Client. Das Addon erweitert dessen Klassen.
+    //
+    // NUR compileOnly: die Jar wird zum Uebersetzen gebraucht, nicht zum
+    // Ausfuehren -- im Spiel laedt Fabric den Client ohnehin als eigene Mod.
+    // Sie mit einzupacken wuerde den Client doppelt ausliefern.
+    //
+    // compileOnly ist Standard-Gradle. Loom-eigene Konfigurationen wie
+    // modLocalRuntime gibt es nicht in jeder Fassung -- genau daran ist der
+    // vorige Build gescheitert.
+    if (vortexJar.exists()) {
+        compileOnly files(vortexJar)
+    }
+}
+
+// Frueh und deutlich abbrechen, statt den Compiler raten zu lassen.
+tasks.named("compileJava").configure {
+    doFirst {
+        if (!vortexJar.exists()) {
+            throw new GradleException(
+                "\n\n" +
+                "  Die Datei libs/vortexclient.jar fehlt.\n" +
+                "\n" +
+                "  Das Addon erweitert Klassen des Vortex Client (Module,\n" +
+                "  ModuleManager, BooleanSetting ...) und braucht ihn zum\n" +
+                "  Uebersetzen.\n" +
+                "\n" +
+                "  So geht es:\n" +
+                "    1. Den Vortex Client fuer 26.2 bauen\n" +
+                "    2. build/libs/vortexclient-*.jar herunterladen\n" +
+                "    3. Als libs/vortexclient.jar in dieses Repository legen\n" +
+                "       (die Datei ist unter 1 MB, sie darf mit eingecheckt werden)\n" +
+                "\n" +
+                "  KEINE leeren Ersatzklassen anlegen: diese Klassen gibt es\n" +
+                "  bereits im Client. Zwei Fassungen derselben Klasse fuehren\n" +
+                "  zu Abstuerzen beim Laden.\n")
+        }
+    }
+}
+
+processResources {
+    inputs.property "version", project.version
+
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = 25
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+}
+
+jar {
+    from("LICENSE") {
+        rename { "${it}_${base.archivesName.get()}" }
+    }
+}
+
+publishing {
+    publications {
+        create("mavenJava", MavenPublication) {
+            from components.java
+        }
+    }
+}
