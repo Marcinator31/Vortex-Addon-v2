@@ -61,6 +61,29 @@ public class VortexPlusAddon implements ClientModInitializer {
                 + "repairs with XP bottles, avoids lava and stops when something runs out.");
 
         registriereRenderer();
+
+        // --- Einstellungen ERNEUT laden --------------------------------
+        //
+        // HIER LAG DER SPEICHERFEHLER.
+        //
+        // Der Client laedt die Konfiguration in seiner eigenen
+        // Initialisierung. Fabric ruft die Initialisierungen der Mods aber
+        // in beliebiger Reihenfolge auf -- laeuft der Client zuerst, gibt es
+        // die Cheat-Module in diesem Moment noch gar nicht.
+        //
+        // Ihre Zeilen wandern dann in die Aufbewahrung fuer unbekannte
+        // Module: sie gehen nicht verloren, werden aber auch nicht
+        // angewendet. Nach aussen sah es aus, als wuerden ESP-Farben,
+        // Mob-Auswahl und Tastenbelegungen bei jedem Start zurueckgesetzt.
+        //
+        // Jetzt wird nach dem Anmelden noch einmal geladen. Dann sind die
+        // Module da und bekommen ihre gespeicherten Werte.
+        try {
+            com.vortex.client.core.ConfigManager.load();
+            System.out.println("[vortex-plus-addon] Einstellungen nachgeladen.");
+        } catch (Throwable pvpErr) {
+            com.vortex.client.core.Errors.report("VortexPlusAddon.reload", pvpErr);
+        }
         System.out.println("[vortex-plus-addon] 15 Module angemeldet.");
     }
 

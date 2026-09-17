@@ -90,6 +90,7 @@ public final class NetheriteFarmer {
         erholungen = 0;
         letzterFund = 0;
         bautGerade = false;
+        bauPhase = 0;
         aktuell = null;
     }
 
@@ -1497,37 +1498,55 @@ public final class NetheriteFarmer {
      *
      * @return true, wenn gerade gebaut wird -- dann sonst nichts tun.
      */
+    /**
+     * Baut eine Saeule unter dem Bot, bis er hoch genug steht.
+     *
+     * ZWEI PHASEN, und der Wechsel dazwischen ist das Entscheidende.
+     *
+     * Vorher entschied jeder Tick neu, ob Decke abgebaut oder Block gesetzt
+     * wird. Die beiden brauchen aber ENTGEGENGESETZTE Blickrichtungen: Decke
+     * heisst gerade nach oben, Setzen gerade nach unten. Bei 12 Grad je Tick
+     * dauert ein Wechsel anderthalb Sekunden -- er kam bei keinem von beiden
+     * je an, und dazwischen wechselte er auch noch den Hotbar-Platz. Das war
+     * das Hin und Her, das du gesehen hast.
+     *
+     * Jetzt gilt: eine Phase wird zu Ende gebracht, bevor die andere
+     * beginnt.
+     */
+    private static int bauPhase = 0;      // 0 = Decke raeumen, 1 = Block setzen
+
     private static boolean baueHoch(Minecraft mc, LocalPlayer player) {
         int px = (int) Math.floor(player.getX());
         int py = (int) Math.floor(player.getY());
         int pz = (int) Math.floor(player.getZ());
-
-        // 1) DECKE ZUERST WEGNEHMEN.
-        //
-        // Sitzt ein Block ueber dem Kopf, stoesst der Bot beim Springen
-        // dagegen und kommt nie hoeher -- er baute endlos weiter, ohne dass
-        // sich etwas bewegte. Also erst Platz schaffen.
         BlockPos ueberKopf = new BlockPos(px, py + 2, pz);
-        if (fest(mc, ueberKopf)) {
-            bautGerade = true;
+
+        // --- Phasenwechsel: nur wenn die laufende Phase fertig ist --------
+        if (bauPhase == 0 && !fest(mc, ueberKopf)) {
+            bauPhase = 1;                 // Decke frei -> setzen
+        } else if (bauPhase == 1 && fest(mc, ueberKopf)) {
+            bauPhase = 0;                 // neue Decke -> erst raeumen
+        }
+
+        // --- Phase 0: Decke wegnehmen ------------------------------------
+        if (bauPhase == 0) {
             waehleSpitzhacke(player);
             blickeAuf(player, ueberKopf);
-            mc.options.keyJump.setDown(false);
             mc.options.keyUp.setDown(false);
+            mc.options.keyJump.setDown(false);
             mc.options.keyAttack.setDown(true);
             return true;
         }
 
-        // 2) Steckt er seitlich fest, erst dort freiraeumen.
+        // --- Phase 1: Block setzen ---------------------------------------
         //
-        // Beim Hochbauen in einer engen Spalte klemmt er sonst zwischen zwei
-        // Bloecken und springt nur noch auf der Stelle.
+        // Steckt er seitlich fest, erst dort freiraeumen -- sonst klemmt er
+        // in einer engen Spalte und springt nur auf der Stelle.
         if (stehtSeit > 6) {
-            int[][] rund = {{1,0},{-1,0},{0,1},{0,-1}};
+            int[][] rund = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
             for (int[] r : rund) {
                 BlockPos q = new BlockPos(px + r[0], py + 1, pz + r[1]);
                 if (!fest(mc, q)) continue;
-                bautGerade = true;
                 waehleSpitzhacke(player);
                 blickeAuf(player, q);
                 mc.options.keyJump.setDown(false);
@@ -1536,27 +1555,22 @@ public final class NetheriteFarmer {
             }
         }
 
-        // 3) Block setzen.
         int slot = findeFueller(player);
-        if (slot < 0) {
-            bautGerade = false;
-            return false;
-        }
-        bautGerade = true;
+        if (slot < 0) return false;       // kein Material -> Schiedsrichter sperrt das Ziel
 
-        if (tick - letzterBau < 8) {
-            mc.options.keyJump.setDown(true);
-            return true;
+        // Platz erst wechseln, wenn er noetig ist -- und dann dabei bleiben.
+        if (player.getInventory().getSelectedSlot() != slot) {
+            player.getInventory().setSelectedSlot(slot);
         }
-
-        player.getInventory().setSelectedSlot(slot);
-        willBlicken(player.getYRot(), 90f);      // gerade nach unten
+        willBlicken(player.getYRot(), 90f);   // gerade nach unten
         mc.options.keyUp.setDown(false);
         mc.options.keyAttack.setDown(false);
         mc.options.keyJump.setDown(true);
 
-        // Erst setzen, wenn er auch wirklich nach unten sieht.
+        // Erst setzen, wenn er wirklich nach unten sieht. Sonst landet der
+        // Block an der Wand und der Bot steht weiter unten.
         if (player.getXRot() < 80f) return true;
+        if (tick - letzterBau < 8) return true;
 
         try {
             var hit = mc.hitResult;
@@ -1566,7 +1580,6 @@ public final class NetheriteFarmer {
             }
         } catch (Throwable pvpErr) {
             com.vortex.client.core.Errors.report("NetheriteFarmer.baueHoch", pvpErr);
-            bautGerade = false;
             return false;
         }
         return true;
@@ -1954,8 +1967,16 @@ public final class NetheriteFarmer {
             if (beste != aktuell) {
                 aktuell = beste;
                 aktuellSeit = tick;
-                bautGerade = (beste == Verhalten.HOCHBAUEN);
             }
+            // JEDEN Tick nachfuehren, nicht nur beim Wechsel.
+            //
+            // Vorher wurde bautGerade nur beim Verhaltenswechsel gesetzt.
+            // Blieb der Bot beim Hochbauen, blieb auch der Wert stehen --
+            // und wenn er das Hochbauen verliess, ohne dass ein Wechsel
+            // erkannt wurde, blieb er faelschlich auf true. Die Hysterese
+            // hielt dann ein Hochbauen am Leben, das gar nicht mehr lief.
+            bautGerade = (beste == Verhalten.HOCHBAUEN);
+            if (!bautGerade) bauPhase = 0;   // Phase fuer das naechste Mal zuruecksetzen
 
             fuehreAus(mc, player, mod, beste, lava, brocken, inLava);
 
@@ -2038,7 +2059,9 @@ public final class NetheriteFarmer {
             case HOCHBAUEN:
                 zustand = Zustand.GEHT;
                 if (!baueHoch(mc, player)) {
+                    // Kein Baumaterial: Ziel aufgeben statt endlos zu warten.
                     bautGerade = false;
+                    bauPhase = 0;
                     sperreZiel(mc);
                 }
                 break;
