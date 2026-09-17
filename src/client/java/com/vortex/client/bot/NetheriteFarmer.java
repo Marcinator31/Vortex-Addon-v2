@@ -757,10 +757,20 @@ public final class NetheriteFarmer {
         // bewegt sich wieder nicht, und so weiter. Besonders bei Kies, der
         // ohnehin staendig nachrutscht.
         //
-        // Solange er auf einen Block schlaegt und die Zeitgrenze nicht
-        // gerissen ist, gilt das als Arbeit.
-        if (mc.options.keyAttack.isDown() && schlaegtAuf != null
-                && tick - schlaegtSeit <= 160) {
+        // ABBAUEN IST IMMER ARBEIT -- egal welches Verhalten es ausloest.
+        //
+        // HIER LAG DER FEHLER: die Bedingung verlangte zusaetzlich
+        // schlaegtAuf != null. Das setzt aber nur der Stollenbau. Beim
+        // Debris-Abbau, beim Freigraben und beim Kies blieb es leer.
+        //
+        // Folge: der Bot stand beim Abbauen still, galt als festsitzend,
+        // sprang los -- und der Sprung brach den Schlag ab. Er lief an
+        // Ancient Debris vorbei, kam nicht durch Kies und sprang dauernd.
+        // Genau die drei Dinge, die zuletzt wieder auftraten.
+        //
+        // Die Zeitgrenze bleibt getrennt davon: schlagen() erkennt weiter,
+        // wenn ein Block gar nicht bricht.
+        if (mc.options.keyAttack.isDown()) {
             stehtSeit = 0;
             return;
         }
@@ -770,8 +780,16 @@ public final class NetheriteFarmer {
 
         // Nach einer halben Sekunde: springen. Loest Stufen und einen Block
         // vor den Fuessen.
+        //
+        // Nur wenn ueber ihm Platz ist -- sonst springt er gegen die Decke
+        // und kommt nie weiter, waehrend der Sprung jeden Abbau abbricht.
         if (stehtSeit == 4) {
-            mc.options.keyJump.setDown(true);
+            int px = (int) Math.floor(player.getX());
+            int py = (int) Math.floor(player.getY());
+            int pz = (int) Math.floor(player.getZ());
+            if (!fest(mc, new BlockPos(px, py + 2, pz))) {
+                mc.options.keyJump.setDown(true);
+            }
             return;
         }
         if (stehtSeit == 8) {
@@ -1688,6 +1706,13 @@ public final class NetheriteFarmer {
                 ziel.getX() + 0.5, ziel.getY() + 0.5, ziel.getZ() + 0.5));
 
         if (d <= 4.5) {
+            // Auch hier die Zeitgrenze: bricht der Block in acht Sekunden
+            // nicht, ist er nicht zu schaffen -- Ziel sperren statt ewig
+            // draufzuschlagen.
+            if (!schlagen(mc, ziel)) {
+                sperre(mc, ziel, "Debris bricht nicht -- lasse es liegen.");
+                return;
+            }
             blickeAuf(player, ziel);
             waehleSpitzhacke(player);
             mc.options.keyUp.setDown(false);
@@ -1866,7 +1891,14 @@ public final class NetheriteFarmer {
             }
 
             if (fehltTotem(player)) punkte.put(Verhalten.TOTEM, 700);
-            if (stecktFest) punkte.put(Verhalten.FREIGRABEN, 600);
+            // FREIGRABEN nur, wenn er NICHT gerade abbaut.
+            //
+            // Sonst verdraengt es mit 600 Punkten den Debris-Abbau (450) --
+            // der Bot haette mitten im Schlag abgebrochen, um sich
+            // "freizugraben", obwohl er genau das schon tat.
+            if (stecktFest && !mc.options.keyAttack.isDown()) {
+                punkte.put(Verhalten.FREIGRABEN, 600);
+            }
 
             // Nachfuellen ist DRINGEND, wenn das Fehlende gleich gebraucht
             // wird -- sonst kann er nicht essen, obwohl Essen im Rucksack
