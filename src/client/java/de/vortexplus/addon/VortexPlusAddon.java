@@ -60,6 +60,10 @@ public class VortexPlusAddon implements ClientModInitializer {
                 "Digs a tunnel at the set height until it hits Ancient Debris. Eats, "
                 + "repairs with XP bottles, avoids lava and stops when something runs out.");
 
+        register(new com.vortex.client.module.modules.AfkBotModule(),
+                "Sends /afk after joining and makes a small move now and then "
+                + "so the server does not drop you for being idle.");
+
         registriereRenderer();
 
         // --- Einstellungen ERNEUT laden --------------------------------
@@ -109,6 +113,7 @@ public class VortexPlusAddon implements ClientModInitializer {
             com.vortex.client.hud.WorldScan.register();
             com.vortex.client.hud.CrystalMacro.register();
             com.vortex.client.bot.NetheriteFarmer.register();
+            com.vortex.client.bot.AfkBot.register();
             // registerSafety ruft der Client selbst -- hier wuerde sie
             // ein zweites Mal laufen und den Ereignis-Handler doppelt anmelden.
         } catch (Throwable pvpErr) {
