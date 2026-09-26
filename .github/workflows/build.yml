@@ -7,8 +7,10 @@ on:
   pull_request:
   workflow_dispatch:   # allows starting a run manually from the Actions tab
 
+# contents: write -- noetig, damit die fertige Jar als Release
+# veroeffentlicht werden kann (siehe letzter Schritt).
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -81,9 +83,39 @@ jobs:
           echo "All three attempts failed."
           exit 1
 
-      - name: Upload JAR
+      # Die fertige Jar als Release veroeffentlichen.
+      #
+      # WARUM NICHT (NUR) ALS ARTIFACT: Artifacts zaehlen gegen ein
+      # Speicherlimit des ganzen GitHub-Kontos. Ist es voll, bricht der
+      # Upload mit "Artifact storage quota has been hit" ab -- obwohl der
+      # Build geklappt hat. Releases zaehlen nicht dazu.
+      #
+      # Ein Release je Version (Tag v<mod_version>). Wird dieselbe Version
+      # noch einmal gebaut, ersetzt die neue Jar die alte (--clobber).
+      # Zu finden auf der Repo-Startseite rechts unter "Releases".
+      - name: Publish JAR as release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          VERSION=$(grep '^mod_version=' gradle.properties | cut -d= -f2 | tr -d '[:space:]')
+          TAG="v${VERSION}"
+          # Loom erzeugt mehrere Jars; die ohne "-sources" ist die Mod.
+          JAR=$(ls build/libs/*.jar | grep -v -- '-sources' | head -n 1)
+          echo "Jar: $JAR  ->  Release $TAG"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "Vortex Plus Addon $VERSION" \
+              --notes "Automatisch gebaut aus ${GITHUB_SHA}." --target "${GITHUB_SHA}"
+          fi
+          gh release upload "$TAG" "$JAR" --clobber
+
+      # Zusaetzlich als Artifact, aber nur 3 Tage aufbewahrt und ohne den
+      # Build scheitern zu lassen, wenn das Speicherlimit erreicht ist.
+      - name: Upload JAR (artifact, optional)
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: vortexclient-jar
-          # Loom produces several jars. The one without "-sources" is the mod.
+          name: vortexplus-addon-jar
           path: build/libs/*.jar
+          retention-days: 3
