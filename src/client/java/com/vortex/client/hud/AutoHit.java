@@ -51,6 +51,8 @@ public final class AutoHit {
             Entity targetEntity = ehr.getEntity();
             if (targetEntity == null || targetEntity == self) return;
             if (!targetEntity.isAlive()) return;
+            // Freunde nie schlagen (Modul Friends im Client)
+            if (com.vortex.client.core.Friends.schuetzt(targetEntity)) return;
 
             // Optional nur Spieler.
             if (mod.playersOnly() && !(targetEntity instanceof Player)) return;

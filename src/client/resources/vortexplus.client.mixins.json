@@ -3,8 +3,15 @@
 	"package": "com.vortex.client.mixin.client",
 	"compatibilityLevel": "JAVA_21",
 	"client": [
+		"CheatMoveMixin",
 		"EntityEspMixin",
-		"NoFallMixin"
+		"ExplodePacketAccessor",
+		"JesusCollisionMixin",
+		"KeyMappingKeyAccessor",
+		"MotionPacketAccessor",
+		"MovePacketAccessor",
+		"NoFallMixin",
+		"NoSlowMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

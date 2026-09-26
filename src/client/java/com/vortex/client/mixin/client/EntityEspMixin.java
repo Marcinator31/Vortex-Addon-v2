@@ -36,7 +36,11 @@ public abstract class EntityEspMixin {
         EspModule esp = pvpclient$esp();
         if (esp == null || !esp.isEnabled()) return;
         if (pvpclient$isEspMob(esp)) {
-            cir.setReturnValue(esp.getGlowColor() & 0xFFFFFF);
+            // Freunde leuchten in ihrer eigenen Farbe
+            Entity self = (Entity) (Object) this;
+            int farbe = com.vortex.client.core.Friends.markiert(self)
+                    ? com.vortex.client.core.Friends.farbe() : esp.getGlowColor();
+            cir.setReturnValue(farbe & 0xFFFFFF);
         }
     }
 

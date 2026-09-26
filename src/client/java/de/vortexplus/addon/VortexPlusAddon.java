@@ -64,6 +64,44 @@ public class VortexPlusAddon implements ClientModInitializer {
                 "Sends /afk after joining and makes a small move now and then "
                 + "so the server does not drop you for being idle.");
 
+        // --- 4.4.0: Kampf -------------------------------------------------
+        register(new com.vortex.client.module.modules.AntiKnockbackModule(),
+                "Reduces knockback from hits and explosions. 0 % = none at all. High ban risk.");
+        register(new com.vortex.client.module.modules.AutoArmorModule(),
+                "Puts on the best armour from your inventory automatically. Medium ban risk.");
+        register(new com.vortex.client.module.modules.AutoEatModule(),
+                "Eats the best food in your hotbar when hunger (or health) drops. Low ban risk.");
+        register(new com.vortex.client.module.modules.AutoToolModule(),
+                "Switches to the fastest tool while mining, optionally the best weapon when hitting.");
+        register(new com.vortex.client.module.modules.AutoAnchorModule(),
+                "Places, charges and detonates respawn anchors next to enemies (not in the Nether). Extreme ban risk.");
+        register(new com.vortex.client.module.modules.AutoMendModule(),
+                "Throws XP bottles at your feet until your Mending gear is repaired. Pauses near enemies.");
+
+        // --- 4.4.0: Bewegung ----------------------------------------------
+        register(new com.vortex.client.module.modules.StepModule(),
+                "Walk up full blocks like stairs. Not while sneaking. High ban risk.");
+        register(new com.vortex.client.module.modules.JesusModule(),
+                "Walk on water (and lava if enabled). Sneak to dive in. High ban risk.");
+        register(new com.vortex.client.module.modules.InventoryMoveModule(),
+                "Keep walking while an inventory or chest is open. Arrow keys turn the camera.");
+        register(new com.vortex.client.module.modules.SpeedModule(),
+                "Move faster on the ground. Strafe = fixed speed, Boost = speeds up your own movement. Very high ban risk.");
+        register(new com.vortex.client.module.modules.NoSlowModule(),
+                "No slowdown while eating, drinking, blocking or drawing a bow. High ban risk.");
+        register(new com.vortex.client.module.modules.ElytraFlyModule(),
+                "Better elytra flight: Control (fly freely, hover), Boost (accelerate), Firework (automatic rockets). High ban risk.");
+
+        // --- 4.4.0: Welt ----------------------------------------------------
+        register(new com.vortex.client.module.modules.ScaffoldModule(),
+                "Places blocks under your feet while you walk. Tower builds straight up. Very high ban risk.");
+        register(new com.vortex.client.module.modules.ChestStealerModule(),
+                "Empties an opened chest into your inventory and closes it. Medium ban risk.");
+        register(new com.vortex.client.module.modules.NukerModule(),
+                "Breaks every block around you. Flatten keeps the ground, Instant breaks many soft blocks at once. Extreme ban risk.");
+        register(new com.vortex.client.module.modules.AntiHungerModule(),
+                "Hides sprinting and jumping from the server so they cost less hunger. Medium ban risk.");
+
         registriereRenderer();
 
         // --- Einstellungen ERNEUT laden --------------------------------
@@ -88,7 +126,7 @@ public class VortexPlusAddon implements ClientModInitializer {
         } catch (Throwable pvpErr) {
             com.vortex.client.core.Errors.report("VortexPlusAddon.reload", pvpErr);
         }
-        System.out.println("[vortex-plus-addon] 15 Module angemeldet.");
+        System.out.println("[vortex-plus-addon] 33 Module angemeldet.");
     }
 
     /**
@@ -114,6 +152,11 @@ public class VortexPlusAddon implements ClientModInitializer {
             com.vortex.client.hud.CrystalMacro.register();
             com.vortex.client.bot.NetheriteFarmer.register();
             com.vortex.client.bot.AfkBot.register();
+            // 4.4.0
+            com.vortex.client.cheat.MoveCheats.register();
+            com.vortex.client.cheat.PacketCheats.register();
+            com.vortex.client.cheat.CombatCheats.register();
+            com.vortex.client.cheat.WorldCheats.register();
             // registerSafety ruft der Client selbst -- hier wuerde sie
             // ein zweites Mal laufen und den Ereignis-Handler doppelt anmelden.
         } catch (Throwable pvpErr) {

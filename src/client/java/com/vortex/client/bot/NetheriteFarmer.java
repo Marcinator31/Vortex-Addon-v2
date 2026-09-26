@@ -92,6 +92,7 @@ public final class NetheriteFarmer {
         bautGerade = false;
         bauPhase = 0;
         aktuell = null;
+        naechsteSuche = 0;
     }
 
     private static NetheriteFarmerModule modul() {
@@ -371,7 +372,28 @@ public final class NetheriteFarmer {
                     double ddx = p.getX() - mitte.getX();
                     double ddy = p.getY() - mitte.getY();
                     double ddz = p.getZ() - mitte.getZ();
-                    double d = ddx * ddx + ddy * ddy + ddz * ddz;
+
+                    // HOEHE ZAEHLT MEHR ALS LUFTLINIE.
+                    //
+                    // Rein nach Luftlinie galt ein Debris vier Bloecke UEBER
+                    // dem Bot als naeher als eines sechs Bloecke seitlich.
+                    // Das obere braucht aber Hochbauen -- das langsamste und
+                    // fehleranfaelligste Verhalten des ganzen Bots. Das
+                    // seitliche nur einen kurzen Stollen.
+                    //
+                    // Nach oben wiegt ein Block deshalb dreimal so viel wie
+                    // seitlich, nach unten anderthalbmal (Graben nach unten
+                    // ist einfach, nur etwas langsamer als geradeaus).
+                    // Mehr als 6 Bloecke darueber: gar nicht erst anpeilen.
+                    //
+                    // Sonst baute der Bot bei Reichweite 20 unter Umstaenden
+                    // zwanzig Bloecke hoch -- langsam, und je hoeher, desto
+                    // eher trifft er auf Lava in der Decke oder stuerzt ab.
+                    // Solches Debris liegt meist ohnehin in einer anderen
+                    // Hoehlenschicht und wird spaeter von dort aus erreicht.
+                    if (ddy > 6) continue;
+                    double gewicht = (ddy > 0) ? 9.0 : 2.25;   // quadriert: 3x bzw. 1.5x
+                    double d = ddx * ddx + gewicht * ddy * ddy + ddz * ddz;
                     if (d < besteD) {
                         besteD = d;
                         beste = new BlockPos(p.getX(), p.getY(), p.getZ());
@@ -889,6 +911,8 @@ public final class NetheriteFarmer {
     private static BlockPos schlaegtAuf = null;
     private static int schlaegtSeit = 0;
     private static int zielSeit = 0;
+    /** Frueheste naechste Debris-Suche, wenn die letzte nichts fand. */
+    private static int naechsteSuche = 0;
     private static double zielBesteDistanz = Double.MAX_VALUE;
 
     /**
@@ -1570,7 +1594,25 @@ public final class NetheriteFarmer {
         // Erst setzen, wenn er wirklich nach unten sieht. Sonst landet der
         // Block an der Wand und der Bot steht weiter unten.
         if (player.getXRot() < 80f) return true;
-        if (tick - letzterBau < 8) return true;
+
+        // NUR IN DER LUFT UEBER DER LUECKE SETZEN.
+        //
+        // HIER LAG DAS HAENGEN: vorher wurde alle 8 Ticks gesetzt, sobald der
+        // Blick nach unten zeigte -- auch am Boden. Minecraft verweigert
+        // aber das Setzen eines Blocks dort, wo der Spieler selbst steht.
+        // Am Boden zeigt der Blick genau auf die eigenen Fuesse: belegt, das
+        // Setzen scheiterte still. Der Bot sprang endlos, und nur wenn ein
+        // Versuch zufaellig in die Luftphase fiel, kam er einen Block hoeher.
+        //
+        // Jetzt: gesetzt wird genau dann, wenn der Block unter den Fuessen
+        // Luft ist. Das ist der Moment im Sprung, in dem der Bot ueber der
+        // Stelle schwebt, an die der neue Block gehoert. Der Blick nach unten
+        // trifft dann die Oberseite des Blocks darunter, und der neue landet
+        // genau in der Luecke.
+        int fussY = (int) Math.floor(player.getY());
+        BlockPos unterFuss = new BlockPos(px, fussY - 1, pz);
+        if (fest(mc, unterFuss)) return true;     // noch am Boden -- nur springen
+        if (tick - letzterBau < 3) return true;   // kein doppeltes Setzen
 
         try {
             var hit = mc.hitResult;
@@ -1847,10 +1889,21 @@ public final class NetheriteFarmer {
                 ziel = null;
                 bautGerade = false;
             }
-            if (ziel == null) {
+            // SUCHE HOECHSTENS ZWEIMAL PRO SEKUNDE.
+            //
+            // Vorher lief sie in JEDEM Tick, solange kein Ziel da war -- und
+            // beim Stollengraben ist das der Normalfall. Bei Reichweite 20
+            // sind das 68.921 Blockabfragen je Tick, ueber 1,3 Millionen pro
+            // Sekunde, alle auf dem Spielfaden.
+            //
+            // Debris taucht nicht ploetzlich auf. Neu in Reichweite kommt es
+            // nur, wenn der Bot sich bewegt -- rund ein Block pro Sekunde.
+            // Alle 10 Ticks zu suchen verpasst also nichts und spart 90 %.
+            if (ziel == null && tick >= naechsteSuche) {
                 ziel = debrisInDerNaehe(mc, player, mod);
                 zielSeit = tick;
                 zielBesteDistanz = Double.MAX_VALUE;
+                if (ziel == null) naechsteSuche = tick + 10;
             }
             net.minecraft.world.entity.item.ItemEntity brocken = nahesterBrocken(mc, player);
 

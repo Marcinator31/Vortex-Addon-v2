@@ -134,6 +134,8 @@ public final class Aimbot {
             if (p == self) continue;
             if (!p.isAlive()) continue;
             if (p.isSpectator()) continue;
+            // Freunde nie anvisieren (Modul Friends im Client)
+            if (com.vortex.client.core.Friends.schuetzt(p)) continue;
 
             double distSq = self.distanceToSqr(p);
             if (distSq > rangeSq) continue;

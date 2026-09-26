@@ -17,6 +17,6 @@
     "fabricloader": ">=0.19.3",
     "minecraft": "26.2",
     "java": ">=25",
-    "vortexclient": ">=2.29.0"
+    "vortexclient": ">=4.4.0"
   }
 }
