@@ -85,6 +85,11 @@ public class NetheriteFarmerModule extends Module {
     public final BooleanSetting stats =
             new BooleanSetting("Stats In Chat", true);
 
+    /** Statuszeile fuer die Bot-Seite des Clients (dort per Reflexion abgefragt). */
+    public String getStatus() {
+        return com.vortex.client.bot.NetheriteFarmer.statusText();
+    }
+
     public NetheriteFarmerModule() {
         super("Netherite Farmer", Category.BOTS);
         addSetting(mineY);

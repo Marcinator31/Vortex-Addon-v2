@@ -23,6 +23,11 @@ public abstract class NoClipCameraMixin {
         try {
             var mc = net.minecraft.client.Minecraft.getInstance();
             if (mc.player != null && com.vortex.client.cheat.MoveCheats.noClipFuer(mc.player)) return true;
+            // Ghost View "Wall Vision": die F5-Kamera steckt in einer Wand --
+            // dann wie ein Zuschauer alles dahinter zeichnen.
+            var gv = com.vortex.client.module.modules.GhostViewModule.aktiv();
+            if (gv != null && gv.wallVision.get() && mc.options.getCameraType() != null
+                    && !mc.options.getCameraType().isFirstPerson()) return true;
         } catch (Throwable ignored) {
         }
         return original;

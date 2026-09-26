@@ -81,6 +81,7 @@ public final class NetheriteFarmer {
         richtung = null;
         gemeldet = false;
         laufSeit = 0;
+        fertigGrund = null;
         debrisGefunden = 0;
         debrisZuletzt = -1;
         aktionSlot = -1;
@@ -95,6 +96,8 @@ public final class NetheriteFarmer {
         letzterFund = 0;
         bautGerade = false;
         bauPhase = 0;
+        bauFortschrittY = Integer.MIN_VALUE;
+        bodenY = Integer.MIN_VALUE;
         aktuell = null;
         naechsteSuche = 0;
     }
@@ -156,6 +159,7 @@ public final class NetheriteFarmer {
                 if (!gemeldet) {
                     gemeldet = true;
                     zustand = Zustand.FERTIG;
+                    fertigGrund = fehlt;
                     melde(mc, "Fertig: " + fehlt);
                     tastenLos(mc);
                     if (mod.afkWhenOut.get()) sendeBefehl(mc, "afk");
@@ -163,6 +167,10 @@ public final class NetheriteFarmer {
                 return;
             }
             gemeldet = false;
+            if (zustand == Zustand.FERTIG) {       // Vorrat wieder da: weiter
+                zustand = Zustand.SUCHT;
+                fertigGrund = null;
+            }
 
             // Ab hier entscheidet der Schiedsrichter. try/finally sorgt
             // dafuer, dass Blick, Feststeck-Pruefung und Sprungsperre IMMER
@@ -243,7 +251,10 @@ public final class NetheriteFarmer {
         //    Bot gleich mit -- genau der Fall, der ihn ersticken liess.
         //
         // Deshalb wird die Decke geprueft, BEVOR gegraben wird.
-        BlockPos ueberKopf = new BlockPos(vx, py + dy + 2, vz);
+        // Oberster Block, der gleich wegkommt: beim Runtergraben die
+        // Kopfhoehe (py+1), beim Hochgraben py+2. Darueber darf keine Lava sein.
+        int oberster = py + (dy > 0 ? 2 : 1);
+        BlockPos ueberKopf = new BlockPos(vx, oberster + 1, vz);
         if (mod.avoidLava.get() && mc.level.getBlockState(ueberKopf).getBlock() == Blocks.LAVA) {
             mc.options.keyAttack.setDown(false);
             mc.options.keyUp.setDown(false);
@@ -261,10 +272,33 @@ public final class NetheriteFarmer {
             return;
         }
 
-        // Zwei Bloecke hoch graben, damit man durchpasst: erst Kopfhoehe,
-        // dann Fusshoehe. Ein ein Block hoher Gang laesst sich nicht begehen.
-        BlockPos kopf = new BlockPos(vx, py + dy + 1, vz);
-        BlockPos fuss = new BlockPos(vx, py + dy, vz);
+        // WAS MUSS WEG, DAMIT ER IN DIE NAECHSTE SPALTE KOMMT?
+        //
+        // Hier lag der Fehler beim Runter- und Hochgraben: es wurden immer nur
+        // zwei Bloecke frei gemacht, eine Stufe tiefer bzw. hoeher. Beim
+        // Hineinlaufen steckt der Spieler aber noch auf SEINER Hoehe -- der
+        // Kopf stiess an (vx, py+1), und er kam nie in die Stufe hinein.
+        // Beim Hochgraben fehlte der Platz ueber dem eigenen Kopf zum
+        // Springen. Die Feststeck-Erkennung sprang dann dazwischen, und es
+        // wurde das bekannte Durcheinander.
+        //
+        //   eben   (dy= 0): naechste Spalte py+1, py
+        //   runter (dy=-1): naechste Spalte py+1, py, py-1  (drei hoch)
+        //   hoch   (dy=+1): ueber mir py+2, naechste Spalte py+2, py+1
+        //                   (py bleibt als Stufe stehen)
+        //
+        // Immer von oben nach unten: so faellt nichts nach, und der Blick
+        // wandert gleichmaessig.
+        BlockPos[] frei;
+        if (dy < 0) {
+            frei = new BlockPos[]{ new BlockPos(vx, py + 1, vz), new BlockPos(vx, py, vz),
+                                   new BlockPos(vx, py - 1, vz) };
+        } else if (dy > 0) {
+            frei = new BlockPos[]{ new BlockPos(px, py + 2, pz), new BlockPos(vx, py + 2, vz),
+                                   new BlockPos(vx, py + 1, vz) };
+        } else {
+            frei = new BlockPos[]{ new BlockPos(vx, py + 1, vz), new BlockPos(vx, py, vz) };
+        }
 
         // Fallendes Material zuerst wegraeumen.
         //
@@ -276,7 +310,10 @@ public final class NetheriteFarmer {
         if (faellt != null) {
             zielBlock = faellt;
         } else {
-            zielBlock = fest(mc, kopf) ? kopf : (fest(mc, fuss) ? fuss : null);
+            zielBlock = null;
+            for (BlockPos q : frei) {
+                if (fest(mc, q)) { zielBlock = q; break; }
+            }
         }
 
         waehleSpitzhacke(player);
@@ -290,7 +327,7 @@ public final class NetheriteFarmer {
             }
             blickeAuf(player, zielBlock);
             mc.options.keyUp.setDown(false);
-            mc.options.keyAttack.setDown(true);
+            mc.options.keyAttack.setDown(blickFertig(player));
         } else {
             schlagenZuruecksetzen();
             // Frei: vorruecken.
@@ -304,6 +341,19 @@ public final class NetheriteFarmer {
             BlockPos boden = new BlockPos(vx, py + dy - 1, vz);
             if (!fest(mc, boden) && !fest(mc, new BlockPos(vx, py + dy - 2, vz))) {
                 mc.options.keyUp.setDown(false);
+                // Soll er ohnehin nach unten (z. B. oben auf der eigenen
+                // Saeule nach dem Hochbauen)? Dann den Block unter sich
+                // abbauen und einen Block tiefer fallen -- solange darunter
+                // fester Boden ist und keine Lava.
+                BlockPos unterMir = new BlockPos(px, py - 1, pz);
+                BlockPos darunter = new BlockPos(px, py - 2, pz);
+                if (dy < 0 && fest(mc, unterMir) && fest(mc, darunter)
+                        && !(mod.avoidLava.get() && lavaDran(mc, unterMir))) {
+                    willBlicken(player.getYRot(), 90f);
+                    waehleSpitzhacke(player);
+                    mc.options.keyAttack.setDown(blickFertig(player));
+                    return;
+                }
                 if (tick - letzteDrehung > 20) {
                     letzteDrehung = tick;
                     richtung = neueRichtung(mc, richtung);
@@ -322,9 +372,10 @@ public final class NetheriteFarmer {
             // NIEMALS gleichzeitig mit dem Abbauen: ein Sprung unterbricht
             // den Schlag, und der Block faengt von vorne an. Hier wird nicht
             // abgebaut, deshalb ist es an dieser Stelle unbedenklich.
-            boolean stufe = fest(mc, new BlockPos(vx, py + dy, vz))
-                    && !fest(mc, new BlockPos(vx, py + dy + 1, vz))
-                    && !fest(mc, new BlockPos(vx, py + dy + 2, vz));
+            boolean stufe = fest(mc, new BlockPos(vx, py, vz))
+                    && !fest(mc, new BlockPos(vx, py + 1, vz))
+                    && !fest(mc, new BlockPos(vx, py + 2, vz))
+                    && !fest(mc, new BlockPos(px, py + 2, pz));
             mc.options.keyJump.setDown(stufe);
         }
     }
@@ -708,6 +759,8 @@ public final class NetheriteFarmer {
         wunschGesetzt = false;
 
         float max = (float) mod.turnSpeed.get();
+        if (schnellDrehen && max > 0f) max = Math.max(max, 30f);
+        schnellDrehen = false;
         if (max <= 0f) {                     // 0 = sofort, wie frueher
             player.setYRot(wunschYaw);
             player.setXRot(wunschPitch);
@@ -762,7 +815,11 @@ public final class NetheriteFarmer {
         letzteX = player.getX(); letzteY = player.getY(); letzteZ = player.getZ();
 
         // Nur beim Graben und Gehen zaehlen -- beim Essen steht er zu Recht.
-        if (zustand != Zustand.GRAEBT && zustand != Zustand.GEHT) {
+        // Beim Hochbauen auch nicht: da springt er auf der Stelle und dreht
+        // den Kopf, das ist kein Feststecken. Die Feststeck-Erkennung sprang
+        // dort dazwischen (Springen, Freigraben) und brachte alles
+        // durcheinander. Das Hochbauen hat seine eigene Zeitgrenze.
+        if (bautGerade || (zustand != Zustand.GRAEBT && zustand != Zustand.GEHT)) {
             stehtSeit = 0;
             return;
         }
@@ -793,6 +850,12 @@ public final class NetheriteFarmer {
         // Die Zeitgrenze bleibt getrennt davon: schlagen() erkennt weiter,
         // wenn ein Block gar nicht bricht.
         if (mc.options.keyAttack.isDown()) {
+            stehtSeit = 0;
+            return;
+        }
+        // Dreht er noch den Kopf zum naechsten Block, steht er zu Recht --
+        // sonst sprang er mitten in der Drehung los.
+        if (blickRest(player) > 14f) {
             stehtSeit = 0;
             return;
         }
@@ -1185,7 +1248,8 @@ public final class NetheriteFarmer {
                     quelle = findeSlot(player, Items.GOLDEN_APPLE);
                     if (quelle <= 8) quelle = findeSlot(player, Items.ENCHANTED_GOLDEN_APPLE);
                     break;
-                default: quelle = normalesEssen(player, false); break;
+                case "regen": quelle = normalesEssen(player, false); break;
+                default: quelle = hungerEssen(player, false); break;
             }
             int platz = freierHotbarPlatz(player);
             if (quelle > 8 && platz >= 0) {
@@ -1296,6 +1360,26 @@ public final class NetheriteFarmer {
     private static float restWinkel(LocalPlayer player) {
         if (!wunschGesetzt) return 0f;
         return ((wunschYaw - player.getYRot()) % 360f + 540f) % 360f - 180f;
+    }
+
+    /** Groesste verbleibende Abweichung (Drehung oder Neigung) in Grad. */
+    private static float blickRest(LocalPlayer player) {
+        if (!wunschGesetzt) return 0f;
+        return Math.max(Math.abs(restWinkel(player)), Math.abs(wunschPitch - player.getXRot()));
+    }
+
+    /**
+     * Sieht er schon (fast) dorthin, wo er hin will?
+     *
+     * Erst DANN wird zugeschlagen. Vorher schlug er schon waehrend der
+     * Drehung -- und baute dabei die Bloecke ab, ueber die der Blick gerade
+     * hinwegstrich: Waende, Decke, den Boden unter sich.
+     *
+     * Der Blick bewegt sich erst am Ende des Ticks; deshalb zaehlt, ob er ihn
+     * mit der naechsten Drehung erreicht (plus etwas Spielraum).
+     */
+    private static boolean blickFertig(LocalPlayer player) {
+        return blickRest(player) <= 14f;
     }
 
 
@@ -1544,114 +1628,185 @@ public final class NetheriteFarmer {
     }
 
     /**
-     * Baut einen Block unter dem Bot, waehrend er springt.
+     * Baut eine Saeule unter dem Bot, bis das Debris in Reichweite ist.
      *
-     * @return true, wenn gerade gebaut wird -- dann sonst nichts tun.
-     */
-    /**
-     * Baut eine Saeule unter dem Bot, bis er hoch genug steht.
+     * NEU GEBAUT (2.15.0). Die alte Fassung hatte drei Fehler, die zusammen
+     * das "Hoch-, Runterschauen, Abbauen, Gott weiss was" ergaben:
      *
-     * ZWEI PHASEN, und der Wechsel dazwischen ist das Entscheidende.
+     *  1. Die Hoehe wurde mitten im Sprung neu berechnet. Im Sprung steht der
+     *     Bot einen Block hoeher -- "ueber dem Kopf" war ploetzlich der Block
+     *     darueber. War der fest, sprang die Phase auf "Decke abbauen": Blick
+     *     nach oben, landen, Blick nach unten, springen, wieder nach oben ...
+     *     Jetzt zaehlt nur die Hoehe, auf der er STEHT (bodenY, wird nur am
+     *     Boden nachgefuehrt). Im Sprung aendert sich nichts.
      *
-     * Vorher entschied jeder Tick neu, ob Decke abgebaut oder Block gesetzt
-     * wird. Die beiden brauchen aber ENTGEGENGESETZTE Blickrichtungen: Decke
-     * heisst gerade nach oben, Setzen gerade nach unten. Bei 12 Grad je Tick
-     * dauert ein Wechsel anderthalb Sekunden -- er kam bei keinem von beiden
-     * je an, und dazwischen wechselte er auch noch den Hotbar-Platz. Das war
-     * das Hin und Her, das du gesehen hast.
+     *  2. Er hat schon beim Drehen zugeschlagen. Auf dem Weg von "unten" nach
+     *     "oben" zeigte der Blick auf die Waende -- er baute sie ab. Jetzt wird
+     *     erst geschlagen, wenn er wirklich nach oben sieht, und erst
+     *     gesprungen, wenn er wirklich nach unten sieht.
      *
-     * Jetzt gilt: eine Phase wird zu Ende gebracht, bevor die andere
-     * beginnt.
+     *  3. Nach jedem Block drehte er einmal ganz nach oben und wieder zurueck.
+     *     Jetzt raeumt er beim Hochsehen bis zu DREI Bloecke frei und kann
+     *     danach drei Bloecke am Stueck hochbauen.
+     *
+     * Ausserdem: beim Bauen dreht er schneller als eingestellt (mind. 30 Grad
+     * je Tick), sonst dauert jede Kopfbewegung eine Sekunde.
+     *
+     * @return false, wenn es nicht geht (kein Material, Lava, kein
+     *         Fortschritt) -- dann wird das Ziel aufgegeben.
      */
     private static int bauPhase = 0;      // 0 = Decke raeumen, 1 = Block setzen
+    private static int bauFortschrittY = Integer.MIN_VALUE;
+    private static int bauFortschrittSeit = 0;
 
     private static boolean baueHoch(Minecraft mc, LocalPlayer player) {
         int px = (int) Math.floor(player.getX());
-        int py = (int) Math.floor(player.getY());
         int pz = (int) Math.floor(player.getZ());
-        BlockPos ueberKopf = new BlockPos(px, py + 2, pz);
+        int basis = bodenY;
 
-        // --- Phasenwechsel: nur wenn die laufende Phase fertig ist --------
-        if (bauPhase == 0 && !fest(mc, ueberKopf)) {
-            bauPhase = 1;                 // Decke frei -> setzen
-        } else if (bauPhase == 1 && fest(mc, ueberKopf)) {
-            bauPhase = 0;                 // neue Decke -> erst raeumen
+        // --- Fortschritt: 10 Sekunden kein Block hoeher -> aufgeben ------
+        if (basis > bauFortschrittY) {
+            bauFortschrittY = basis;
+            bauFortschrittSeit = tick;
+        } else if (tick - bauFortschrittSeit > 200) {
+            melde(mc, "Hochbauen kommt nicht voran -- lasse das Debris liegen.");
+            return false;
         }
 
-        // --- Phase 0: Decke wegnehmen ------------------------------------
+        // --- Welche Deckenbloecke muessen weg? ---------------------------
+        //
+        // Pflicht ist nur basis+2 (Platz zum Springen). basis+3 und +4 nimmt
+        // er gleich mit, solange sie unter dem Ziel liegen -- das spart das
+        // Hochsehen bei den naechsten Bloecken.
+        int bis = basis + 2;
+        if (ziel != null) bis = Math.max(bis, Math.min(basis + 4, ziel.getY() - 1));
+
+        BlockPos decke = null;
+        // Hysterese: in der Setz-Phase nur zurueck, wenn der PFLICHT-Block
+        // zu ist. Sonst wuerde jeder neue Block darueber die Phase kippen.
+        int pruefeBis = (bauPhase == 0) ? bis : basis + 2;
+        for (int y = basis + 2; y <= pruefeBis; y++) {
+            BlockPos q = new BlockPos(px, y, pz);
+            if (!fest(mc, q)) continue;
+            if (lavaDran(mc, q)) {
+                // Lava hinter dem Block: den Pflichtblock nicht anfassen
+                // (Lava liefe herein), einen hoeheren einfach stehen lassen.
+                if (y == basis + 2) {
+                    melde(mc, "Lava ueber mir -- baue nicht weiter hoch.");
+                    return false;
+                }
+                break;
+            }
+            decke = q;
+            break;
+        }
+        bauPhase = (decke != null) ? 0 : 1;
+
+        // --- Phase 0: Decke raeumen, Blick gerade nach oben ---------------
         if (bauPhase == 0) {
+            if (!schlagen(mc, decke)) return false;          // Grundgestein o. ae.
             waehleSpitzhacke(player);
-            blickeAuf(player, ueberKopf);
+            willBlicken(player.getYRot(), -90f);
+            schnellDrehen = true;
             mc.options.keyUp.setDown(false);
             mc.options.keyJump.setDown(false);
-            mc.options.keyAttack.setDown(true);
+            // ERST SCHLAGEN, WENN ER WIRKLICH NACH OBEN SIEHT.
+            mc.options.keyAttack.setDown(player.getXRot() < -75f);
             return true;
         }
+        schlagenZuruecksetzen();
 
-        // --- Phase 1: Block setzen ---------------------------------------
-        //
-        // Steckt er seitlich fest, erst dort freiraeumen -- sonst klemmt er
-        // in einer engen Spalte und springt nur auf der Stelle.
-        if (stehtSeit > 6) {
-            int[][] rund = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
-            for (int[] r : rund) {
-                BlockPos q = new BlockPos(px + r[0], py + 1, pz + r[1]);
-                if (!fest(mc, q)) continue;
-                waehleSpitzhacke(player);
-                blickeAuf(player, q);
-                mc.options.keyJump.setDown(false);
-                mc.options.keyAttack.setDown(true);
-                return true;
-            }
-        }
-
+        // --- Phase 1: Block unter sich setzen ------------------------------
         int slot = findeFueller(player);
-        if (slot < 0) return false;       // kein Material -> Schiedsrichter sperrt das Ziel
-
-        // Platz erst wechseln, wenn er noetig ist -- und dann dabei bleiben.
+        if (slot < 0) {
+            // Netherrack liegt oft nur im Inventar: in die Hotbar holen.
+            int quelle = -1;
+            for (net.minecraft.world.item.Item item : FUELLER) {
+                quelle = findeSlot(player, item);
+                if (quelle > 8) break;
+                quelle = -1;
+            }
+            if (quelle < 0) {
+                melde(mc, "Kein Baumaterial (Netherrack) -- lasse das Debris liegen.");
+                return false;
+            }
+            if (tick - letzteUmlagerung >= 10) {
+                int platz = freierHotbarPlatz(player);
+                if (platz < 0) return false;
+                lagereUm(mc, player, quelle, indexZuFensterPlatz(platz));
+                letzteUmlagerung = tick;
+            }
+            tastenLos(mc);
+            return true;
+        }
         if (player.getInventory().getSelectedSlot() != slot) {
             player.getInventory().setSelectedSlot(slot);
         }
-        willBlicken(player.getYRot(), 90f);   // gerade nach unten
+        willBlicken(player.getYRot(), 90f);
+        schnellDrehen = true;
         mc.options.keyUp.setDown(false);
         mc.options.keyAttack.setDown(false);
-        mc.options.keyJump.setDown(true);
+        // ERST SPRINGEN, WENN ER WIRKLICH NACH UNTEN SIEHT.
+        boolean schautRunter = player.getXRot() > 75f;
+        mc.options.keyJump.setDown(schautRunter);
+        if (!schautRunter) return true;
 
-        // Erst setzen, wenn er wirklich nach unten sieht. Sonst landet der
-        // Block an der Wand und der Bot steht weiter unten.
-        if (player.getXRot() < 80f) return true;
-
-        // NUR IN DER LUFT UEBER DER LUECKE SETZEN.
-        //
-        // HIER LAG DAS HAENGEN: vorher wurde alle 8 Ticks gesetzt, sobald der
-        // Blick nach unten zeigte -- auch am Boden. Minecraft verweigert
-        // aber das Setzen eines Blocks dort, wo der Spieler selbst steht.
-        // Am Boden zeigt der Blick genau auf die eigenen Fuesse: belegt, das
-        // Setzen scheiterte still. Der Bot sprang endlos, und nur wenn ein
-        // Versuch zufaellig in die Luftphase fiel, kam er einen Block hoeher.
-        //
-        // Jetzt: gesetzt wird genau dann, wenn der Block unter den Fuessen
-        // Luft ist. Das ist der Moment im Sprung, in dem der Bot ueber der
-        // Stelle schwebt, an die der neue Block gehoert. Der Blick nach unten
-        // trifft dann die Oberseite des Blocks darunter, und der neue landet
-        // genau in der Luecke.
-        int fussY = (int) Math.floor(player.getY());
-        BlockPos unterFuss = new BlockPos(px, fussY - 1, pz);
-        if (fest(mc, unterFuss)) return true;     // noch am Boden -- nur springen
-        if (tick - letzterBau < 3) return true;   // kein doppeltes Setzen
+        // Setzen genau dann, wenn die Fuesse ueber dem Platz schweben, an den
+        // der neue Block gehoert (basis). Vorher verweigert Minecraft das
+        // Setzen, weil der Spieler selbst dort steht.
+        BlockPos platz = new BlockPos(px, basis, pz);
+        if (player.getY() < basis + 1.0) return true;
+        if (fest(mc, platz)) return true;                 // schon gesetzt
+        if (tick - letzterBau < 3) return true;
 
         try {
-            var hit = mc.hitResult;
-            if (hit instanceof net.minecraft.world.phys.BlockHitResult bhr) {
-                mc.gameMode.useItemOn(player, net.minecraft.world.InteractionHand.MAIN_HAND, bhr);
-                letzterBau = tick;
+            BlockPos unter = platz.below();
+            net.minecraft.world.phys.BlockHitResult treffer;
+            if (fest(mc, unter)) {
+                // Selbst zusammengesetzt statt mc.hitResult: der Blick muss
+                // dann nicht aufs Pixel stimmen.
+                treffer = new net.minecraft.world.phys.BlockHitResult(
+                        new net.minecraft.world.phys.Vec3(px + 0.5, basis, pz + 0.5),
+                        net.minecraft.core.Direction.UP, unter, false);
+            } else if (mc.hitResult instanceof net.minecraft.world.phys.BlockHitResult bhr) {
+                treffer = bhr;
+            } else {
+                return true;
             }
+            mc.gameMode.useItemOn(player, net.minecraft.world.InteractionHand.MAIN_HAND, treffer);
+            player.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
+            letzterBau = tick;
         } catch (Throwable pvpErr) {
             com.vortex.client.core.Errors.report("NetheriteFarmer.baueHoch", pvpErr);
             return false;
         }
         return true;
     }
+
+    /** Liegt neben oder ueber diesem Block Lava? Dann nicht abbauen. */
+    private static boolean lavaDran(Minecraft mc, BlockPos q) {
+        if (istLava(mc, q.above())) return true;
+        if (istLava(mc, q.north()) || istLava(mc, q.south())) return true;
+        return istLava(mc, q.east()) || istLava(mc, q.west());
+    }
+
+    /**
+     * Hoehe, auf der der Bot STEHT. Wird nur am Boden nachgefuehrt -- im
+     * Sprung bleibt sie gleich. Daran haengt das ganze Hochbauen.
+     */
+    private static int bodenY = Integer.MIN_VALUE;
+
+    private static void bodenNachfuehren(LocalPlayer player) {
+        int y = (int) Math.floor(player.getY());
+        // Am Boden, beim ersten Mal, oder wenn er tief gefallen ist (dann
+        // stimmt der alte Wert sicher nicht mehr).
+        if (player.onGround() || bodenY == Integer.MIN_VALUE || y < bodenY - 1 || y > bodenY + 2) {
+            bodenY = y;
+        }
+    }
+
+    /** Beim Bauen schneller drehen als eingestellt -- gilt nur fuer diesen Tick. */
+    private static boolean schnellDrehen = false;
 
 
     // Das Wegwerfen aus dem Inventar wurde entfernt: es hat mehr Schaden
@@ -1692,7 +1847,7 @@ public final class NetheriteFarmer {
      * Muss jetzt gegessen werden, und was? null = nein.
      *   "feuer"  brennt/in Lava ohne Feuerschutz -> verzauberter Goldapfel
      *   "apfel"  Leben unter der Grenze -> Goldapfel (verzaubert oder normal)
-     *   "hunger" Hunger unter der Grenze -> normales Essen
+     *   "hunger" Hunger unter der Grenze -> normales Essen, sonst Goldapfel
      *   "regen"  Leben nicht voll und Hunger unter 18 -> normales Essen, damit
      *            die Heilung weiterlaeuft (Minecraft heilt erst ab 18 Hunger)
      */
@@ -1705,7 +1860,7 @@ public final class NetheriteFarmer {
         if (leben <= mod.gappleBelow.get()
                 && (findeSlot(player, Items.GOLDEN_APPLE) >= 0
                     || findeSlot(player, Items.ENCHANTED_GOLDEN_APPLE) >= 0)) return "apfel";
-        if (hunger <= mod.eatBelow.get() && normalesEssen(player, false) >= 0) return "hunger";
+        if (hunger <= mod.eatBelow.get() && hungerEssen(player, false) >= 0) return "hunger";
         if (hunger < 18 && leben < player.getMaxHealth() - 2 && normalesEssen(player, false) >= 0) return "regen";
         return null;
     }
@@ -1718,7 +1873,8 @@ public final class NetheriteFarmer {
                 int s = findeHotbar(player, Items.GOLDEN_APPLE);
                 return s >= 0 ? s : findeHotbar(player, Items.ENCHANTED_GOLDEN_APPLE);
             }
-            default: return normalesEssen(player, true);
+            case "regen": return normalesEssen(player, true);
+            default: return hungerEssen(player, true);
         }
     }
 
@@ -1731,14 +1887,26 @@ public final class NetheriteFarmer {
             case "feuer": return findeSlot(player, Items.ENCHANTED_GOLDEN_APPLE) > 8;
             case "apfel": return findeSlot(player, Items.GOLDEN_APPLE) > 8
                     || findeSlot(player, Items.ENCHANTED_GOLDEN_APPLE) > 8;
-            default: return normalesEssen(player, false) > 8;
+            case "regen": return normalesEssen(player, false) > 8;
+            default: return hungerEssen(player, false) > 8;
         }
     }
 
     /**
+     * Essen gegen Hunger: das beste normale Essen, und wenn keins mehr da
+     * ist, ein Goldapfel. Goldaepfel sind Essen wie jedes andere -- der Bot
+     * hoert NICHT auf, nur weil kein Steak mehr da ist.
+     */
+    private static int hungerEssen(LocalPlayer player, boolean nurHotbar) {
+        int slot = normalesEssen(player, nurHotbar);
+        if (slot >= 0) return slot;
+        return nurHotbar ? findeHotbar(player, Items.GOLDEN_APPLE) : findeSlot(player, Items.GOLDEN_APPLE);
+    }
+
+    /**
      * Normales Essen, das beste zuerst (Liste ESSEN ist danach sortiert).
-     * Goldaepfel zaehlen hier NICHT -- die sind fuers Leben da und zu
-     * wertvoll, um damit nur den Hunger zu stillen.
+     * Ohne Goldaepfel -- die kommen erst dran, wenn nichts anderes mehr da
+     * ist (hungerEssen).
      */
     private static int normalesEssen(LocalPlayer player, boolean nurHotbar) {
         for (net.minecraft.world.item.Item item : ESSEN) {
@@ -1835,6 +2003,33 @@ public final class NetheriteFarmer {
         }
     }
 
+    private static String fertigGrund = null;
+
+    /**
+     * Eine Zeile fuer die Bot-Seite: was er gerade tut und wie viel er hat.
+     * Wird vom Modul ueber getStatus() geliefert.
+     */
+    public static String statusText() {
+        if (zustand == Zustand.AUS) return "Idle";
+        if (zustand == Zustand.FERTIG) return "Stopped: " + (fertigGrund == null ? "-" : fertigGrund);
+        String was;
+        if (aktuell == null) was = "Starting";
+        else switch (aktuell) {
+            case FLIEHEN:     was = "Escaping lava"; break;
+            case ESSEN:       was = "Eating"; break;
+            case TOTEM:       was = "Equipping totem"; break;
+            case NACHFUELLEN: was = "Refilling hotbar"; break;
+            case REPARIEREN:  was = "Repairing pickaxe"; break;
+            case FREIGRABEN:  was = "Digging free"; break;
+            case HOCHBAUEN:   was = "Pillaring up"; break;
+            case BROCKEN:     was = "Picking up debris"; break;
+            case DEBRIS:      was = "Mining debris"; break;
+            default:          was = "Tunneling"; break;
+        }
+        long min = laufSeit == 0 ? 0 : (System.currentTimeMillis() - laufSeit) / 60000L;
+        return was + "  |  " + debrisGefunden + " debris  |  " + min + " min";
+    }
+
     private static void statistikMelden(boolean ende) {
         if (laufSeit == 0) return;
         double minuten = (System.currentTimeMillis() - laufSeit) / 60000.0;
@@ -1882,7 +2077,7 @@ public final class NetheriteFarmer {
                 waehleSpitzhacke(player);
                 mc.options.keyUp.setDown(false);
                 mc.options.keyJump.setDown(false);
-                mc.options.keyAttack.setDown(true);
+                mc.options.keyAttack.setDown(blickFertig(player));
                 return;
             }
         }
@@ -1910,7 +2105,7 @@ public final class NetheriteFarmer {
             waehleSpitzhacke(player);
             mc.options.keyUp.setDown(false);
             mc.options.keyJump.setDown(false);
-            mc.options.keyAttack.setDown(true);
+            mc.options.keyAttack.setDown(blickFertig(player));
             return;
         }
         // Nichts Festes in Reichweite: dann hilft ein Sprung.
@@ -1934,7 +2129,7 @@ public final class NetheriteFarmer {
             blickeAuf(player, imWeg);
             waehleSpitzhacke(player);
             mc.options.keyUp.setDown(false);
-            mc.options.keyAttack.setDown(true);
+            mc.options.keyAttack.setDown(blickFertig(player));
             return;
         }
         fundGemeldet(mc);
@@ -1961,7 +2156,7 @@ public final class NetheriteFarmer {
             waehleSpitzhacke(player);
             mc.options.keyUp.setDown(false);
             mc.options.keyJump.setDown(false);
-            mc.options.keyAttack.setDown(true);
+            mc.options.keyAttack.setDown(blickFertig(player));
             return;
         }
         if (mod.avoidLava.get() && lavaAufDemWeg(mc, player, ziel)) {
@@ -1974,7 +2169,7 @@ public final class NetheriteFarmer {
             blickeAuf(player, imWeg);
             waehleSpitzhacke(player);
             mc.options.keyUp.setDown(false);
-            mc.options.keyAttack.setDown(true);
+            mc.options.keyAttack.setDown(blickFertig(player));
             return;
         }
         blickeAuf(player, ziel);
@@ -2050,6 +2245,31 @@ public final class NetheriteFarmer {
     /** Punkte fuer das laufende Verhalten, damit es nicht sofort weicht. */
     private static final int TREUE_BONUS = 25;
 
+    /**
+     * Muss er sich hochbauen, um ans Ziel zu kommen?
+     *
+     * Gerechnet wird ab der STEHhoehe (bodenY), nicht ab der aktuellen --
+     * im Sprung ist er einen Block hoeher, und vorher kippte die
+     * Entscheidung dadurch mitten im Sprung auf "abbauen" und zurueck.
+     *
+     *  - Liegt das Debris seitlich weit weg, geht er erst hin (DEBRIS graebt
+     *    den Weg frei). Hochbauen lohnt nur, wenn es ungefaehr ueber ihm liegt.
+     *  - Hochbauen, bis es vom Auge aus in Reichweite ist (4,2 Bloecke).
+     *  - Einmal begonnen, weiter bis 3,6 Bloecke -- sonst kippt es an der
+     *    Grenze hin und her.
+     */
+    private static boolean mussHochbauen(LocalPlayer player) {
+        if (ziel == null) return false;
+        int hoehe = ziel.getY() - bodenY;
+        double dx = ziel.getX() + 0.5 - player.getX();
+        double dz = ziel.getZ() + 0.5 - player.getZ();
+        double seitlich = Math.sqrt(dx * dx + dz * dz);
+        double dy = ziel.getY() + 0.5 - (bodenY + 1.62);
+        double reichweite = Math.sqrt(seitlich * seitlich + dy * dy);
+        if (bautGerade) return hoehe >= 2 && reichweite > 3.6 && seitlich <= 3.5;
+        return hoehe >= 3 && reichweite > 4.2 && seitlich <= 3.0;
+    }
+
     private static void entscheiden(Minecraft mc, LocalPlayer player,
                                     NetheriteFarmerModule mod) {
         try {
@@ -2059,6 +2279,7 @@ public final class NetheriteFarmer {
             // die Benutzen-Taste wird nie losgelassen -- der Bot wuerde
             // XP-Flaschen werfen, bis keine mehr da ist.
             boolean aktionLief = aktionLaeuft(mc, player);
+            bodenNachfuehren(player);
 
             // --- Lage EINMAL erfassen -------------------------------------
             //
@@ -2175,11 +2396,7 @@ public final class NetheriteFarmer {
 
             if (brocken != null) punkte.put(Verhalten.BROCKEN, 500);
             if (ziel != null) {
-                int hoehe = ziel.getY() - (int) Math.floor(player.getY());
-                double d = Math.sqrt(player.distanceToSqr(
-                        ziel.getX() + 0.5, ziel.getY() + 0.5, ziel.getZ() + 0.5));
-                boolean hoch = bautGerade ? (hoehe >= 2 && d > 4.0) : (hoehe >= 3);
-                punkte.put(hoch ? Verhalten.HOCHBAUEN : Verhalten.DEBRIS, 450);
+                punkte.put(mussHochbauen(player) ? Verhalten.HOCHBAUEN : Verhalten.DEBRIS, 450);
             }
             if (brauchtReparatur(player, mod) && tick - letzteFlasche >= FLASCHEN_ABSTAND) {
                 punkte.put(Verhalten.REPARIEREN, 300);
@@ -2229,7 +2446,10 @@ public final class NetheriteFarmer {
             // erkannt wurde, blieb er faelschlich auf true. Die Hysterese
             // hielt dann ein Hochbauen am Leben, das gar nicht mehr lief.
             bautGerade = (beste == Verhalten.HOCHBAUEN);
-            if (!bautGerade) bauPhase = 0;   // Phase fuer das naechste Mal zuruecksetzen
+            if (!bautGerade) {                 // fuer das naechste Mal zuruecksetzen
+                bauPhase = 0;
+                bauFortschrittY = Integer.MIN_VALUE;
+            }
 
             fuehreAus(mc, player, mod, beste, lava, brocken, inLava);
 
@@ -2319,9 +2539,12 @@ public final class NetheriteFarmer {
             case HOCHBAUEN:
                 zustand = Zustand.GEHT;
                 if (!baueHoch(mc, player)) {
-                    // Kein Baumaterial: Ziel aufgeben statt endlos zu warten.
+                    // Geht nicht (Material, Lava, kein Fortschritt): Ziel
+                    // aufgeben statt endlos zu warten.
                     bautGerade = false;
                     bauPhase = 0;
+                    bauFortschrittY = Integer.MIN_VALUE;
+                    tastenLos(mc);
                     sperreZiel(mc);
                 }
                 break;
@@ -2358,10 +2581,8 @@ public final class NetheriteFarmer {
                 && findeSlot(player, Items.DIAMOND_PICKAXE) < 0) {
             return "keine Spitzhacke mehr";
         }
-        // Goldaepfel zaehlen hier nicht: die sind fuers Leben da. Nur noch
-        // Aepfel im Rucksack heisst, er wuerde verhungern und dabei seine
-        // Notreserve aufessen -- lieber vorher aufhoeren.
-        if (normalesEssen(player, false) < 0) return "kein Essen mehr (Goldaepfel bleiben fuer Notfaelle)";
+        // Goldaepfel zaehlen als Essen (wie frueher).
+        if (hungerEssen(player, false) < 0) return "kein Essen mehr";
         if (findeSlot(player, Items.TOTEM_OF_UNDYING) < 0
                 && (player.getOffhandItem() == null
                     || player.getOffhandItem().isEmpty()

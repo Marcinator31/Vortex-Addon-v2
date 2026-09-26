@@ -91,6 +91,8 @@ public class VortexPlusAddon implements ClientModInitializer {
                 "No slowdown while eating, drinking, blocking or drawing a bow. High ban risk.");
         register(new com.vortex.client.module.modules.BoatFlyModule(),
                 "Fly with a boat: WASD in look direction, jump up, sprint key down, hovers without keys. No Clip flies through blocks in singleplayer. High ban risk.");
+        register(new com.vortex.client.module.modules.GhostViewModule(),
+                "In F5 you look like you had Invisibility: your own body no longer blocks the view. Camera Clip lets the F5 camera go through walls, Wall Vision draws the caves behind them. Only on your screen. Camera Clip / Wall Vision: medium ban risk (x-ray-like).");
         register(new com.vortex.client.module.modules.ElytraFlyModule(),
                 "Better elytra flight: Control (fly freely, hover), Boost (accelerate), Firework (automatic rockets). High ban risk.");
 

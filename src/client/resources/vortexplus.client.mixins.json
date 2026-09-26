@@ -7,6 +7,8 @@
 		"CheatMoveMixin",
 		"EntityEspMixin",
 		"ExplodePacketAccessor",
+		"GhostCameraMixin",
+		"GhostSelfMixin",
 		"JesusCollisionMixin",
 		"KeyMappingKeyAccessor",
 		"MotionPacketAccessor",
