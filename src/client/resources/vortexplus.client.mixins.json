@@ -3,6 +3,7 @@
 	"package": "com.vortex.client.mixin.client",
 	"compatibilityLevel": "JAVA_21",
 	"client": [
+		"BoatNoClipServerMixin",
 		"CheatMoveMixin",
 		"EntityEspMixin",
 		"ExplodePacketAccessor",
@@ -10,6 +11,8 @@
 		"KeyMappingKeyAccessor",
 		"MotionPacketAccessor",
 		"MovePacketAccessor",
+		"NoClipCameraMixin",
+		"NoClipWallMixin",
 		"NoFallMixin",
 		"NoSlowMixin"
 	],

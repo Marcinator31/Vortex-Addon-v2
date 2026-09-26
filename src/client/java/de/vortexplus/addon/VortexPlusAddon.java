@@ -90,7 +90,7 @@ public class VortexPlusAddon implements ClientModInitializer {
         register(new com.vortex.client.module.modules.NoSlowModule(),
                 "No slowdown while eating, drinking, blocking or drawing a bow. High ban risk.");
         register(new com.vortex.client.module.modules.BoatFlyModule(),
-                "Fly with a boat: WASD in look direction, jump up, sprint key down. No Clip flies through blocks. High ban risk.");
+                "Fly with a boat: WASD in look direction, jump up, sprint key down, hovers without keys. No Clip flies through blocks in singleplayer. High ban risk.");
         register(new com.vortex.client.module.modules.ElytraFlyModule(),
                 "Better elytra flight: Control (fly freely, hover), Boost (accelerate), Firework (automatic rockets). High ban risk.");
 

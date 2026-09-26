@@ -19,8 +19,10 @@ import java.util.List;
  * AUFBAU: ein Zustandsautomat mit fester Rangfolge. Jeder Tick fragt der
  * Reihe nach:
  *
- *   1. Muss ich aufhoeren?      (Spieler in der Naehe, Vorrat leer)
- *   2. Muss ich ueberleben?     (Leben, Hunger, Totem, Ruestung)
+ *   0. Totem in die Off-Hand   (AUTO TOTEM -- laeuft jeden Tick nebenher)
+ *   1. Muss ich aufhoeren?      (Spieler in der Naehe, Vorrat leer, Inventar voll)
+ *   2. Muss ich essen?          (ESSEN HAT IMMER VORRANG -- auch vor Lava)
+ *   3. Muss ich ueberleben?     (Lava, Feststecken)
  *   3. Muss ich reparieren?     (Mending per XP-Flasche)
  *   4. Kann ich abbauen?        (Ziel suchen, hingehen, graben)
  *
@@ -41,10 +43,8 @@ public final class NetheriteFarmer {
 
     // --- Feste Werte ------------------------------------------------------
 
-    /** Ab so wenig Hunger wird gegessen (halbe Balken, 20 = voll). */
-    private static final int ESSEN_UNTER = 16;
-    /** Ab so wenig Leben wird ein goldener Apfel gegessen. */
-    private static final float APFEL_UNTER = 12f;
+    // Ess-Grenzen stehen jetzt in den Einstellungen (Eat Below Hunger,
+    // Golden Apple Below Health).
     /** Unter dieser Haltbarkeit wird repariert. */
     private static final double REPARIEREN_UNTER = 0.90;
     /** Abstand zwischen XP-Flaschen in Ticks (eine halbe Sekunde). */
@@ -75,10 +75,14 @@ public final class NetheriteFarmer {
                 mc.options.keyShift.setDown(false);
             }
         } catch (Throwable ignored) { }
+        if (zustand != Zustand.AUS) statistikMelden(true);
         zustand = Zustand.AUS;
         ziel = null;
         richtung = null;
         gemeldet = false;
+        laufSeit = 0;
+        debrisGefunden = 0;
+        debrisZuletzt = -1;
         aktionSlot = -1;
         stehtSeit = 0;
         drehVersuche = 0;
@@ -128,6 +132,13 @@ public final class NetheriteFarmer {
                 return;
             }
             tick++;
+            if (zustand == Zustand.AUS) zustand = Zustand.SUCHT;
+
+            // AUTO TOTEM: vor allem anderen und unabhaengig vom Schiedsrichter.
+            // Ein Totem nachzulegen ist ein einziger Inventarklick -- dafuer
+            // muss der Bot nichts unterbrechen, auch nicht das Essen.
+            if (mod.autoTotem.get()) autoTotem(mc, player);
+            statistik(mc, player, mod);
 
             // Spieler in der Naehe -> /afk
             if (mod.afkOnPlayer.get() && fremderSpielerNah(mc, mod)) {
@@ -575,18 +586,6 @@ public final class NetheriteFarmer {
         ESSEN.add(Items.COOKED_CHICKEN);
         ESSEN.add(Items.BREAD);
         ESSEN.add(Items.GOLDEN_APPLE);
-    }
-
-    private static int findeEssen(LocalPlayer player) {
-        for (net.minecraft.world.item.Item item : ESSEN) {
-            int slot = findeHotbar(player, item);
-            if (slot >= 0) return slot;
-        }
-        for (net.minecraft.world.item.Item item : ESSEN) {
-            int slot = findeSlot(player, item);
-            if (slot >= 0) return slot;
-        }
-        return -1;
     }
 
     private static void sendeBefehl(Minecraft mc, String befehl) {
@@ -1137,8 +1136,20 @@ public final class NetheriteFarmer {
             ItemStack st = player.getInventory().getItem(i);
             if (st == null || st.isEmpty()) return i;
         }
-        // Keiner frei: den letzten nehmen, aber niemals den mit der
-        // Spitzhacke -- ohne sie steht der Bot still.
+        // Keiner frei: zuerst einen Platz mit etwas Unwichtigem (Netherrack,
+        // Bloecke ...). Vorher konnte hier das Essen die XP-Flaschen
+        // verdraengen und im naechsten Moment umgekehrt -- ein Pingpong.
+        for (int i = 8; i >= 0; i--) {
+            ItemStack st = player.getInventory().getItem(i);
+            if (st == null) continue;
+            var it = st.getItem();
+            if (it == Items.NETHERITE_PICKAXE || it == Items.DIAMOND_PICKAXE) continue;
+            if (it == Items.TOTEM_OF_UNDYING || it == Items.EXPERIENCE_BOTTLE) continue;
+            if (it == Items.ENCHANTED_GOLDEN_APPLE || ESSEN.contains(it)) continue;
+            return i;
+        }
+        // Notfalls den letzten nehmen, aber niemals den mit der Spitzhacke
+        // -- ohne sie steht der Bot still.
         for (int i = 8; i >= 0; i--) {
             ItemStack st = player.getInventory().getItem(i);
             if (st == null) continue;
@@ -1164,9 +1175,31 @@ public final class NetheriteFarmer {
 
         // Das Totem wird bereits ganz oben im Tick nachgelegt.
 
+        // 1) ESSEN ZUERST: wird gerade gegessen werden muessen, kommt genau
+        //    das in die Hotbar -- vor allem anderen.
+        if (essenHolen != null) {
+            int quelle = -1;
+            switch (essenHolen) {
+                case "feuer": quelle = findeSlot(player, Items.ENCHANTED_GOLDEN_APPLE); break;
+                case "apfel":
+                    quelle = findeSlot(player, Items.GOLDEN_APPLE);
+                    if (quelle <= 8) quelle = findeSlot(player, Items.ENCHANTED_GOLDEN_APPLE);
+                    break;
+                default: quelle = normalesEssen(player, false); break;
+            }
+            int platz = freierHotbarPlatz(player);
+            if (quelle > 8 && platz >= 0) {
+                lagereUm(mc, player, quelle, indexZuFensterPlatz(platz));
+                letzteUmlagerung = tick;
+                return true;
+            }
+        }
+
         // 2) Verbrauchsgueter in die Hotbar holen, wenn dort keine mehr sind.
+        // Reihenfolge: erst was zum Ueberleben gebraucht wird (Aepfel), dann
+        // die Flaschen. Normales Essen folgt unten.
         net.minecraft.world.item.Item[] wichtig = {
-            Items.EXPERIENCE_BOTTLE, Items.GOLDEN_APPLE
+            Items.GOLDEN_APPLE, Items.ENCHANTED_GOLDEN_APPLE, Items.EXPERIENCE_BOTTLE
         };
         for (net.minecraft.world.item.Item item : wichtig) {
             if (findeHotbar(player, item) >= 0) continue;     // schon da
@@ -1179,9 +1212,10 @@ public final class NetheriteFarmer {
             return true;
         }
 
-        // 3) Essen -- irgendeines aus der Liste.
-        if (findeEssenHotbar(player) < 0) {
+        // 3) Normales Essen -- das beste aus der Liste.
+        if (normalesEssen(player, true) < 0) {
             for (net.minecraft.world.item.Item item : ESSEN) {
+                if (item == Items.GOLDEN_APPLE) continue;
                 int quelle = findeSlot(player, item);
                 if (quelle < 0 || quelle <= 8) continue;
                 int platz = freierHotbarPlatz(player);
@@ -1194,14 +1228,6 @@ public final class NetheriteFarmer {
         return false;
     }
 
-    /** Essbares NUR in der Hotbar. */
-    private static int findeEssenHotbar(LocalPlayer player) {
-        for (net.minecraft.world.item.Item item : ESSEN) {
-            int slot = findeHotbar(player, item);
-            if (slot >= 0) return slot;
-        }
-        return -1;
-    }
 
 
     /**
@@ -1658,13 +1684,176 @@ public final class NetheriteFarmer {
         melde(mc, "Totem nachgelegt.");
     }
 
+    // ======================================================================
+    // Essen (hat immer Vorrang)
+    // ======================================================================
+
+    /**
+     * Muss jetzt gegessen werden, und was? null = nein.
+     *   "feuer"  brennt/in Lava ohne Feuerschutz -> verzauberter Goldapfel
+     *   "apfel"  Leben unter der Grenze -> Goldapfel (verzaubert oder normal)
+     *   "hunger" Hunger unter der Grenze -> normales Essen
+     *   "regen"  Leben nicht voll und Hunger unter 18 -> normales Essen, damit
+     *            die Heilung weiterlaeuft (Minecraft heilt erst ab 18 Hunger)
+     */
+    private static String essenNoetig(LocalPlayer player, NetheriteFarmerModule mod, boolean inLava) {
+        float leben = player.getHealth();
+        int hunger = player.getFoodData().getFoodLevel();
+        boolean brennt = inLava || player.isOnFire();
+        if (brennt && !player.hasEffect(net.minecraft.world.effect.MobEffects.FIRE_RESISTANCE)
+                && leben < 16 && findeSlot(player, Items.ENCHANTED_GOLDEN_APPLE) >= 0) return "feuer";
+        if (leben <= mod.gappleBelow.get()
+                && (findeSlot(player, Items.GOLDEN_APPLE) >= 0
+                    || findeSlot(player, Items.ENCHANTED_GOLDEN_APPLE) >= 0)) return "apfel";
+        if (hunger <= mod.eatBelow.get() && normalesEssen(player, false) >= 0) return "hunger";
+        if (hunger < 18 && leben < player.getMaxHealth() - 2 && normalesEssen(player, false) >= 0) return "regen";
+        return null;
+    }
+
+    /** Hotbar-Platz fuer diesen Grund, oder -1. */
+    private static int essenSlot(LocalPlayer player, String grund) {
+        switch (grund) {
+            case "feuer": return findeHotbar(player, Items.ENCHANTED_GOLDEN_APPLE);
+            case "apfel": {
+                int s = findeHotbar(player, Items.GOLDEN_APPLE);
+                return s >= 0 ? s : findeHotbar(player, Items.ENCHANTED_GOLDEN_APPLE);
+            }
+            default: return normalesEssen(player, true);
+        }
+    }
+
+    private static boolean essenImGriff(LocalPlayer player, String grund) {
+        return essenSlot(player, grund) >= 0;
+    }
+
+    private static boolean essenImRucksack(LocalPlayer player, String grund) {
+        switch (grund) {
+            case "feuer": return findeSlot(player, Items.ENCHANTED_GOLDEN_APPLE) > 8;
+            case "apfel": return findeSlot(player, Items.GOLDEN_APPLE) > 8
+                    || findeSlot(player, Items.ENCHANTED_GOLDEN_APPLE) > 8;
+            default: return normalesEssen(player, false) > 8;
+        }
+    }
+
+    /**
+     * Normales Essen, das beste zuerst (Liste ESSEN ist danach sortiert).
+     * Goldaepfel zaehlen hier NICHT -- die sind fuers Leben da und zu
+     * wertvoll, um damit nur den Hunger zu stillen.
+     */
+    private static int normalesEssen(LocalPlayer player, boolean nurHotbar) {
+        for (net.minecraft.world.item.Item item : ESSEN) {
+            if (item == Items.GOLDEN_APPLE) continue;
+            int slot = nurHotbar ? findeHotbar(player, item) : findeSlot(player, item);
+            if (slot >= 0) return slot;
+        }
+        return -1;
+    }
+
+    // ======================================================================
+    // Auto Totem
+    // ======================================================================
+
+    private static int letzterTotemKlick = -100;
+    /** Was nachfuellen() gerade zum Essen in die Hotbar holen soll, sonst null. */
+    private static String essenHolen = null;
+
+    /**
+     * Haelt jederzeit ein Totem in der Off-Hand.
+     *
+     * Laeuft jeden Tick vor dem Schiedsrichter. Vorher war es eine Aufgabe
+     * unter vielen, mit 10 Ticks Pause zwischen Inventaraktionen -- nach
+     * einem Pop konnte das Nachlegen eine halbe Sekunde dauern, und in
+     * dieser halben Sekunde stirbt man in der Lava. Jetzt: 3 Ticks.
+     */
+    private static void autoTotem(Minecraft mc, LocalPlayer player) {
+        try {
+            ItemStack off = player.getOffhandItem();
+            if (off != null && !off.isEmpty() && off.getItem() == Items.TOTEM_OF_UNDYING) return;
+            if (tick - letzterTotemKlick < 3) return;
+            // Haengt noch etwas am Cursor (Klick nicht angekommen)? Dann erst
+            // warten -- sonst landet es irgendwo.
+            if (!player.inventoryMenu.getCarried().isEmpty()) return;
+            int quelle = findeSlot(player, Items.TOTEM_OF_UNDYING);
+            if (quelle < 0) return;
+            boolean warLeer = off == null || off.isEmpty();
+            lagereUm(mc, player, quelle, OFFHAND_SLOT);
+            letzterTotemKlick = tick;
+            letzteUmlagerung = tick;
+            if (warLeer) melde(mc, "Totem in die Off-Hand gelegt.");
+        } catch (Throwable pvpErr) {
+            com.vortex.client.core.Errors.report("NetheriteFarmer.autoTotem", pvpErr);
+        }
+    }
+
+    // ======================================================================
+    // Inventar voll
+    // ======================================================================
+
+    /** Kein freier Platz mehr -- und auch kein Debris-Stapel, der noch Platz hat. */
+    private static boolean inventarVoll(LocalPlayer player) {
+        for (int i = 0; i < 36; i++) {
+            ItemStack st = player.getInventory().getItem(i);
+            if (st == null || st.isEmpty()) return false;
+            if (st.getItem() == Items.ANCIENT_DEBRIS && st.getCount() < st.getMaxStackSize()) return false;
+        }
+        return true;
+    }
+
+    // ======================================================================
+    // Statistik
+    // ======================================================================
+
+    private static long laufSeit = 0;
+    private static int debrisGefunden = 0;
+    private static int debrisZuletzt = -1;
+    private static long statistikZuletzt = 0;
+
+    private static int zaehleDebris(LocalPlayer player) {
+        int n = 0;
+        for (int i = 0; i < 36; i++) {
+            ItemStack st = player.getInventory().getItem(i);
+            if (st != null && !st.isEmpty() && st.getItem() == Items.ANCIENT_DEBRIS) n += st.getCount();
+        }
+        return n;
+    }
+
+    /** Zaehlt neues Debris mit und meldet alle 5 Minuten den Stand. */
+    private static void statistik(Minecraft mc, LocalPlayer player, NetheriteFarmerModule mod) {
+        long jetzt = System.currentTimeMillis();
+        if (laufSeit == 0) {
+            laufSeit = jetzt;
+            statistikZuletzt = jetzt;
+        }
+        int n = zaehleDebris(player);
+        // Nur Zuwachs zaehlen -- legt man selbst etwas weg, sinkt die Zahl
+        // nicht.
+        if (debrisZuletzt >= 0 && n > debrisZuletzt) debrisGefunden += n - debrisZuletzt;
+        debrisZuletzt = n;
+        if (mod.stats.get() && jetzt - statistikZuletzt >= 5 * 60_000L) {
+            statistikZuletzt = jetzt;
+            statistikMelden(false);
+        }
+    }
+
+    private static void statistikMelden(boolean ende) {
+        if (laufSeit == 0) return;
+        double minuten = (System.currentTimeMillis() - laufSeit) / 60000.0;
+        if (minuten < 0.5 && debrisGefunden == 0) return;
+        double proStunde = minuten > 0 ? debrisGefunden / minuten * 60.0 : 0;
+        melde(Minecraft.getInstance(), String.format(java.util.Locale.ROOT,
+                "%s%d Ancient Debris in %d min (%.1f pro Stunde).",
+                ende ? "Beendet: " : "Stand: ", debrisGefunden, Math.round(minuten), proStunde));
+    }
+
     /** Fehlt etwas Wichtiges in der Hotbar, das im Inventar liegt? */
     private static boolean nachfuellenNoetig(LocalPlayer player) {
         if (findeHotbar(player, Items.EXPERIENCE_BOTTLE) < 0
                 && findeSlot(player, Items.EXPERIENCE_BOTTLE) >= 0) return true;
         if (findeHotbar(player, Items.GOLDEN_APPLE) < 0
                 && findeSlot(player, Items.GOLDEN_APPLE) >= 0) return true;
-        return findeEssenHotbar(player) < 0 && findeEssen(player) >= 0;
+        if (findeHotbar(player, Items.ENCHANTED_GOLDEN_APPLE) < 0
+                && findeSlot(player, Items.ENCHANTED_GOLDEN_APPLE) >= 0) return true;
+        return normalesEssen(player, true) < 0 && normalesEssen(player, false) >= 0;
     }
 
     private static void sperreZiel(Minecraft mc) {
@@ -1945,18 +2134,29 @@ public final class NetheriteFarmer {
                 melde(mc, "Aus der Lava heraus -- grabe woanders weiter.");
             }
 
-            // Goldener Apfel bei kritischem Leben -- schlaegt sogar die
-            // Flucht bei blosser Lavanaehe, denn Verbrennen geht schneller
-            // als Ausweichen.
-            if (leben <= APFEL_UNTER && findeHotbar(player, Items.GOLDEN_APPLE) >= 0) {
-                punkte.put(Verhalten.ESSEN, 950);
-            } else if (hunger <= ESSEN_UNTER && findeEssenHotbar(player) >= 0) {
-                // Essen MUSS ueber dem Graben liegen, sonst verhungert er
-                // mit vollem Rucksack.
-                punkte.put(Verhalten.ESSEN, 550);
+            // ESSEN HAT IMMER VORRANG -- vor allem, auch vor der Lava.
+            //
+            // Vorher lag es bei 550 bzw. 950 Punkten: unter der Flucht aus
+            // der Lava (1000) und hinter der Mindestzeit laufender Aufgaben.
+            // In der Lava verbrannte der Bot mit Goldaepfeln im Rucksack.
+            // Jetzt 5000: nichts kommt darueber. Waehrend er isst, laeuft er
+            // trotzdem aus der Lava heraus (siehe fuehreAus, ESSEN).
+            String essenGrund = essenNoetig(player, mod, inLava);
+            essenHolen = null;
+            if (essenGrund != null) {
+                if (essenImGriff(player, essenGrund)) {
+                    punkte.put(Verhalten.ESSEN, 5000);
+                } else if (essenImRucksack(player, essenGrund)) {
+                    // Liegt nur im Inventar: erst in die Hotbar holen -- das
+                    // gehoert zum Essen und bekommt denselben Vorrang.
+                    punkte.put(Verhalten.NACHFUELLEN, 4900);
+                    essenHolen = essenGrund;
+                }
             }
 
-            if (fehltTotem(player)) punkte.put(Verhalten.TOTEM, 700);
+            // Totem: macht Auto Totem jeden Tick nebenher. Nur wenn es
+            // ausgeschaltet ist, bleibt es eine Aufgabe des Schiedsrichters.
+            if (!mod.autoTotem.get() && fehltTotem(player)) punkte.put(Verhalten.TOTEM, 700);
             // FREIGRABEN nur, wenn er NICHT gerade abbaut.
             //
             // Sonst verdraengt es mit 600 Punkten den Debris-Abbau (450) --
@@ -1969,10 +2169,8 @@ public final class NetheriteFarmer {
             // Nachfuellen ist DRINGEND, wenn das Fehlende gleich gebraucht
             // wird -- sonst kann er nicht essen, obwohl Essen im Rucksack
             // liegt.
-            if (nachfuellenNoetig(player)) {
-                boolean dringend = (hunger <= ESSEN_UNTER && findeEssenHotbar(player) < 0)
-                        || (leben <= APFEL_UNTER && findeHotbar(player, Items.GOLDEN_APPLE) < 0);
-                punkte.put(Verhalten.NACHFUELLEN, dringend ? 560 : 350);
+            if (nachfuellenNoetig(player) && !punkte.containsKey(Verhalten.NACHFUELLEN)) {
+                punkte.put(Verhalten.NACHFUELLEN, 350);
             }
 
             if (brocken != null) punkte.put(Verhalten.BROCKEN, 500);
@@ -2008,12 +2206,14 @@ public final class NetheriteFarmer {
                     && tick - aktuellSeit < aktuell.mindestZeit
                     && punkte.containsKey(aktuell)
                     && beste != Verhalten.FLIEHEN && beste != Verhalten.ESSEN
-                    && beste != Verhalten.FREIGRABEN) {
+                    && beste != Verhalten.FREIGRABEN
+                    && punkte.getOrDefault(beste, 0) < 4900) {   // Essen holen wartet auf nichts
                 beste = aktuell;
             }
-            // Eine laufende Essensaktion laeuft immer zu Ende -- ausser bei
-            // Lava, dort zaehlt nur Herauskommen.
-            if (aktionLaeuftNoch && aktionHalten && beste != Verhalten.FLIEHEN) {
+            // Eine laufende Essensaktion laeuft IMMER zu Ende -- auch in der
+            // Lava. Abgebrochenes Essen ist verlorene Zeit; der Bot laeuft
+            // beim Essen trotzdem aus der Lava heraus.
+            if (aktionLaeuftNoch && aktionHalten) {
                 beste = Verhalten.ESSEN;
             }
 
@@ -2098,11 +2298,18 @@ public final class NetheriteFarmer {
             case ESSEN: {
                 zustand = Zustand.ISST;
                 if (aktionSlot < 0) {
-                    int slot = (player.getHealth() <= APFEL_UNTER)
-                            ? findeHotbar(player, Items.GOLDEN_APPLE) : -1;
-                    if (slot < 0) slot = findeEssenHotbar(player);
-                    if (slot >= 0) starteAktion(mc, player, slot, 32, true);
+                    String grund = essenNoetig(player, mod, inLava);
+                    int slot = grund == null ? -1 : essenSlot(player, grund);
+                    // 36 statt 32 Ticks: ein kleiner Puffer fuer Server-Lag,
+                    // sonst wird das Essen knapp vor dem Ende abgebrochen.
+                    if (slot >= 0) starteAktion(mc, player, slot, 36, true);
                 }
+                // WAEHREND DES ESSENS AUS DER GEFAHR: Essen und Laufen geht
+                // gleichzeitig. In der Lava nach oben schwimmen und von ihr
+                // weg -- aber nicht graben, ein Schlag wuerde das Essen
+                // abbrechen.
+                if (inLava) mc.options.keyJump.setDown(true);
+                if (lava != null) fliehen(mc, player, lava, false);
                 break;
             }
             case TOTEM:       legeTotem(mc, player); break;
@@ -2151,7 +2358,10 @@ public final class NetheriteFarmer {
                 && findeSlot(player, Items.DIAMOND_PICKAXE) < 0) {
             return "keine Spitzhacke mehr";
         }
-        if (findeEssen(player) < 0) return "kein Essen mehr";
+        // Goldaepfel zaehlen hier nicht: die sind fuers Leben da. Nur noch
+        // Aepfel im Rucksack heisst, er wuerde verhungern und dabei seine
+        // Notreserve aufessen -- lieber vorher aufhoeren.
+        if (normalesEssen(player, false) < 0) return "kein Essen mehr (Goldaepfel bleiben fuer Notfaelle)";
         if (findeSlot(player, Items.TOTEM_OF_UNDYING) < 0
                 && (player.getOffhandItem() == null
                     || player.getOffhandItem().isEmpty()
@@ -2161,6 +2371,9 @@ public final class NetheriteFarmer {
         if (findeSlot(player, Items.EXPERIENCE_BOTTLE) < 0) {
             return "keine XP-Flaschen mehr";
         }
+        // Voll: gefundenes Debris bliebe liegen. Lieber anhalten als
+        // stundenlang umsonst zu graben.
+        if (inventarVoll(player)) return "Inventar voll";
         return null;
     }
 

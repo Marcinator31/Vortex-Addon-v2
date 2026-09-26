@@ -66,6 +66,25 @@ public class NetheriteFarmerModule extends Module {
     public final NumberSetting playerRange =
             new NumberSetting("Player Range", 48, 16, 128, 8);
 
+    /**
+     * Totem immer in der Off-Hand -- unabhaengig davon, was der Bot gerade
+     * tut. Poppt eins, liegt das naechste im folgenden Tick bereit.
+     */
+    public final BooleanSetting autoTotem =
+            new BooleanSetting("Auto Totem", true);
+
+    /** Ab diesem Hunger wird gegessen (20 = voll). */
+    public final NumberSetting eatBelow =
+            new NumberSetting("Eat Below Hunger", 16, 6, 19, 1);
+
+    /** Ab diesem Leben wird ein goldener Apfel gegessen (20 = voll). */
+    public final NumberSetting gappleBelow =
+            new NumberSetting("Golden Apple Below Health", 12, 4, 18, 1);
+
+    /** Alle 5 Minuten im Chat: wie viel Debris bisher, wie viel pro Stunde. */
+    public final BooleanSetting stats =
+            new BooleanSetting("Stats In Chat", true);
+
     public NetheriteFarmerModule() {
         super("Netherite Farmer", Category.BOTS);
         addSetting(mineY);
@@ -75,6 +94,10 @@ public class NetheriteFarmerModule extends Module {
         addSetting(afkWhenOut);
         addSetting(afkOnPlayer);
         addSetting(playerRange);
+        addSetting(autoTotem);
+        addSetting(eatBelow);
+        addSetting(gappleBelow);
+        addSetting(stats);
     }
 
     @Override

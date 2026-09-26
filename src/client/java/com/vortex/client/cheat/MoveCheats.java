@@ -242,8 +242,55 @@ public final class MoveCheats {
     // Boat Fly
     // ------------------------------------------------------------------
 
-    /** Das Boot, dem wir No Clip gegeben haben -- um es zurueckzunehmen. */
+    /** Das Boot, dem wir die Kollision genommen haben -- um es zurueckzugeben. */
     private static net.minecraft.world.entity.vehicle.boat.AbstractBoat geistBoot = null;
+
+    /**
+     * Gilt No Clip fuer dieses Wesen? Fuer dich (auf deiner Seite der
+     * LocalPlayer, im Einzelspieler-Server dein ServerPlayer) und dein Boot,
+     * solange du im Boot sitzt und Boat Fly mit No Clip an ist.
+     */
+    public static boolean noClipFuer(net.minecraft.world.entity.Entity e) {
+        com.vortex.client.module.modules.BoatFlyModule m =
+                ModuleManager.INSTANCE.get(com.vortex.client.module.modules.BoatFlyModule.class);
+        if (m == null || !m.isEnabled() || !m.noClip.get() || e == null) return false;
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer ich = mc.player;
+        if (ich == null) return false;
+        java.util.UUID meine = ich.getUUID();
+        // Spieler: ich selbst (Client oder Einzelspieler-Server), im Boot
+        if (e instanceof net.minecraft.world.entity.player.Player pl) {
+            return pl.getUUID().equals(meine)
+                    && pl.getVehicle() instanceof net.minecraft.world.entity.vehicle.boat.AbstractBoat;
+        }
+        // Boot: von mir gesteuert
+        if (e instanceof net.minecraft.world.entity.vehicle.boat.AbstractBoat b) {
+            var fahrer = b.getControllingPassenger();
+            return fahrer != null && fahrer.getUUID().equals(meine);
+        }
+        return false;
+    }
+
+    private static void bootTick(LocalPlayer p) {
+        net.minecraft.world.entity.vehicle.boat.AbstractBoat boot =
+                p.getVehicle() instanceof net.minecraft.world.entity.vehicle.boat.AbstractBoat b ? b : null;
+        if (boot != null && noClipFuer(boot)) {
+            // Ohne Kollision bewegt Minecraft das Boot einfach weiter.
+            if (geistBoot != null && geistBoot != boot) geistBoot.noPhysics = false;
+            boot.noPhysics = true;
+            geistBoot = boot;
+        } else {
+            bootAus();
+        }
+    }
+
+    /** No Clip sofort zuruecknehmen (Ausschalten, Aussteigen). */
+    public static void bootAus() {
+        if (geistBoot != null) {
+            geistBoot.noPhysics = false;
+            geistBoot = null;
+        }
+    }
 
     /** Bewegung des gesteuerten Boots, direkt vor dem Ausfuehren. */
     public static Vec3 boot(net.minecraft.world.entity.vehicle.boat.AbstractBoat boot, LocalPlayer p, Vec3 v) {
@@ -272,30 +319,6 @@ public final class MoveCheats {
         Vec3 neu = new Vec3(x, y, z);
         boot.setDeltaMovement(neu);
         return neu;
-    }
-
-    private static void bootTick(LocalPlayer p) {
-        com.vortex.client.module.modules.BoatFlyModule m = an(com.vortex.client.module.modules.BoatFlyModule.class);
-        net.minecraft.world.entity.vehicle.boat.AbstractBoat boot =
-                p.getVehicle() instanceof net.minecraft.world.entity.vehicle.boat.AbstractBoat b ? b : null;
-        boolean geist = m != null && m.noClip.get() && boot != null && boot.getControllingPassenger() == p;
-        if (geist) {
-            // No Clip: ohne Kollision bewegt Minecraft das Boot einfach weiter.
-            if (geistBoot != null && geistBoot != boot) geistBoot.noPhysics = false;
-            boot.noPhysics = true;
-            geistBoot = boot;
-        } else if (geistBoot != null) {
-            geistBoot.noPhysics = false;
-            geistBoot = null;
-        }
-    }
-
-    /** Beim Ausschalten: No Clip sofort zuruecknehmen. */
-    public static void bootAus() {
-        if (geistBoot != null) {
-            geistBoot.noPhysics = false;
-            geistBoot = null;
-        }
     }
 
     // ------------------------------------------------------------------
