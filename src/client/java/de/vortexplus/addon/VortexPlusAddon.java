@@ -89,6 +89,8 @@ public class VortexPlusAddon implements ClientModInitializer {
                 "Move faster on the ground. Strafe = fixed speed, Boost = speeds up your own movement. Very high ban risk.");
         register(new com.vortex.client.module.modules.NoSlowModule(),
                 "No slowdown while eating, drinking, blocking or drawing a bow. High ban risk.");
+        register(new com.vortex.client.module.modules.BoatFlyModule(),
+                "Fly with a boat: WASD in look direction, jump up, sprint key down. No Clip flies through blocks. High ban risk.");
         register(new com.vortex.client.module.modules.ElytraFlyModule(),
                 "Better elytra flight: Control (fly freely, hover), Boost (accelerate), Firework (automatic rockets). High ban risk.");
 
@@ -126,7 +128,7 @@ public class VortexPlusAddon implements ClientModInitializer {
         } catch (Throwable pvpErr) {
             com.vortex.client.core.Errors.report("VortexPlusAddon.reload", pvpErr);
         }
-        System.out.println("[vortex-plus-addon] 33 Module angemeldet.");
+        System.out.println("[vortex-plus-addon] 34 Module angemeldet.");
     }
 
     /**

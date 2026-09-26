@@ -64,6 +64,7 @@ public final class MoveCheats {
                 return;
             }
             try {
+                bootTick(p);
                 step(p);
                 jesusTick(mc, p);
                 speedTick(mc, p);
@@ -235,6 +236,66 @@ public final class MoveCheats {
             return neu;
         }
         return v;
+    }
+
+    // ------------------------------------------------------------------
+    // Boat Fly
+    // ------------------------------------------------------------------
+
+    /** Das Boot, dem wir No Clip gegeben haben -- um es zurueckzunehmen. */
+    private static net.minecraft.world.entity.vehicle.boat.AbstractBoat geistBoot = null;
+
+    /** Bewegung des gesteuerten Boots, direkt vor dem Ausfuehren. */
+    public static Vec3 boot(net.minecraft.world.entity.vehicle.boat.AbstractBoat boot, LocalPlayer p, Vec3 v) {
+        com.vortex.client.module.modules.BoatFlyModule m = an(com.vortex.client.module.modules.BoatFlyModule.class);
+        if (m == null) return v;
+        // Freecam: die Tasten steuern dann die Kamera, nicht das Boot.
+        if (com.vortex.client.freecam.Freecam.isActive()) return v;
+        Minecraft mc = Minecraft.getInstance();
+
+        if (m.faceCamera.get()) boot.setYRot(p.getYRot());
+
+        // Waagerecht: Tasten relativ zur Blickrichtung, Bloecke/s -> pro Tick
+        double[] dir = tastenRichtung(mc, p.getYRot());
+        double h = m.speed.get() / 20.0;
+        double x = dir == null ? 0 : dir[0] * h;
+        double z = dir == null ? 0 : dir[1] * h;
+
+        // Senkrecht: Springen hoch, Sprinttaste runter, sonst schweben.
+        // (Schleichen steigt aus dem Boot aus -- deshalb nicht dafuer.)
+        double vs = m.verticalSpeed.get() / 20.0;
+        double y = 0;
+        if (mc.options.keyJump.isDown()) y = vs;
+        else if (mc.options.keySprint.isDown()) y = -vs;
+        else if (m.antiKick.get() && tick % 40 == 0) y = -0.04;
+
+        Vec3 neu = new Vec3(x, y, z);
+        boot.setDeltaMovement(neu);
+        return neu;
+    }
+
+    private static void bootTick(LocalPlayer p) {
+        com.vortex.client.module.modules.BoatFlyModule m = an(com.vortex.client.module.modules.BoatFlyModule.class);
+        net.minecraft.world.entity.vehicle.boat.AbstractBoat boot =
+                p.getVehicle() instanceof net.minecraft.world.entity.vehicle.boat.AbstractBoat b ? b : null;
+        boolean geist = m != null && m.noClip.get() && boot != null && boot.getControllingPassenger() == p;
+        if (geist) {
+            // No Clip: ohne Kollision bewegt Minecraft das Boot einfach weiter.
+            if (geistBoot != null && geistBoot != boot) geistBoot.noPhysics = false;
+            boot.noPhysics = true;
+            geistBoot = boot;
+        } else if (geistBoot != null) {
+            geistBoot.noPhysics = false;
+            geistBoot = null;
+        }
+    }
+
+    /** Beim Ausschalten: No Clip sofort zuruecknehmen. */
+    public static void bootAus() {
+        if (geistBoot != null) {
+            geistBoot.noPhysics = false;
+            geistBoot = null;
+        }
     }
 
     // ------------------------------------------------------------------

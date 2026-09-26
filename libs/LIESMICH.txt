@@ -9,9 +9,10 @@ weitere. Ohne die Jar kennt der Compiler diese Klassen nicht und meldet
 hunderte "cannot find symbol".
 
 SO GEHT ES
-  1. Vortex Client 2.29.2 fuer 26.2 bauen
-  2. Aus dem Build-Ergebnis  build/libs/vortexclient-*.jar  nehmen
-     (NICHT die "-sources"- oder "-dev"-Datei)
+  1. Den Vortex Client bauen (GitHub Actions im Client-Repo)
+  2. Die Jar holen: Repo-Startseite -> rechts "Releases" -> neueste Version
+     -> vortexclient-fabric-26.2-<version>.jar herunterladen
+     (NICHT die "-sources"-Datei)
   3. Hierher legen und in  vortexclient.jar  umbenennen
   4. Mit einchecken -- die Datei ist unter 1 MB
 

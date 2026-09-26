@@ -484,22 +484,53 @@ public final class CombatCheats {
     // ------------------------------------------------------------------
 
     private static long ankerZuletzt = -100;
+    /** Zuletzt gemeldeter Grund, warum nichts passiert -- jeder nur einmal. */
+    private static String ankerGrund = null;
+
+    /**
+     * Sagt im Chat, warum Auto Anchor gerade nichts tut. Jeder Grund nur
+     * einmal, bis sich etwas aendert -- sonst weiss man nie, ob das Modul
+     * kaputt ist oder nur etwas fehlt.
+     */
+    private static void grund(LocalPlayer p, String text) {
+        if (text.equals(ankerGrund)) return;
+        ankerGrund = text;
+        p.sendSystemMessage(net.minecraft.network.chat.Component.literal(
+                "\u00a7d[Auto Anchor] \u00a77" + text));
+    }
 
     private static void autoAnchor(Minecraft mc, LocalPlayer p) {
         AutoAnchorModule m = an(AutoAnchorModule.class);
-        if (m == null || hand != null || mc.gui.screen() != null) return;
+        if (m == null) {
+            ankerGrund = null;
+            return;
+        }
+        if (hand != null || mc.gui.screen() != null) return;
         // Im Nether ist der Anker ein normaler Respawnpunkt und explodiert nicht.
-        if (mc.level.dimension() == Level.NETHER) return;
+        if (mc.level.dimension() == Level.NETHER) {
+            grund(p, "Respawn anchors do not explode in the Nether -- only in the Overworld and the End.");
+            return;
+        }
         if (tick - ankerZuletzt < m.delay.getInt()) return;
-        if (p.getHealth() + p.getAbsorptionAmount() <= m.safetyHealth.get()) return;
-
-        double reichweite = m.range.get();
-        Player ziel = gegner(mc, p, reichweite + 4);
-        if (ziel == null) return;
+        if (p.getHealth() + p.getAbsorptionAmount() <= m.safetyHealth.get()) {
+            grund(p, "Paused: your health is at or below Safety Health.");
+            return;
+        }
 
         int ankerPlatz = Inv.hotbar(p, st -> st.is(Items.RESPAWN_ANCHOR));
         int glowPlatz = Inv.hotbar(p, st -> st.is(Items.GLOWSTONE));
-        if (glowPlatz < 0) return;
+        if (glowPlatz < 0) {
+            grund(p, "Put glowstone in your hotbar.");
+            return;
+        }
+
+        double reichweite = m.range.get();
+        Player ziel = gegner(mc, p, reichweite + 4);
+        if (ziel == null) {
+            grund(p, "Waiting for an enemy player within " + (int) (reichweite + 4)
+                    + " blocks (friends and mobs are ignored).");
+            return;
+        }
 
         // 1. Liegt schon ein Anker beim Ziel? Dann laden oder zuenden.
         BlockPos anker = findeAnker(mc, p, ziel, m);
@@ -510,23 +541,45 @@ public final class CombatCheats {
                 klickeBlock(mc, p, anker, glowPlatz, m.swing.get());
             } else {
                 // Zuenden mit etwas, das KEIN Glowstone ist -- sonst laedt man nur weiter.
-                int anderer = Inv.hotbar(p, s -> !s.is(Items.GLOWSTONE) && !s.is(Items.RESPAWN_ANCHOR));
-                if (anderer < 0) anderer = leererPlatz(p);
-                if (anderer < 0) return;
+                int anderer = leererPlatz(p);
+                if (anderer < 0) anderer = Inv.hotbar(p, s -> !s.is(Items.GLOWSTONE)
+                        && !s.is(Items.RESPAWN_ANCHOR) && !(s.getItem() instanceof net.minecraft.world.item.BlockItem));
+                if (anderer < 0) {
+                    grund(p, "Keep one hotbar slot empty (or holding a tool/weapon) to detonate the anchor.");
+                    return;
+                }
                 klickeBlock(mc, p, anker, anderer, m.swing.get());
             }
+            ankerGrund = null;
             ankerZuletzt = tick;
             return;
         }
 
-        // 2. Sonst einen setzen: ueber dem Kopf oder neben den Fuessen des Ziels.
-        if (ankerPlatz < 0) return;
+        // 2. Sonst einen setzen: ueber dem Kopf oder neben dem Ziel.
+        if (ankerPlatz < 0) {
+            grund(p, "Put respawn anchors in your hotbar.");
+            return;
+        }
         BlockPos platz = setzPlatz(mc, p, ziel, m);
-        if (platz == null) return;
+        if (platz == null) {
+            grund(p, "No free spot next to " + ziel.getName().getString()
+                    + " within Range that is at least Min Self Distance away from you.");
+            return;
+        }
         int vorher = p.getInventory().getSelectedSlot();
         p.getInventory().setSelectedSlot(ankerPlatz);
-        Inv.setze(mc, platz, m.swing.get());
+        if (Inv.hatNachbar(mc, platz)) {
+            Inv.setze(mc, platz, m.swing.get());
+        } else {
+            // Kein Block zum Anlehnen (z. B. ueber dem Kopf im Freien):
+            // direkt in die Luft setzen -- der Klick zielt auf den leeren
+            // Platz selbst, Minecraft setzt den Block dann genau dort hin.
+            mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND,
+                    new BlockHitResult(Vec3.atCenterOf(platz), Direction.UP, platz, false));
+            if (m.swing.get()) p.swing(InteractionHand.MAIN_HAND);
+        }
         p.getInventory().setSelectedSlot(vorher);
+        ankerGrund = null;
         ankerZuletzt = tick;
     }
 
@@ -576,7 +629,6 @@ public final class CombatCheats {
             BlockState st = mc.level.getBlockState(q);
             if (!st.isAir() && !st.canBeReplaced()) continue;
             if (!ok(p, q, m)) continue;
-            if (!Inv.hatNachbar(mc, q)) continue;
             // Nicht in einen Spieler hinein (auch nicht in einen selbst)
             if (p.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(q))) continue;
             if (ziel.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(q))) continue;

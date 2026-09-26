@@ -27,8 +27,17 @@ public abstract class CheatMoveMixin {
     private Vec3 vortex$bewegung(Vec3 bewegung) {
         try {
             Minecraft mc = Minecraft.getInstance();
-            if (mc == null || (Object) this != mc.player) return bewegung;
-            return com.vortex.client.cheat.MoveCheats.bewegung((LocalPlayer) (Object) this, bewegung);
+            if (mc == null || mc.player == null) return bewegung;
+            if ((Object) this == mc.player) {
+                return com.vortex.client.cheat.MoveCheats.bewegung((LocalPlayer) (Object) this, bewegung);
+            }
+            // Boat Fly: das Boot, das DU steuerst (Meteor steuert Fahrzeuge
+            // an derselben Stelle, EntityControl).
+            if ((Object) this instanceof net.minecraft.world.entity.vehicle.boat.AbstractBoat boot
+                    && boot.getControllingPassenger() == mc.player) {
+                return com.vortex.client.cheat.MoveCheats.boot(boot, mc.player, bewegung);
+            }
+            return bewegung;
         } catch (Throwable pvpErr) {
             com.vortex.client.core.Errors.report("CheatMoveMixin", pvpErr);
             return bewegung;
