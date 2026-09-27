@@ -6,6 +6,7 @@
   "description": "Cheat-Module fuer den Vortex Client.",
   "authors": ["Vortex"],
   "license": "ARR",
+  "icon": "assets/vortexplusaddon/icon.png",
   "environment": "client",
   "entrypoints": {
     "client": ["de.vortexplus.addon.VortexPlusAddon"]
