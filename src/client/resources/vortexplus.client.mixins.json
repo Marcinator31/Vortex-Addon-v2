@@ -20,7 +20,8 @@
 		"NoClipCameraMixin",
 		"NoClipWallMixin",
 		"NoFallMixin",
-		"NoSlowMixin"
+		"NoSlowMixin",
+		"ReachMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

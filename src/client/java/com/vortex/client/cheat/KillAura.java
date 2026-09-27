@@ -54,7 +54,8 @@ public final class KillAura {
         }
         ohneZiel = 0;
 
-        if (m.autoMace.get()) nimmStreitkolben(p);
+        // Mit Attribute Swap NICHT selbst wechseln -- sonst wird das Tempo langsam.
+        if (m.autoMace.get() && !AttributeSwap.aktiv()) nimmStreitkolben(p);
 
         if (p.getAttackStrengthScale(0.0f) < m.minCharge.get()) return;
         mc.gameMode.attack(p, ziel);
