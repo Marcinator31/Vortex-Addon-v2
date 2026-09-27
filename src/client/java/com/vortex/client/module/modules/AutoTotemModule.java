@@ -45,8 +45,26 @@ public class AutoTotemModule extends Module {
     /** Say something in chat when the last totem is gone. */
     public final BooleanSetting warnEmpty = new BooleanSetting("Warn When Out", true);
 
+    /**
+     * Wie das Totem in die Off-Hand kommt.
+     *
+     *   Normal          wie bisher: sofort, auch bei geschlossenem Inventar
+     *   Hover           Inventar oeffnen und mit der Maus ueber ein Totem
+     *                   fahren -- es wandert in die Off-Hand (wie Maus
+     *                   drauf + F-Taste, nur ohne Taste)
+     *   Inventory Open  sobald das Inventar offen ist, kommt ein Totem in die
+     *                   Off-Hand -- oeffnen, zu, fertig
+     *
+     * Hover und Inventory Open klicken nur, waehrend das Inventar wirklich
+     * offen ist. Das sieht fuer den Server aus wie echtes Umraeumen; Normal
+     * klickt bei geschlossenem Inventar, was manche Anti-Cheats erkennen.
+     */
+    public final com.vortex.client.core.setting.ModeSetting mode =
+            new com.vortex.client.core.setting.ModeSetting("Mode", 0, "Normal", "Hover", "Inventory Open");
+
     public AutoTotemModule() {
         super("Auto Totem", Category.CHEATS);
+        addSetting(mode);
         addSetting(delay);
         addSetting(jitter);
         addSetting(onlyWithWeapon);

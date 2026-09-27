@@ -53,6 +53,12 @@ public final class AutoTotem {
 
             LocalPlayer player = client.player;
 
+            // --- Modus Hover / Inventory Open (4.6.1) ------------------------
+            int modus = mod.mode.getIndex();
+            if (modus == 1) { hover(client, player, mod); return; }
+            if (modus == 2) { inventarOffen(client, player, mod); return; }
+
+            // --- Modus Normal ------------------------------------------------
             // Nur handeln, wenn die Off-Hand wirklich leer ist.
             if (!player.getOffhandItem().isEmpty()) return;
 
@@ -177,6 +183,101 @@ public final class AutoTotem {
             return invIndex;           // Hauptinventar (gleiche Nummer)
         }
         return -1;
+    }
+
+    // ======================================================================
+    // Hover und Inventory Open
+    // ======================================================================
+
+    /** Button 40 bei SWAP = mit der Off-Hand tauschen (wie die F-Taste). */
+    private static final int OFFHAND_TASTE = 40;
+
+    private static net.minecraft.world.inventory.Slot hoverPlatz = null;
+    private static long hoverSeit = 0;
+
+    /**
+     * HOVER: Inventar offen, Maus ueber einem Totem -> ab in die Off-Hand.
+     *
+     * Genau das, was ein Spieler mit "Maus drauf + F" tut: EIN Tausch-Klick
+     * auf den Platz unter dem Zeiger. Die Verzoegerung zaehlt ab dem Moment,
+     * in dem der Zeiger auf dem Totem landet -- wer nur darueberwischt, loest
+     * bei ein paar Ticks Verzoegerung nichts aus.
+     */
+    private static void hover(net.minecraft.client.Minecraft client, LocalPlayer player, AutoTotemModule mod) {
+        var screen = client.gui.screen();
+        if (!(screen instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>)
+                || istKreativ(screen)) {
+            hoverPlatz = null;
+            return;
+        }
+        net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?> acs =
+                (net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>) screen;
+        if (player.getOffhandItem().is(Items.TOTEM_OF_UNDYING)) { hoverPlatz = null; return; }
+        if (!acs.getMenu().getCarried().isEmpty()) return;
+        net.minecraft.world.inventory.Slot platz =
+                ((com.vortex.client.mixin.client.HoveredSlotAccessor) acs).vortex$hoveredSlot();
+        if (platz == null || !platz.hasItem() || !platz.getItem().is(Items.TOTEM_OF_UNDYING)
+                || platz.container != player.getInventory()) {
+            hoverPlatz = null;
+            return;
+        }
+        if (platz != hoverPlatz) {
+            hoverPlatz = platz;
+            hoverSeit = tickCounter;
+        }
+        if (tickCounter - hoverSeit < nextDelay || tickCounter - lastActionTick < nextDelay) return;
+        try {
+            client.gameMode.handleContainerInput(acs.getMenu().containerId, platz.index,
+                    OFFHAND_TASTE, ContainerInput.SWAP, player);
+            fertig(mod);
+        } catch (Throwable pvpErr) {
+            com.vortex.client.core.Errors.report("AutoTotem.hover", pvpErr);
+        }
+    }
+
+    /**
+     * INVENTORY OPEN: sobald das eigene Inventar offen ist und die Off-Hand
+     * kein Totem hat, kommt eines hinein -- ein einziger Tausch-Klick.
+     */
+    private static void inventarOffen(net.minecraft.client.Minecraft client, LocalPlayer player,
+                                      AutoTotemModule mod) {
+        var screen = client.gui.screen();
+        if (!(screen instanceof net.minecraft.client.gui.screens.inventory.InventoryScreen)) return;
+        if (player.getOffhandItem().is(Items.TOTEM_OF_UNDYING)) return;
+        if (!player.inventoryMenu.getCarried().isEmpty()) return;
+        if (tickCounter - lastActionTick < nextDelay) return;
+        int totem = findTotemInventorySlot(player);
+        if (totem < 0) {
+            if (mod.warnEmpty.get() && !warnedEmpty) {
+                warnedEmpty = true;
+                player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
+                        "\u00a7c[Auto Totem] No totems left."));
+            }
+            return;
+        }
+        warnedEmpty = false;
+        int platz = inventoryIndexToScreenSlot(totem);
+        if (platz < 0) return;
+        try {
+            client.gameMode.handleContainerInput(player.inventoryMenu.containerId, platz,
+                    OFFHAND_TASTE, ContainerInput.SWAP, player);
+            fertig(mod);
+        } catch (Throwable pvpErr) {
+            com.vortex.client.core.Errors.report("AutoTotem.inventory", pvpErr);
+        }
+    }
+
+    /** Nach einem Tausch: Zeitpunkt merken, naechste Wartezeit wuerfeln. */
+    private static void fertig(AutoTotemModule mod) {
+        lastActionTick = tickCounter;
+        int base = mod.delay.getInt();
+        int spread = mod.jitter.getInt();
+        nextDelay = base + ((spread > 0) ? RANDOM.nextInt(spread + 1) : 0);
+    }
+
+    /** Im Kreativ-Inventar sind die Plaetze anders verdrahtet -- dort nicht. */
+    private static boolean istKreativ(Object screen) {
+        return screen.getClass().getSimpleName().contains("Creative");
     }
 
     private static Module find(Class<? extends Module> type) {

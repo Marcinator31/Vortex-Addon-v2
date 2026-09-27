@@ -56,6 +56,11 @@ public class FreecamModule extends Module {
      * AN (Standard): man sieht sich selbst dort stehen, wo man geblieben ist.
      * Das ist meist gewollt -- sonst weiss man nicht, wo der eigene Koerper
      * steht, und fliegt beim Beenden ueberraschend zurueck.
+     *
+     * Seit Client 4.6.1 ohne eigene Kamera-Entity: die Kamera gilt nur als
+     * "abgeloest" wie in F5. Der Spieler bleibt die Kamera und schickt weiter
+     * ganz normal seine Bewegungspakete -- vorher verstummte er dabei auf dem
+     * Server, was Anti-Cheats auffaellt.
      */
     public final BooleanSetting showPlayer =
             new BooleanSetting("Show Player", true);

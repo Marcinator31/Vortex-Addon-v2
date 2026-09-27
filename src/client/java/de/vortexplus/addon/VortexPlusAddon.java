@@ -29,7 +29,7 @@ public class VortexPlusAddon implements ClientModInitializer {
         register(new com.vortex.client.module.modules.AutoHitModule(),
                 "Attacks automatically when a target is in range. Very high ban risk.");
         register(new com.vortex.client.module.modules.AutoTotemModule(),
-                "Moves a totem into your off hand automatically. High ban risk.");
+                "Moves a totem into your off hand. Modes: Normal (anytime), Hover (open your inventory and point at a totem), Inventory Open (just open your inventory). Normal: high ban risk, Hover / Inventory Open: lower, they only click while the inventory is open.");
         register(new com.vortex.client.module.modules.BlockEspModule(),
                 "Highlights selected blocks, such as ores, through walls.");
         register(new com.vortex.client.module.modules.ContainerEspModule(),
@@ -41,7 +41,7 @@ public class VortexPlusAddon implements ClientModInitializer {
         register(new com.vortex.client.module.modules.FlyModule(),
                 "Lets you fly. Detected almost immediately on most servers.");
         register(new com.vortex.client.module.modules.FreecamModule(),
-                "Detaches the camera and lets you fly around freely.");
+                "Detaches the camera and lets you fly around freely. Your player stays visible and keeps sending normal movement packets.");
         register(new com.vortex.client.module.modules.ItemEspModule(),
                 "Highlights dropped items on the ground.");
         register(new com.vortex.client.module.modules.NoFallModule(),
@@ -92,7 +92,9 @@ public class VortexPlusAddon implements ClientModInitializer {
         register(new com.vortex.client.module.modules.BoatFlyModule(),
                 "Fly with a boat: WASD in look direction, jump up, sprint key down, hovers without keys. No Clip flies through blocks in singleplayer. High ban risk.");
         register(new com.vortex.client.module.modules.GhostViewModule(),
-                "In F5 you look like you had Invisibility: your own body no longer blocks the view. Camera Clip lets the F5 camera go through walls, Wall Vision draws the caves behind them. Only on your screen. Camera Clip / Wall Vision: medium ban risk (x-ray-like).");
+                "In F5 you look like you had Invisibility: your own body no longer blocks the view. Camera Clip lets the F5 camera go through walls, Wall Vision draws the caves behind them. The server cannot detect it (nothing is sent), but seeing through walls counts as x-ray on most servers: a risk in screenshares and recordings.");
+        register(new com.vortex.client.module.modules.FastUseModule(),
+                "Removes the delay between right clicks: XP bottles, snowballs, eggs, splash potions, wind charges, or everything; optionally blocks. Medium ban risk.");
         register(new com.vortex.client.module.modules.ElytraFlyModule(),
                 "Better elytra flight: Control (fly freely, hover), Boost (accelerate), Firework (automatic rockets). High ban risk.");
 
