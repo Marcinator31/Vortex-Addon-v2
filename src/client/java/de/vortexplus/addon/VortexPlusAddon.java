@@ -107,6 +107,12 @@ public class VortexPlusAddon implements ClientModInitializer {
                 "Breaks every block around you. Flatten keeps the ground, Instant breaks many soft blocks at once. Extreme ban risk.");
         register(new com.vortex.client.module.modules.AntiHungerModule(),
                 "Hides sprinting and jumping from the server so they cost less hunger. Medium ban risk.");
+        register(new com.vortex.client.module.modules.KillAuraModule(),
+                "Attacks the nearest target in range automatically, even through walls. With Auto Mace + Mace Kill: one hit. Extreme ban risk.");
+        register(new com.vortex.client.module.modules.MaceKillModule(),
+                "Every mace hit counts as a smash from up to 22 blocks, without jumping. Needs free space above you. Extreme ban risk.");
+        register(new com.vortex.client.module.modules.GodModeModule(),
+                "No damage. Singleplayer only: on servers the server calculates damage, no client can change that.");
 
         registriereRenderer();
 
@@ -132,7 +138,7 @@ public class VortexPlusAddon implements ClientModInitializer {
         } catch (Throwable pvpErr) {
             com.vortex.client.core.Errors.report("VortexPlusAddon.reload", pvpErr);
         }
-        System.out.println("[vortex-plus-addon] 34 Module angemeldet.");
+        System.out.println("[vortex-plus-addon] 37 Module angemeldet.");
     }
 
     /**
@@ -163,6 +169,7 @@ public class VortexPlusAddon implements ClientModInitializer {
             com.vortex.client.cheat.PacketCheats.register();
             com.vortex.client.cheat.CombatCheats.register();
             com.vortex.client.cheat.WorldCheats.register();
+            com.vortex.client.cheat.KillAura.register();
             // registerSafety ruft der Client selbst -- hier wuerde sie
             // ein zweites Mal laufen und den Ereignis-Handler doppelt anmelden.
         } catch (Throwable pvpErr) {

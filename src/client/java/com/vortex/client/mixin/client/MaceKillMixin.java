@@ -1,0 +1,27 @@
+package com.vortex.client.mixin.client;
+
+import net.minecraft.client.multiplayer.MultiPlayerGameMode;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+/**
+ * Mace Kill: direkt VOR dem Angriffspaket die Hoehe melden. HEAD liegt vor
+ * ensureHasSentCarriedItem und dem ServerboundAttackPacket -- der Server
+ * verarbeitet die Pakete in genau dieser Reihenfolge.
+ */
+@Mixin(MultiPlayerGameMode.class)
+public abstract class MaceKillMixin {
+
+    @Inject(method = "attack", at = @At("HEAD"))
+    private void vortex$maceKill(Player player, Entity target, CallbackInfo ci) {
+        try {
+            com.vortex.client.cheat.MaceKill.vorDemSchlag(player, target);
+        } catch (Throwable t) {
+            com.vortex.client.core.Errors.report("MaceKill", t);
+        }
+    }
+}
