@@ -117,6 +117,36 @@ public class VortexPlusAddon implements ClientModInitializer {
                 "Every fully charged hit becomes a critical hit (x1.5 damage) without jumping. High ban risk.");
         register(new com.vortex.client.module.modules.AttributeSwapModule(),
                 "Hold a sword: sword damage and speed, but the hit swaps to your mace (smash) or axe (breaks shields) for one packet. Axe vs Shield picks the axe automatically. Extreme ban risk.");
+        // --- 2.24.0 ---------------------------------------------------------
+        register(new com.vortex.client.module.modules.WTapModule(),
+                "Every hit gets full sprint knockback. Packet re-sends sprint before the hit, Legit releases W for a few ticks. Medium ban risk.");
+        register(new com.vortex.client.module.modules.ElytraSwapModule(),
+                "Swaps chestplate and elytra: on a key, when you press jump while falling (starts gliding) and back to the best chestplate when you land.");
+        register(new com.vortex.client.module.modules.AutoPotModule(),
+                "Throws splash potions at your feet: healing below X HP (several in a row), regeneration, strength, speed, fire resistance before they run out. Pulls potions from your inventory. Medium ban risk.");
+        register(new com.vortex.client.module.modules.AutoWebModule(),
+                "Places cobwebs on your target's feet (and head). High ban risk.");
+        register(new com.vortex.client.module.modules.AutoLogModule(),
+                "Disconnects at low health, low totems, on a totem pop or when a player (not a friend) comes near. Turns off Auto Reconnect.");
+        register(new com.vortex.client.module.modules.SpiderModule(),
+                "Climb up walls by walking into them. Sneak to hold still. High ban risk.");
+        register(new com.vortex.client.module.modules.SafeWalkModule(),
+                "You cannot fall off edges -- like sneaking, but at full speed. Low ban risk.");
+        register(new com.vortex.client.module.modules.ParkourModule(),
+                "Jumps at the last moment on edges, only if there is a safe landing; stops at unsafe gaps, jumps up single blocks, auto sprint.");
+        register(new com.vortex.client.module.modules.LogoutSpotsModule(),
+                "Marks where players logged out near you, with a message in chat. Removed when they come back.");
+        register(new com.vortex.client.module.modules.AutoRespawnModule(),
+                "Respawns right after death and writes your death coordinates to chat.");
+        register(new com.vortex.client.module.modules.AutoFishModule(),
+                "Reels in on a bite and casts again. Detects the bite the same way the server reports it. Stops before the rod breaks.");
+        register(new com.vortex.client.module.modules.SpeedMineModule(),
+                "Mines faster: finishes a block at 70 % (the most the server accepts, no ghost blocks) and removes the pause between blocks. Medium ban risk.");
+        // --- 2.25.0 ---------------------------------------------------------
+        register(new com.vortex.client.module.modules.CrystalAuraModule(),
+                "Places and breaks end crystals by itself. Calculates the damage like the server does (distance, cover, armour, protection, resistance, difficulty) and only places where the target takes enough and you do not. Face place, instant break, anti suicide, anti weakness. Extreme ban risk.");
+        register(new com.vortex.client.module.modules.FastAnchorModule(),
+                "One right click: place, charge and detonate a respawn anchor -- in one tick. Glowstone Shield puts a glowstone block between you and the anchor, which blocks part of the blast. Won't detonate if it would hurt you too much. Extreme ban risk.");
         register(new com.vortex.client.module.modules.GodModeModule(),
                 "No damage. Singleplayer only: on servers the server calculates damage, no client can change that.");
 
@@ -144,7 +174,7 @@ public class VortexPlusAddon implements ClientModInitializer {
         } catch (Throwable pvpErr) {
             com.vortex.client.core.Errors.report("VortexPlusAddon.reload", pvpErr);
         }
-        System.out.println("[vortex-plus-addon] 40 Module angemeldet.");
+        System.out.println("[vortex-plus-addon] 54 Module angemeldet.");
     }
 
     /**
@@ -176,6 +206,12 @@ public class VortexPlusAddon implements ClientModInitializer {
             com.vortex.client.cheat.CombatCheats.register();
             com.vortex.client.cheat.WorldCheats.register();
             com.vortex.client.cheat.KillAura.register();
+            // 2.24.0
+            com.vortex.client.cheat.ExtraCheats.register();
+            com.vortex.client.hud.LogoutSpots.register();
+            // 2.25.0
+            com.vortex.client.cheat.CrystalAura.register();
+            com.vortex.client.cheat.FastAnchor.register();
             // registerSafety ruft der Client selbst -- hier wuerde sie
             // ein zweites Mal laufen und den Ereignis-Handler doppelt anmelden.
         } catch (Throwable pvpErr) {

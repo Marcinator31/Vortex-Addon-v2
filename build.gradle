@@ -61,11 +61,11 @@ tasks.named("compileJava").configure {
                 "  ModuleManager, BooleanSetting ...) und braucht ihn zum\n" +
                 "  Uebersetzen.\n" +
                 "\n" +
-                "  So geht es:\n" +
-                "    1. Den Vortex Client fuer 26.2 bauen\n" +
-                "    2. build/libs/vortexclient-*.jar herunterladen\n" +
-                "    3. Als libs/vortexclient.jar in dieses Repository legen\n" +
-                "       (die Datei ist unter 1 MB, sie darf mit eingecheckt werden)\n" +
+                "  Auf GitHub holt der Build sie automatisch (Schritt\n" +
+                "  \"Client-Jar holen\"). Lokal auf dem PC:\n" +
+                "    1. Den Vortex Client bauen (oder die Jar aus seinem Release)\n" +
+                "    2. Als libs/vortexclient.jar hierher legen\n" +
+                "       (die ohne \"-sources\" im Namen)\n" +
                 "\n" +
                 "  KEINE leeren Ersatzklassen anlegen: diese Klassen gibt es\n" +
                 "  bereits im Client. Zwei Fassungen derselben Klasse fuehren\n" +

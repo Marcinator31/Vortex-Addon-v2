@@ -50,6 +50,18 @@ public class NetheriteFarmerModule extends Module {
     public final NumberSetting turnSpeed =
             new NumberSetting("Turn Speed", 12, 2, 45, 1);
 
+    /**
+     * Streifen-Muster: parallele Bahnen im Abstand von 3 Bloecken statt
+     * geradeaus und zufaellig drehen. Legt jeden Wandblock genau einmal frei
+     * und laeuft nicht durch alte Gaenge.
+     */
+    public final BooleanSetting stripMine =
+            new BooleanSetting("Strip Mine Pattern", true);
+
+    /** Laenge einer Bahn, bevor 3 Bloecke seitlich die naechste beginnt. */
+    public final NumberSetting laneLength =
+            new NumberSetting("Lane Length", 40, 12, 128, 4);
+
     /** Lava meiden statt hindurchzulaufen. */
     public final BooleanSetting avoidLava =
             new BooleanSetting("Avoid Lava", true);
@@ -95,6 +107,8 @@ public class NetheriteFarmerModule extends Module {
         addSetting(mineY);
         addSetting(debrisRange);
         addSetting(turnSpeed);
+        addSetting(stripMine);
+        addSetting(laneLength);
         addSetting(avoidLava);
         addSetting(afkWhenOut);
         addSetting(afkOnPlayer);

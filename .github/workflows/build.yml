@@ -20,33 +20,14 @@ jobs:
         uses: actions/checkout@v4
 
       # JDK 25 -- Minecraft 26.x requires Java 25.
-      # build.gradle setzt VERSION_25; mit JDK 21 bricht der Compiler mit
-      # "release version 25 not supported" ab.
-      # Ohne libs/vortexclient.jar bricht der Build ab -- mit einer
-      # lesbaren Meldung aus build.gradle statt hunderter Compilerfehler.
-      - name: Check client jar
-        run: |
-          if [ ! -f libs/vortexclient.jar ]; then
-            echo "::error::libs/vortexclient.jar fehlt. Siehe libs/LIESMICH.txt"
-            exit 1
-          fi
-          python3 tools_check_against_jar.py || {
-            echo "::error::Die Client-Jar in libs/ passt nicht zum Quelltext -- vermutlich veraltet."
-            exit 1
-          }
-
-
       - name: Set up JDK 25
         uses: actions/setup-java@v4
         with:
           java-version: '25'
           distribution: 'temurin'
 
-      # Caches Gradle and the downloaded Minecraft files.
-      #
-      # This is not only about speed: once Minecraft is cached, a build no
-      # longer fails just because a download source is briefly unreachable.
-      # That is exactly what broke an earlier run.
+      # Caches Gradle and the downloaded Minecraft files (Client und Addon
+      # benutzen dieselbe Minecraft-Version -- wird nur einmal geladen).
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
@@ -55,6 +36,72 @@ jobs:
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', 'gradle.properties') }}
           restore-keys: ${{ runner.os }}-gradle-
+
+      # ---------------------------------------------------------------
+      # CLIENT-JAR AUTOMATISCH HOLEN -- nichts mehr von Hand nach libs/.
+      #
+      # 1. Wahl: den Client aus dem Client-Repo (client_repo in
+      #    gradle.properties) frisch bauen -- immer der neueste Stand,
+      #    auch wenn dort gerade noch kein Release fertig ist.
+      # 2. Wahl: die Jar aus dem neuesten Release des Client-Repos.
+      # 3. Wahl: eine eingecheckte libs/vortexclient.jar (alter Weg).
+      #
+      # client_ref (optional) = Branch oder Tag, z. B. v4.6.3+26.2, falls
+      # das Addon gegen einen bestimmten Client-Stand bauen soll.
+      # ---------------------------------------------------------------
+      - name: Client-Jar holen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          prop() { grep "^$1=" gradle.properties | cut -d= -f2- | tr -d '[:space:]'; }
+          REPO=$(prop client_repo)
+          REF=$(prop client_ref)
+          [ -n "$REPO" ] || REPO="Marcinator31/Vortex-Client"
+          mkdir -p libs
+          SRC="$RUNNER_TEMP/client-src"
+          GEBAUT=""
+
+          echo "=== Client aus $REPO ${REF:-(neuester Stand)} bauen ==="
+          if git clone --depth 1 ${REF:+--branch "$REF"} "https://github.com/$REPO.git" "$SRC"; then
+            ( cd "$SRC" && chmod +x gradlew && git log -1 --format='Client-Commit: %h %s' )
+            for attempt in 1 2 3; do
+              if ( cd "$SRC" && ./gradlew build --no-daemon -q ); then GEBAUT=1; break; fi
+              [ "$attempt" -lt 3 ] && { echo "Client-Build fehlgeschlagen -- neuer Versuch in 20 s"; sleep 20; }
+            done
+          fi
+          if [ -n "$GEBAUT" ]; then
+            JAR=$(ls "$SRC"/build/libs/*.jar | grep -v -- '-sources' | head -n 1)
+            cp "$JAR" libs/vortexclient.jar
+            echo "Client-Jar frisch gebaut: $(basename "$JAR")"
+            exit 0
+          fi
+
+          echo "::warning::Client konnte nicht gebaut werden -- nehme die Jar aus dem neuesten Release."
+          rm -rf "$RUNNER_TEMP/dl"
+          if gh release download ${REF:+"$REF"} --repo "$REPO" --pattern '*.jar' --dir "$RUNNER_TEMP/dl"; then
+            JAR=$(ls "$RUNNER_TEMP"/dl/*.jar | grep -v -- '-sources' | head -n 1)
+            if [ -n "$JAR" ]; then
+              cp "$JAR" libs/vortexclient.jar
+              echo "Client-Jar aus Release: $(basename "$JAR")"
+              exit 0
+            fi
+          fi
+
+          if [ -f libs/vortexclient.jar ]; then
+            echo "::warning::Nehme die eingecheckte libs/vortexclient.jar (kann veraltet sein)."
+            exit 0
+          fi
+          echo "::error::Keine Client-Jar: weder bauen noch Release-Download ging. client_repo in gradle.properties pruefen."
+          exit 1
+
+      # Prueft, ob alles, was das Addon vom Client benutzt, in der Jar ist.
+      - name: Check client jar
+        run: |
+          python3 tools_check_against_jar.py || {
+            echo "::error::Das Addon benutzt etwas, das es weder im Client noch im Addon-Quelltext gibt. Fehlt eine Addon-Datei, oder ist die Aenderung im Client noch nicht hochgeladen?"
+            exit 1
+          }
 
       - name: Make Gradle executable
         run: chmod +x ./gradlew

@@ -29,7 +29,10 @@ public abstract class CheatMoveMixin {
             Minecraft mc = Minecraft.getInstance();
             if (mc == null || mc.player == null) return bewegung;
             if ((Object) this == mc.player) {
-                return com.vortex.client.cheat.MoveCheats.bewegung((LocalPlayer) (Object) this, bewegung);
+                LocalPlayer ich = (LocalPlayer) (Object) this;
+                Vec3 v = com.vortex.client.cheat.MoveCheats.bewegung(ich, bewegung);
+                // 2.24.0: Spider, Parkour (Safe Walk laeuft ueber SafeWalkMixin)
+                return com.vortex.client.cheat.ExtraCheats.bewegung(ich, v);
             }
             // Boat Fly: das Boot, das DU steuerst (Meteor steuert Fahrzeuge
             // an derselben Stelle, EntityControl).

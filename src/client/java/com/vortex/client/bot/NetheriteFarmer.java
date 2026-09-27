@@ -100,6 +100,13 @@ public final class NetheriteFarmer {
         bodenY = Integer.MIN_VALUE;
         aktuell = null;
         naechsteSuche = 0;
+        achse = null;
+        seite = null;
+        musterGesetzt = null;
+        querWechsel = false;
+        bahnen = 0;
+        BESUCHT.clear();
+        fastVollGemeldet = false;
     }
 
     private static NetheriteFarmerModule modul() {
@@ -1957,6 +1964,17 @@ public final class NetheriteFarmer {
     // Inventar voll
     // ======================================================================
 
+    private static boolean fastVollGemeldet = false;
+
+    private static int freiePlaetze(LocalPlayer player) {
+        int n = 0;
+        for (int i = 0; i < 36; i++) {
+            ItemStack st = player.getInventory().getItem(i);
+            if (st == null || st.isEmpty()) n++;
+        }
+        return n;
+    }
+
     /** Kein freier Platz mehr -- und auch kein Debris-Stapel, der noch Platz hat. */
     private static boolean inventarVoll(LocalPlayer player) {
         for (int i = 0; i < 36; i++) {
@@ -2036,8 +2054,9 @@ public final class NetheriteFarmer {
         if (minuten < 0.5 && debrisGefunden == 0) return;
         double proStunde = minuten > 0 ? debrisGefunden / minuten * 60.0 : 0;
         melde(Minecraft.getInstance(), String.format(java.util.Locale.ROOT,
-                "%s%d Ancient Debris in %d min (%.1f pro Stunde).",
-                ende ? "Beendet: " : "Stand: ", debrisGefunden, Math.round(minuten), proStunde));
+                "%s%d Ancient Debris (= %d Netherite-Barren) in %d min, %.1f pro Stunde, %d Bahnen.",
+                ende ? "Beendet: " : "Stand: ", debrisGefunden, debrisGefunden / 4,
+                Math.round(minuten), proStunde, bahnen));
     }
 
     /** Fehlt etwas Wichtiges in der Hotbar, das im Inventar liegt? */
@@ -2195,7 +2214,127 @@ public final class NetheriteFarmer {
         int istY = (int) Math.floor(player.getY());
         if (istY > zielY + 1) { grabeRichtung(mc, player, mod, -1); return; }
         if (istY < zielY - 1) { grabeRichtung(mc, player, mod, +1); return; }
+        merkeBesucht(player);
+        if (mod.stripMine.get() && !wechseltEbene()) muster(mc, player, mod);
         grabeRichtung(mc, player, mod, wechseltEbene() ? -1 : 0);
+    }
+
+
+    // ======================================================================
+    // Streifen-Muster (Strip Mine)
+    // ======================================================================
+    //
+    // VORHER: geradeaus, bis etwas im Weg war, dann irgendwohin drehen. Nach
+    // ein paar Lava-Ausweichern lief der Bot durch seine eigenen alten Gaenge
+    // -- Minuten, in denen kein einziger neuer Block freigelegt wurde.
+    //
+    // JETZT: Schlangenlinie aus parallelen Bahnen im Abstand von 3 Bloecken.
+    //
+    //     ======>======>======>   Bahn 1   (Laenge "Lane Length")
+    //                         |   3 Bloecke seitlich
+    //     <======<======<======   Bahn 2
+    //     |
+    //     ======>======> ...
+    //
+    // Warum genau 3: Ancient Debris entsteht NIE an Luft (Vanilla-Worldgen,
+    // discard_chance_on_air_exposure = 1). Anti-Xray zeigt ausserdem nur
+    // Bloecke, die an Luft grenzen. Ein Gang legt also genau die Wand links
+    // und rechts frei. Bei 3 Bloecken Abstand liegen zwischen zwei Gaengen
+    // genau 2 Wandbloecke -- jeder wird von einem Gang gesehen, keiner doppelt.
+    //
+    // Nach jeder Stoerung (Lava, Abgrund, Wachhund) beginnt das Muster ab der
+    // neuen Richtung von vorn. Die Seite wird so gewaehlt, dass sie in
+    // unberuehrtes Gestein fuehrt.
+
+    private static final int BAHN_ABSTAND = 3;
+    private static int[] achse = null;          // Richtung der aktuellen Bahn
+    private static int[] seite = null;          // wohin die naechste Bahn liegt
+    private static int[] musterGesetzt = null;  // was das Muster zuletzt gesetzt hat
+    private static boolean querWechsel = false; // gerade auf dem Weg zur naechsten Bahn
+    private static int bahnX, bahnZ;            // Startpunkt des aktuellen Abschnitts
+    private static int bahnen = 0;
+
+    private static boolean gleich(int[] a, int[] b) {
+        return a != null && b != null && a[0] == b[0] && a[1] == b[1];
+    }
+
+    private static void muster(Minecraft mc, LocalPlayer player, NetheriteFarmerModule mod) {
+        int px = (int) Math.floor(player.getX());
+        int pz = (int) Math.floor(player.getZ());
+        if (richtung == null) richtung = himmelsrichtung(player.getYRot());
+
+        // Hat jemand anderes (Lava, Abgrund, Wachhund) die Richtung geaendert?
+        // Dann Muster ab hier neu anfangen.
+        if (!gleich(richtung, musterGesetzt)) {
+            achse = richtung;
+            seite = besteSeite(px, pz, achse, seite);
+            querWechsel = false;
+            bahnX = px; bahnZ = pz;
+            musterGesetzt = richtung;
+            return;
+        }
+
+        int gelaufen = Math.max(0, (px - bahnX) * richtung[0] + (pz - bahnZ) * richtung[1]);
+        if (!querWechsel) {
+            // Bahn fertig -- oder sie laeuft gleich in einen alten Gang:
+            // dann lieber jetzt schon zur naechsten Bahn wechseln.
+            boolean alterGang = gelaufen >= 2
+                    && besucht(px + richtung[0] * 2, pz + richtung[1] * 2)
+                    && besucht(px + richtung[0] * 3, pz + richtung[1] * 3);
+            if (gelaufen >= mod.laneLength.getInt() || alterGang) {
+                // Liegt auf der geplanten Seite schon ein Gang? Andere Seite.
+                if (besuchtAufSeite(px, pz, seite) > besuchtAufSeite(px, pz, new int[]{-seite[0], -seite[1]})) {
+                    seite = new int[]{-seite[0], -seite[1]};
+                }
+                querWechsel = true;
+                richtung = seite;
+                bahnX = px; bahnZ = pz;
+            }
+        } else if (gelaufen >= BAHN_ABSTAND) {
+            querWechsel = false;
+            achse = new int[]{-achse[0], -achse[1]};
+            richtung = achse;
+            bahnX = px; bahnZ = pz;
+            bahnen++;
+        }
+        musterGesetzt = richtung;
+    }
+
+    /** Die Seite (links/rechts der Achse), auf der weniger alte Gaenge liegen. */
+    private static int[] besteSeite(int px, int pz, int[] ax, int[] bisher) {
+        int[] a = new int[]{-ax[1], ax[0]};
+        int[] b = new int[]{ax[1], -ax[0]};
+        int na = besuchtAufSeite(px, pz, a), nb = besuchtAufSeite(px, pz, b);
+        if (na == nb && bisher != null && (gleich(bisher, a) || gleich(bisher, b))) return bisher;
+        return na <= nb ? a : b;
+    }
+
+    /** Wie viele besuchte Felder liegen 1..8 Bloecke in diese Richtung? */
+    private static int besuchtAufSeite(int px, int pz, int[] r) {
+        int n = 0;
+        for (int i = 1; i <= 8; i++) if (besucht(px + r[0] * i, pz + r[1] * i)) n++;
+        return n;
+    }
+
+    // --- Gedaechtnis: wo war der Bot schon? --------------------------------
+
+    private static final java.util.Set<Long> BESUCHT = new java.util.HashSet<>();
+
+    /** Hoehe, auf der gerade gegraben wird -- ein Gang eine Ebene tiefer ist ein anderer. */
+    private static int besuchtY = 0;
+
+    private static long feld(int x, int y, int z) {
+        return schluessel(new BlockPos(x, y, z));
+    }
+
+    private static boolean besucht(int x, int z) {
+        return BESUCHT.contains(feld(x, besuchtY, z));
+    }
+
+    private static void merkeBesucht(LocalPlayer player) {
+        if (BESUCHT.size() > 200_000) BESUCHT.clear();   // ~ Stunden Graben; Speicher begrenzen
+        besuchtY = (int) Math.floor(player.getY());
+        BESUCHT.add(feld((int) Math.floor(player.getX()), besuchtY, (int) Math.floor(player.getZ())));
     }
 
 
@@ -2595,6 +2734,13 @@ public final class NetheriteFarmer {
         // Voll: gefundenes Debris bliebe liegen. Lieber anhalten als
         // stundenlang umsonst zu graben.
         if (inventarVoll(player)) return "Inventar voll";
+        int frei = freiePlaetze(player);
+        if (frei <= 3 && !fastVollGemeldet) {
+            fastVollGemeldet = true;
+            melde(Minecraft.getInstance(), "Inventar fast voll (" + frei + " Plaetze frei).");
+        } else if (frei > 5) {
+            fastVollGemeldet = false;
+        }
         return null;
     }
 

@@ -8,6 +8,7 @@
 		"EntityEspMixin",
 		"ExplodePacketAccessor",
 		"FastUseMixin",
+		"FishingHookAccessor",
 		"GhostCameraMixin",
 		"GhostSelfMixin",
 		"GodModeServerMixin",
@@ -21,7 +22,10 @@
 		"NoClipWallMixin",
 		"NoFallMixin",
 		"NoSlowMixin",
-		"ReachMixin"
+		"ReachMixin",
+		"RightClickDelayAccessor",
+		"SafeWalkMixin",
+		"SpeedMineMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

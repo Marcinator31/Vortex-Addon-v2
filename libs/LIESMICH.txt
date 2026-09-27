@@ -1,35 +1,24 @@
-HIER MUSS DIE CLIENT-JAR LIEGEN
+CLIENT-JAR: MUSST DU NICHT MEHR SELBST HIER HINLEGEN
 
-    libs/vortexclient.jar
+Der GitHub-Build holt sie automatisch (Schritt "Client-Jar holen"):
+  1. Er baut den Vortex Client frisch aus dem Client-Repo
+     (client_repo in gradle.properties, Standard: Marcinator31/Vortex-Client)
+     -- immer der neueste Stand.
+  2. Klappt das nicht, nimmt er die Jar aus dem neuesten Client-Release.
+  3. Erst dann eine hier eingecheckte libs/vortexclient.jar (alter Weg).
 
-WARUM
-Das Addon enthaelt die Cheat-Module. Die erweitern Klassen des Vortex Client
--- Module, ModuleManager, BooleanSetting, NumberSetting, ColorSetting und
-weitere. Ohne die Jar kennt der Compiler diese Klassen nicht und meldet
-hunderte "cannot find symbol".
+REIHENFOLGE BEI AENDERUNGEN AN BEIDEN
+Braucht das Addon etwas Neues aus dem Client: ZUERST den Client hochladen,
+DANN das Addon. Das Addon baut dann gegen den neuen Client-Stand.
 
-SO GEHT ES
-  1. Den Vortex Client bauen (GitHub Actions im Client-Repo)
-  2. Die Jar holen: Repo-Startseite -> rechts "Releases" -> neueste Version
-     -> vortexclient-fabric-26.2-<version>.jar herunterladen
-     (NICHT die "-sources"-Datei)
-  3. Hierher legen und in  vortexclient.jar  umbenennen
-  4. Mit einchecken -- die Datei ist unter 1 MB
+BESTIMMTEN CLIENT-STAND BENUTZEN
+In gradle.properties:  client_ref=v4.6.3+26.2   (Tag oder Branch)
+Leer lassen = neuester Stand.
+
+LOKAL BAUEN (auf dem PC)
+Dort gibt es keinen automatischen Schritt: die Client-Jar (ohne "-sources")
+hierher legen und in  vortexclient.jar  umbenennen.
 
 WAS DU NICHT TUN SOLLTEST
-Leere Ersatzklassen fuer Module oder die Settings anlegen. Diese Klassen
-gibt es bereits im Client. Zwei Fassungen derselben Klasse in zwei Mods
-fuehren dazu, dass der Loader die falsche nimmt -- das gibt Abstuerze, die
-deutlich schwerer zu finden sind als der Build-Fehler.
-
-BEI JEDEM CLIENT-UPDATE
-Wenn sich am Client etwas aendert, das das Addon benutzt, muss diese Jar
-erneuert werden. Sonst baut das Addon gegen einen alten Stand.
-
-BEI JEDER CLIENT-AENDERUNG ERNEUERN
-Wenn der Client neue Klassen, Kategorien oder Methoden bekommt, die das
-Addon benutzt, muss diese Jar neu gebaut werden. Sonst meldet der Compiler
-Dinge wie "cannot find symbol: BOTS" -- und der Fehler sieht aus, als waere
-der Addon-Quelltext kaputt, obwohl nur die Jar alt ist.
-
-tools_check_against_jar.py prueft genau das und laeuft im Build automatisch.
+Leere Ersatzklassen fuer Module oder Settings anlegen. Die gibt es im
+Client schon -- zwei Fassungen derselben Klasse fuehren zu Abstuerzen.

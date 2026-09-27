@@ -30,6 +30,12 @@ public abstract class MaceKillMixin {
             com.vortex.client.core.Errors.report("AttributeSwap", t);
         }
         try {
+            // W-Tap vor Criticals: braucht Criticals "nicht sprinten", gewinnt der Krit.
+            com.vortex.client.cheat.ExtraCheats.wTapVorher(player, target);
+        } catch (Throwable t) {
+            com.vortex.client.core.Errors.report("WTap", t);
+        }
+        try {
             com.vortex.client.cheat.MaceKill.vorDemSchlag(player, target);
         } catch (Throwable t) {
             com.vortex.client.core.Errors.report("MaceKill", t);
@@ -49,6 +55,11 @@ public abstract class MaceKillMixin {
             if (com.vortex.client.cheat.AttributeSwap.nachDemSchlag(player)) ensureHasSentCarriedItem();
         } catch (Throwable t) {
             com.vortex.client.core.Errors.report("AttributeSwap", t);
+        }
+        try {
+            com.vortex.client.cheat.ExtraCheats.wTapNachher(player, target);
+        } catch (Throwable t) {
+            com.vortex.client.core.Errors.report("WTap", t);
         }
         try {
             com.vortex.client.cheat.Criticals.nachDemSchlag(player);
