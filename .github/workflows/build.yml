@@ -144,6 +144,7 @@ jobs:
         if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
+          COMMITS: ${{ toJSON(github.event.commits) }}
         run: |
           set -e
           VERSION=$(grep '^mod_version=' gradle.properties | cut -d= -f2 | tr -d '[:space:]')
@@ -151,9 +152,33 @@ jobs:
           # Loom erzeugt mehrere Jars; die ohne "-sources" ist die Mod.
           JAR=$(ls build/libs/*.jar | grep -v -- '-sources' | head -n 1)
           echo "Jar: $JAR  ->  Release $TAG"
+          # "Was ist neu" fuer die Spieler: die Commit-Nachrichten dieses Pushs
+          # (ohne technische Zeilen). Der Launcher zeigt sie nach dem Update an.
+          python3 - > "$RUNNER_TEMP/notes.md" <<'PY'
+          import json, os, re, subprocess
+          try:
+              commits = json.loads(os.environ.get("COMMITS") or "null") or []
+          except Exception:
+              commits = []
+          msgs = [c.get("message", "") for c in commits] or [
+              subprocess.run(["git", "log", "-1", "--pretty=%B"], capture_output=True, text=True).stdout]
+          lines = []
+          for m in msgs:
+              for l in m.splitlines():
+                  l = l.strip()
+                  if not l or "claude.ai/code" in l:
+                      continue
+                  if re.match(r"(?i)^(co-authored-by|claude-session|signed-off-by|add files via upload|merge )", l):
+                      continue
+                  lines.append(l if l.startswith("-") else "- " + l)
+          print("\n".join(dict.fromkeys(lines)) or "- Verbesserungen und Fehlerbehebungen")
+          PY
+          cat "$RUNNER_TEMP/notes.md"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --title "Vortex Plus Addon $VERSION" \
-              --notes "Automatisch gebaut aus ${GITHUB_SHA}." --target "${GITHUB_SHA}"
+              --notes-file "$RUNNER_TEMP/notes.md" --target "${GITHUB_SHA}"
+          else
+            gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
           fi
           gh release upload "$TAG" "$JAR" --clobber
 
