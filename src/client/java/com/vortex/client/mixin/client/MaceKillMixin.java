@@ -16,12 +16,44 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(MultiPlayerGameMode.class)
 public abstract class MaceKillMixin {
 
+    /** Vanilla: schickt den Slot-Wechsel, falls noetig (fuer Attribute Swap). */
+    @org.spongepowered.asm.mixin.Shadow
+    private void ensureHasSentCarriedItem() {}
+
     @Inject(method = "attack", at = @At("HEAD"))
     private void vortex$maceKill(Player player, Entity target, CallbackInfo ci) {
+        // Reihenfolge wichtig: erst die Waffe nehmen (Attribute Swap), dann
+        // sehen Mace Kill und Criticals die richtige Waffe in der Hand.
+        try {
+            com.vortex.client.cheat.AttributeSwap.vorDemSchlag(player, target);
+        } catch (Throwable t) {
+            com.vortex.client.core.Errors.report("AttributeSwap", t);
+        }
         try {
             com.vortex.client.cheat.MaceKill.vorDemSchlag(player, target);
         } catch (Throwable t) {
             com.vortex.client.core.Errors.report("MaceKill", t);
+        }
+        try {
+            com.vortex.client.cheat.Criticals.vorDemSchlag(player, target);
+        } catch (Throwable t) {
+            com.vortex.client.core.Errors.report("Criticals", t);
+        }
+    }
+
+    /** Criticals: nach dem Schlag wieder sprinten (falls vorher gestoppt). */
+    @Inject(method = "attack", at = @At("TAIL"))
+    private void vortex$nachSchlag(Player player, Entity target, CallbackInfo ci) {
+        try {
+            // Attribute Swap: Slot zurueck und SOFORT melden (selber Paket-Stapel)
+            if (com.vortex.client.cheat.AttributeSwap.nachDemSchlag(player)) ensureHasSentCarriedItem();
+        } catch (Throwable t) {
+            com.vortex.client.core.Errors.report("AttributeSwap", t);
+        }
+        try {
+            com.vortex.client.cheat.Criticals.nachDemSchlag(player);
+        } catch (Throwable t) {
+            com.vortex.client.core.Errors.report("Criticals", t);
         }
     }
 }
