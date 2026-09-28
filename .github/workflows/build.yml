@@ -18,6 +18,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # JDK 25 -- Minecraft 26.x requires Java 25.
       - name: Set up JDK 25
@@ -143,6 +145,18 @@ jobs:
       # Ein Release je Version (Tag v<mod_version>). Wird dieselbe Version
       # noch einmal gebaut, ersetzt die neue Jar die alte (--clobber).
       # Zu finden auf der Repo-Startseite rechts unter "Releases".
+      # Notizen aelterer Releases im neuen Format ("## Titel", "- Punkt")
+      # nachtragen -- die Beta-Checkliste im Launcher liest sie von dort.
+      - name: Release-Notizen nachtragen
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for f in .github/release-notes/*.md; do
+            [ -f "$f" ] || continue
+            t=$(basename "$f" .md)
+            gh release edit "$t" --notes-file "$f" >/dev/null 2>&1 && echo "Notizen: $t" || echo "::warning::Notizen fuer $t nicht gesetzt"
+          done
       - name: Publish JAR as release
         if: github.event_name != 'pull_request'
         env:
@@ -163,17 +177,43 @@ jobs:
               commits = json.loads(os.environ.get("COMMITS") or "null") or []
           except Exception:
               commits = []
-          msgs = [c.get("message", "") for c in commits] or [
-              subprocess.run(["git", "log", "-1", "--pretty=%B"], capture_output=True, text=True).stdout]
+          # Alle Commits seit der letzten ANDEREN Version -- so gehen die
+          # Neuerungen nicht verloren, wenn dieselbe Version nachgebaut wird.
+          tag = os.environ.get("TAG", "")
+          git = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True).stdout
+          prev = [t for t in git("tag", "--merged", "HEAD", "--sort=-creatordate").split() if t.startswith("v") and t != tag]
+          msgs = []
+          if prev:
+              msgs = [m for m in git("log", f"{prev[0]}..HEAD", "--pretty=%B%x00").split("\x00") if m.strip()]
+          msgs = msgs or [c.get("message", "") for c in commits] or [git("log", "-1", "--pretty=%B")]
+          # FORMAT (fuer "Was ist neu" und die Beta-Checkliste im Launcher):
+          #   "## Betreff"  -- Ueberschrift, wenn der Commit Detailzeilen hat
+          #   "- Punkt"     -- ein Punkt = ein Eintrag zum Abhaken
+          # CI-, Merge- und Revert-Commits fallen ganz heraus.
+          tech = re.compile(r"(?i)^(co-authored-by|claude-session|signed-off-by|add files via upload)")
           lines = []
           for m in msgs:
+              rows = []
               for l in m.splitlines():
                   l = l.strip()
-                  if not l or "claude.ai/code" in l:
+                  if not l or "claude.ai/code" in l or tech.match(l) or "[skip ci]" in l:
                       continue
-                  if re.match(r"(?i)^(co-authored-by|claude-session|signed-off-by|add files via upload|merge )", l):
-                      continue
-                  lines.append(l if l.startswith("-") else "- " + l)
+                  rows.append(l)
+              if not rows or re.match(r"(?i)^(ci:|merge |revert )", rows[0]):
+                  continue
+              subject, rest = rows[0].lstrip("-* ").strip(), rows[1:]
+              if rest:
+                  lines.append("## " + subject)
+                  # Hat der Commit Spiegelstriche, sind Zeilen OHNE Strich Zwischentitel
+                  # ("Stash Finder", "Sus Chunks") -- keine Punkte zum Abhaken.
+                  strich = any(r.startswith(("-", "*")) for r in rest)
+                  for r in rest:
+                      if strich and not r.startswith(("-", "*")):
+                          lines.append("## " + subject + " \u2013 " + r.rstrip(":"))
+                      else:
+                          lines.append("- " + r.lstrip("-* ").strip())
+              else:
+                  lines.append("- " + subject)
           print("\n".join(dict.fromkeys(lines)) or "- Verbesserungen und Fehlerbehebungen")
           PY
           cat "$RUNNER_TEMP/notes.md"
