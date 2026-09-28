@@ -26,21 +26,17 @@ public class FreecamModule extends Module {
             new NumberSetting("Sprint Multiplier", 3.0, 1.0, 10.0, 0.5);
 
     /**
-     * Den Spieler festhalten (kein Rueckstoss, kein Treiben im Wasser, kein
-     * Rutschen auf Eis).
+     * Render-Anker: spawnt eine unsichtbare Kamera-Entity und macht sie zur
+     * aktiven Kamera. Das verbessert das Chunk-Rendering unter der Erde, hat aber
+     * einen Haken: der echte Spieler gilt dann nicht mehr als "Kamera", woran
+     * Minecraft u.a. das Senden der Bewegungspakete koppelt -- dadurch kann der
+     * Spieler nach dem Beenden haengen bleiben.
      *
-     * STANDARD AUS -- und das mit Absicht: Anti-Cheats wie Grim rechnen jede
-     * Bewegung nach. Wer Rueckstoss bekommt und stehen bleibt, sieht aus wie
-     * "Anti-Knockback" und wird zurueckgesetzt oder markiert. Ohne diese
-     * Einstellung verhaelt sich der Koerper genau wie bei jemandem, der
-     * einfach keine Taste drueckt.
-     *
-     * (Ersetzt "Render Anchor": damit schickte der Spieler gar keine
-     * Bewegungspakete mehr -- noch auffaelliger. Unter der Erde rendert die
-     * Freecam inzwischen auch ohne sauber.)
+     * Standard AUS: sicheres Verhalten. Fuer bessere Sicht unter der Erde sorgt
+     * ohnehin die automatische Helligkeit in der Freecam.
      */
-    public final BooleanSetting holdPosition =
-            new BooleanSetting("Hold Position", false);
+    public final BooleanSetting renderAnchor =
+            new BooleanSetting("Render Anchor", false);
 
     /**
      * Dreht den Spieler mit der Kamera mit.
@@ -50,10 +46,7 @@ public class FreecamModule extends Module {
      * Server nichts.
      *
      * AN: der Spieler dreht sich mit. Nuetzlich, um sich selbst aus einer
-     * anderen Richtung zu sehen -- aber jeder Server sieht diese Drehung, und
-     * Abbauen/Angreifen zielt dann dorthin, wohin die Kamera schaut (vom
-     * Spieler aus). Die Drehung kommt direkt von der Maus, also mit denselben
-     * Schritten wie normales Umschauen.
+     * anderen Richtung zu sehen -- aber jeder Server sieht diese Drehung.
      */
     public final BooleanSetting rotatePlayer =
             new BooleanSetting("Rotate Player", false);
@@ -107,13 +100,36 @@ public class FreecamModule extends Module {
     public final BooleanSetting showInfo =
             new BooleanSetting("Show Info", true);
 
+    /**
+     * Mehr Sicht: Minecraft blendet Chunk-Abschnitte aus, die es fuer
+     * verdeckt haelt. Von oben, aus Hoehlen heraus oder beim schnellen Fliegen
+     * fehlen dadurch ganze Stuecke. AN: alles im Blickfeld wird gezeichnet
+     * (kostet etwas Leistung).
+     */
+    public final BooleanSetting noCulling =
+            new BooleanSetting("No Culling", true);
+
+    /** Kein Nebel in der Freecam -- auch nicht durch Blindheit/Dunkelheit oder Wasser. */
+    public final BooleanSetting noFog =
+            new BooleanSetting("No Fog", true);
+
+    /**
+     * Overlays des Spielers weglassen: Kuerbiskopf, Pulverschnee, Feuer,
+     * Wasser, "Kopf im Block", Vignette, Portal-Schwindel.
+     */
+    public final BooleanSetting hideOverlays =
+            new BooleanSetting("Hide Overlays", true);
+
     public FreecamModule() {
         super("Freecam", Category.CHEATS);
         addSetting(speed);
         addSetting(sprintMult);
-        addSetting(holdPosition);
+        addSetting(renderAnchor);
         addSetting(rotatePlayer);
         addSetting(showPlayer);
+        addSetting(noCulling);
+        addSetting(noFog);
+        addSetting(hideOverlays);
         addSetting(scrollSpeed);
         addSetting(horizontal);
         addSetting(smooth);
