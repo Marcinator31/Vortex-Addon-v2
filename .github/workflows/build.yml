@@ -118,10 +118,13 @@ jobs:
           set -e
           for attempt in 1 2 3; do
             echo "=== Build attempt $attempt of 3 ==="
-            if ./gradlew build --no-daemon --stacktrace; then
+            if ./gradlew build --no-daemon --stacktrace 2>&1 | tee build.log; test ${PIPESTATUS[0]} -eq 0; then
               echo "Build succeeded."
               exit 0
             fi
+            # Compiler-Fehler als Anmerkungen (sichtbar ohne das ganze Log)
+            grep -A3 -E '^/.*\.java:[0-9]+: error: ' build.log | head -60 | sed 's/^/::error::/' || true
+            grep -A6 'What went wrong' build.log | head -14 | sed 's/^/::error::/' || true
             if [ "$attempt" -lt 3 ]; then
               echo "Failed -- waiting 20 seconds before retrying."
               sleep 20
