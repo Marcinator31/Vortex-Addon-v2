@@ -94,12 +94,34 @@ public final class Xray {
         sichtbar = neu;
     }
 
-    /** Alle Chunks neu bauen (nur wenn Xray an ist oder gerade ausging). */
+    /**
+     * Sichtbare Chunks neu bauen lassen.
+     *
+     * Ueber Reflection: der Name der Methode hat sich in 26.2 geaendert
+     * (allChanged gibt es dort nicht mehr), und ein harter Aufruf wuerde den
+     * ganzen Build kippen. Zuerst die schonende Variante (Abschnitte als
+     * veraendert markieren, wie bei einem Block-Update), dann allChanged.
+     * Klappt beides nicht: Hinweis auf F3+A.
+     */
     public static void neuZeichnen() {
         Minecraft mc = Minecraft.getInstance();
         mc.execute(() -> {
             try {
-                if (mc.level != null && mc.levelRenderer != null) mc.levelRenderer.allChanged();
+                if (mc.level == null || mc.levelRenderer == null || mc.player == null) return;
+                Object lr = mc.levelRenderer;
+                int r = mc.options.renderDistance().get() + 1;
+                int sx = mc.player.getBlockX() >> 4, sz = mc.player.getBlockZ() >> 4;
+                int y0 = mc.level.getMinY() >> 4, y1 = (mc.level.getMaxY() - 1) >> 4;
+                try {
+                    var m = lr.getClass().getMethod("setSectionRangeDirty", int.class, int.class, int.class, int.class, int.class, int.class);
+                    m.invoke(lr, sx - r, y0, sz - r, sx + r, y1, sz + r);
+                    return;
+                } catch (NoSuchMethodException ignored) { }
+                try {
+                    lr.getClass().getMethod("allChanged").invoke(lr);
+                    return;
+                } catch (NoSuchMethodException ignored) { }
+                mc.player.sendOverlayMessage(net.minecraft.network.chat.Component.literal("§dXray: press F3+A to reload the chunks."));
             } catch (Throwable e) {
                 com.vortex.client.core.Errors.report("Xray.reload", e);
             }
