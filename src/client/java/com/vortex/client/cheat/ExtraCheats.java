@@ -101,52 +101,77 @@ public final class ExtraCheats {
     // W-Tap
     // ======================================================================
 
-    private static int loslassenBis = 0;
-    private static boolean loslassen = false;
+    private static long sprintAb = -1;          // Legit: ab diesem Tick wieder sprinten
+    private static boolean erzwungen = false;   // Packet: Sprint fuer diesen Schlag selbst gesetzt
 
-    /** Vom MaceKillMixin, direkt vor dem Angriffspaket. */
+    /**
+     * Darf der Spieler gerade sprinten? (wie LocalPlayer.canStartSprinting,
+     * die ist privat): vorwaerts, nicht schleichen, nichts benutzen, genug
+     * Hunger, nicht blind, nicht reiten/gleiten/schwimmen, nicht an der Wand.
+     */
+    private static boolean kannSprinten(LocalPlayer p) {
+        return p.input != null && p.input.hasForwardImpulse() && !p.isShiftKeyDown() && !p.isUsingItem()
+                && !p.hasEffect(net.minecraft.world.effect.MobEffects.BLINDNESS)
+                && (p.getFoodData().getFoodLevel() > 6 || p.getAbilities().mayfly)
+                && !p.isPassenger() && !p.isFallFlying() && !p.isInWater() && !p.horizontalCollision;
+    }
+
+    /**
+     * Vom MaceKillMixin, direkt vor dem Angriffspaket.
+     *
+     * WARUM ES VORHER NICHTS TAT: Nach einem Sprint-Schlag setzt Minecraft
+     * Sprinten auf AUS -- beim Server und beim Client (Player.causeExtraKnockback).
+     * Die alte Fassung machte nur etwas, wenn der Client noch sprintete; genau
+     * dann sprintet aber auch der Server schon. Beim zweiten Schlag (dem, um
+     * den es geht) sprintete der Client nicht mehr -> es passierte nichts.
+     *
+     * Jetzt: sprintet der Client gerade NICHT, darf er aber (vorwaerts, genug
+     * Hunger ...), melden wir "sprintet" direkt vor dem Schlag. Der Server gibt
+     * den vollen Sprint-Rueckstoss (Player.attack: isSprinting und Aufladung
+     * > 0,9) und setzt Sprinten danach selbst wieder aus -- Client und Server
+     * bleiben gleich, weil der Client dieselbe Rechnung macht.
+     */
     public static void wTapVorher(Player spieler, Entity ziel) {
+        erzwungen = false;
         WTapModule m = an(WTapModule.class);
         if (m == null || m.mode.getIndex() != 0) return;
         if (!(ziel instanceof LivingEntity)) return;            // Kristalle usw.: kein Rueckstoss
         if (!(spieler instanceof LocalPlayer p) || p != Minecraft.getInstance().player) return;
         if (m.onlyPlayers.get() && !(ziel instanceof Player)) return;
-        if (!p.isSprinting()) return;
+        if (p.isSprinting() || !kannSprinten(p)) return;
         var net = Minecraft.getInstance().getConnection();
         if (net == null) return;
-        // Server: "sprintet nicht mehr" -> "sprintet". Nach dem vorigen
-        // Sprint-Schlag stand er beim Server auf aus -- jetzt wieder an.
-        net.send(new ServerboundPlayerCommandPacket(p, ServerboundPlayerCommandPacket.Action.STOP_SPRINTING));
         net.send(new ServerboundPlayerCommandPacket(p, ServerboundPlayerCommandPacket.Action.START_SPRINTING));
+        p.setSprinting(true);
+        erzwungen = true;
     }
 
     /** Vom MaceKillMixin, nach dem Schlag. */
     public static void wTapNachher(Player spieler, Entity ziel) {
+        boolean warErzwungen = erzwungen;
+        erzwungen = false;
         WTapModule m = an(WTapModule.class);
-        if (m == null || m.mode.getIndex() != 1) return;
+        if (m == null) return;
         if (!(ziel instanceof LivingEntity)) return;
         if (!(spieler instanceof LocalPlayer p) || p != Minecraft.getInstance().player) return;
         if (m.onlyPlayers.get() && !(ziel instanceof Player)) return;
-        // Vorwaerts auf einer Maustaste? Die laesst sich nicht nachlesen --
-        // dann lieber nichts loslassen, sonst bliebe sie haengen.
-        var k = Minecraft.getInstance().options.keyUp;
-        if (((com.vortex.client.mixin.client.KeyMappingKeyAccessor) k).vortex$getKey().getValue() < 32) return;
-        if (!k.isDown()) return;
-        loslassen = true;
-        loslassenBis = (int) tick + m.releaseTicks.getInt();
+        if (m.mode.getIndex() == 1) {
+            // Legit: wie ein echter W-Tap -- ein paar Ticks ohne Sprint, dann weiter.
+            sprintAb = tick + m.releaseTicks.getInt();
+        } else if (warErzwungen && !p.isSprinting()) {
+            // Packet: Sprint fuer den naechsten Schlag gleich wieder an (sieht fluessig aus).
+            sprintAb = tick + 1;
+        }
     }
 
-    /** Vor dem Tick: Vorwaerts-Taste kurz loslassen und danach wieder wie echt. */
+    /** Jeden Tick: nach der Pause wieder sprinten, wenn es geht. */
     private static void wTapTasten(Minecraft mc) {
-        if (!loslassen) return;
-        var k = mc.options.keyUp;
-        if (tick < loslassenBis && mc.player != null) {
-            k.setDown(false);
-            return;
-        }
-        loslassen = false;
-        int code = ((com.vortex.client.mixin.client.KeyMappingKeyAccessor) k).vortex$getKey().getValue();
-        if (code >= 32 && mc.gui.screen() == null) k.setDown(InputConstants.isKeyDown(mc.getWindow(), code));
+        if (sprintAb < 0 || tick < sprintAb) return;
+        sprintAb = -1;
+        LocalPlayer p = mc.player;
+        if (p == null || an(WTapModule.class) == null) return;
+        // setSprinting reicht: LocalPlayer meldet den Wechsel im naechsten Tick selbst an den Server.
+        if (!p.isSprinting() && kannSprinten(p)) p.setSprinting(true);
     }
 
     // ======================================================================

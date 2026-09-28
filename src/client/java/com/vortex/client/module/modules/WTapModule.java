@@ -8,16 +8,17 @@ import com.vortex.client.module.Module;
 /**
  * W-Tap: jeder Schlag mit vollem Sprint-Rueckstoss.
  *
- * Der Server gibt Extra-Rueckstoss nur, wenn du beim Schlag sprintest -- und
- * setzt Sprinten nach so einem Schlag selbst auf "aus" (Player.attack). Ohne
- * W-Tap hat darum nur der erste Schlag den Bonus.
+ * Der Server gibt Extra-Rueckstoss nur, wenn du beim Schlag sprintest und voll
+ * aufgeladen hast -- und setzt Sprinten nach so einem Schlag auf "aus"
+ * (Player.causeExtraKnockback). Ohne W-Tap hat darum nur der erste Schlag den Bonus.
  *
- *   Packet: vor dem Schlag Sprint kurz aus und wieder an melden. Der Server
- *           sieht dich sofort wieder sprinten. Kein Tempoverlust.
- *   Legit:  nach dem Schlag die Vorwaerts-Taste ein paar Ticks loslassen,
- *           wie ein echter W-Tap. Sieht am natuerlichsten aus.
+ *   Packet: direkt vor jedem Schlag wieder "sprintet" melden. Jeder voll
+ *           aufgeladene Schlag hat den Bonus, kein Tempoverlust.
+ *   Legit:  nach dem Schlag ein paar Ticks nicht sprinten, dann von selbst
+ *           wieder -- wie ein echter W-Tap. Sieht am natuerlichsten aus.
  *
- * Criticals hat Vorrang: ein Krit braucht NICHT-Sprinten.
+ * Nur, wenn Sprinten gerade moeglich ist (vorwaerts, nicht schleichen, genug
+ * Hunger, nicht blind). Criticals hat Vorrang: ein Krit braucht NICHT-Sprinten.
  */
 public class WTapModule extends Module {
 
