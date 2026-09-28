@@ -2,6 +2,7 @@ package com.vortex.client.hud;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.vortex.client.module.ModuleManager;
+import com.vortex.client.waypoint.WaypointManager;
 import com.vortex.client.module.modules.StashFinderModule;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -234,7 +235,7 @@ public final class StashFinder {
         if (mod.waypoint.get()) {
             try {
                 com.vortex.client.waypoint.WaypointActions.addWaypoint(mc, x, y, z,
-                        "Stash (" + s.count() + ")", com.vortex.client.waypoint.WaypointManager.Kind.LAGER, false);
+                        "Stash (" + s.count() + ")", WaypointManager.Kind.LAGER, false);
             } catch (Throwable pvpErr) {
                 com.vortex.client.core.Errors.report("StashFinder.waypoint", pvpErr);
             }
