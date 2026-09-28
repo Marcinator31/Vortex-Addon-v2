@@ -26,17 +26,21 @@ public class FreecamModule extends Module {
             new NumberSetting("Sprint Multiplier", 3.0, 1.0, 10.0, 0.5);
 
     /**
-     * Render-Anker: spawnt eine unsichtbare Kamera-Entity und macht sie zur
-     * aktiven Kamera. Das verbessert das Chunk-Rendering unter der Erde, hat aber
-     * einen Haken: der echte Spieler gilt dann nicht mehr als "Kamera", woran
-     * Minecraft u.a. das Senden der Bewegungspakete koppelt -- dadurch kann der
-     * Spieler nach dem Beenden haengen bleiben.
+     * Den Spieler festhalten (kein Rueckstoss, kein Treiben im Wasser, kein
+     * Rutschen auf Eis).
      *
-     * Standard AUS: sicheres Verhalten. Fuer bessere Sicht unter der Erde sorgt
-     * ohnehin die automatische Helligkeit in der Freecam.
+     * STANDARD AUS -- und das mit Absicht: Anti-Cheats wie Grim rechnen jede
+     * Bewegung nach. Wer Rueckstoss bekommt und stehen bleibt, sieht aus wie
+     * "Anti-Knockback" und wird zurueckgesetzt oder markiert. Ohne diese
+     * Einstellung verhaelt sich der Koerper genau wie bei jemandem, der
+     * einfach keine Taste drueckt.
+     *
+     * (Ersetzt "Render Anchor": damit schickte der Spieler gar keine
+     * Bewegungspakete mehr -- noch auffaelliger. Unter der Erde rendert die
+     * Freecam inzwischen auch ohne sauber.)
      */
-    public final BooleanSetting renderAnchor =
-            new BooleanSetting("Render Anchor", false);
+    public final BooleanSetting holdPosition =
+            new BooleanSetting("Hold Position", false);
 
     /**
      * Dreht den Spieler mit der Kamera mit.
@@ -46,7 +50,10 @@ public class FreecamModule extends Module {
      * Server nichts.
      *
      * AN: der Spieler dreht sich mit. Nuetzlich, um sich selbst aus einer
-     * anderen Richtung zu sehen -- aber jeder Server sieht diese Drehung.
+     * anderen Richtung zu sehen -- aber jeder Server sieht diese Drehung, und
+     * Abbauen/Angreifen zielt dann dorthin, wohin die Kamera schaut (vom
+     * Spieler aus). Die Drehung kommt direkt von der Maus, also mit denselben
+     * Schritten wie normales Umschauen.
      */
     public final BooleanSetting rotatePlayer =
             new BooleanSetting("Rotate Player", false);
@@ -104,7 +111,7 @@ public class FreecamModule extends Module {
         super("Freecam", Category.CHEATS);
         addSetting(speed);
         addSetting(sprintMult);
-        addSetting(renderAnchor);
+        addSetting(holdPosition);
         addSetting(rotatePlayer);
         addSetting(showPlayer);
         addSetting(scrollSpeed);
