@@ -1,5 +1,6 @@
 package com.vortex.client.gui;
 
+import com.vortex.client.cheat.Xray;
 import com.vortex.client.module.ModuleManager;
 import com.vortex.client.module.modules.XrayModule;
 import net.minecraft.client.gui.screens.Screen;
@@ -35,7 +36,7 @@ public class XrayScreen extends SelectionScreen {
     protected boolean isOn(String id) {
         XrayModule m = mod();
         return m != null && (m.getBlocks().isEmpty()
-                ? com.vortex.client.cheat.Xray.STANDARD.contains(id) : m.getBlocks().contains(id));
+                ? Xray.STANDARD.contains(id) : m.getBlocks().contains(id));
     }
 
     @Override
@@ -43,7 +44,7 @@ public class XrayScreen extends SelectionScreen {
         XrayModule m = mod();
         if (m == null) return;
         // Erste Aenderung an der Standardliste: sie als eigene Liste uebernehmen.
-        if (m.getBlocks().isEmpty()) m.getBlocks().addAll(com.vortex.client.cheat.Xray.STANDARD);
+        if (m.getBlocks().isEmpty()) m.getBlocks().addAll(Xray.STANDARD);
         m.toggleBlock(id);
     }
 
@@ -61,6 +62,6 @@ public class XrayScreen extends SelectionScreen {
     @Override
     public void removed() {
         super.removed();
-        com.vortex.client.cheat.Xray.neuZeichnen();
+        Xray.neuZeichnen();
     }
 }
