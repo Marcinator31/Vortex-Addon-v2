@@ -58,9 +58,17 @@ public class NetheriteFarmerModule extends Module {
     public final BooleanSetting stripMine =
             new BooleanSetting("Strip Mine Pattern", true);
 
-    /** Laenge einer Bahn, bevor 3 Bloecke seitlich die naechste beginnt. */
+    /** Laenge einer Bahn, bevor die naechste seitlich versetzt beginnt. */
     public final NumberSetting laneLength =
             new NumberSetting("Lane Length", 40, 12, 128, 4);
+
+    /**
+     * Abstand der Bahnen. 3 legt jeden Wandblock frei (auch mit Anti-Xray).
+     * Ohne Anti-Xray sieht der Bot Debris bis "Debris Range" weit -- dann
+     * deckt ein groesserer Abstand mehr Flaeche pro Minute ab.
+     */
+    public final NumberSetting laneSpacing =
+            new NumberSetting("Lane Spacing", 3, 3, 8, 1);
 
     /** Lava meiden statt hindurchzulaufen. */
     public final BooleanSetting avoidLava =
@@ -93,6 +101,20 @@ public class NetheriteFarmerModule extends Module {
     public final NumberSetting gappleBelow =
             new NumberSetting("Golden Apple Below Health", 12, 4, 18, 1);
 
+    /**
+     * Feuerschutz-Trank nachtrinken, wenn die Wirkung auslaeuft (Traenke im
+     * Inventar noetig). Mit Feuerschutz holt der Bot auch Debris an Lava.
+     */
+    public final BooleanSetting keepFireRes =
+            new BooleanSetting("Keep Fire Resistance", true);
+
+    /**
+     * Wird das Inventar knapp, Netherrack, Basalt, Blackstone und anderen
+     * Steinschrott wegwerfen (ein Stapel Netherrack bleibt zum Bauen).
+     */
+    public final BooleanSetting dropJunk =
+            new BooleanSetting("Drop Junk", true);
+
     /** Alle 5 Minuten im Chat: wie viel Debris bisher, wie viel pro Stunde. */
     public final BooleanSetting stats =
             new BooleanSetting("Stats In Chat", true);
@@ -109,6 +131,7 @@ public class NetheriteFarmerModule extends Module {
         addSetting(turnSpeed);
         addSetting(stripMine);
         addSetting(laneLength);
+        addSetting(laneSpacing);
         addSetting(avoidLava);
         addSetting(afkWhenOut);
         addSetting(afkOnPlayer);
@@ -116,6 +139,8 @@ public class NetheriteFarmerModule extends Module {
         addSetting(autoTotem);
         addSetting(eatBelow);
         addSetting(gappleBelow);
+        addSetting(keepFireRes);
+        addSetting(dropJunk);
         addSetting(stats);
     }
 

@@ -397,7 +397,7 @@ public final class CombatCheats {
 
     private static void autoTool(Minecraft mc, LocalPlayer p) {
         AutoToolModule m = an(AutoToolModule.class);
-        if (m == null || hand != null || mc.gui.screen() != null) {
+        if (m == null || hand != null || mc.gui.screen() != null || botLaeuft()) {  // Bots waehlen ihr Werkzeug selbst
             toolVorher = -1;
             return;
         }
