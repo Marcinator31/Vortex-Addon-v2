@@ -8,6 +8,9 @@ import net.minecraft.world.Container;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.minecraft.world.level.block.entity.BarrelBlockEntity;
+import net.minecraft.world.level.block.entity.ChestBlockEntity;
+import net.minecraft.world.level.block.entity.ShulkerBoxBlockEntity;
 import net.minecraft.world.level.block.entity.SpawnerBlockEntity;
 import net.minecraft.world.level.chunk.LevelChunk;
 import java.util.ArrayList;
@@ -249,12 +252,17 @@ public final class WorldScan {
     }
 
     private static byte lagerArt(BlockEntity be) {
-        BlockEntityType<?> t = be.getType();
-        if (t == BlockEntityType.CHEST || t == BlockEntityType.TRAPPED_CHEST) return LAGER_TRUHE;
-        if (t == BlockEntityType.BARREL) return LAGER_FASS;
-        if (t == BlockEntityType.SHULKER_BOX) return LAGER_SHULKER;
+        // Ueber die Klassen, nicht ueber BlockEntityType-Konstanten: die
+        // heissen in 26.2 teils anders (Kupfertruhen), die Klassen nicht.
+        // TrappedChestBlockEntity erbt von ChestBlockEntity.
+        if (be instanceof ShulkerBoxBlockEntity) return LAGER_SHULKER;
+        if (be instanceof BarrelBlockEntity) return LAGER_FASS;
+        if (be instanceof ChestBlockEntity) return LAGER_TRUHE;
         return 0;
     }
+
+    /** Gewicht je Block-Entity-Typ, einmal aus der Registry-ID bestimmt. */
+    private static final java.util.Map<BlockEntityType<?>, Integer> GEWICHT = new java.util.IdentityHashMap<>();
 
     /**
      * Wie stark ein Block-Entity auf SPIELER hindeutet.
@@ -269,32 +277,50 @@ public final class WorldScan {
      *      BienenNEST, Kruege, verdaechtiger Sand, Glocken, Portale ...)
      *   1  auch in Doerfern/Strukturen, aber meist vom Spieler (Truhe, Ofen, Bett ...)
      *   2+ praktisch nur vom Spieler (Schild, Banner, Trichter, Shulker, Beacon ...)
+     *
+     * Zuordnung ueber die Registry-ID ("minecraft:hopper") -- die bleibt ueber
+     * Versionen stabil, die Java-Konstanten nicht.
      */
     public static int susGewicht(BlockEntity be) {
         BlockEntityType<?> t = be.getType();
-        if (t == BlockEntityType.BEACON) return 10;
-        if (t == BlockEntityType.SHULKER_BOX) return 8;
-        if (t == BlockEntityType.CONDUIT) return 6;
-        if (t == BlockEntityType.ENDER_CHEST || t == BlockEntityType.COMMAND_BLOCK) return 5;
-        if (t == BlockEntityType.HOPPER || t == BlockEntityType.ENCHANTING_TABLE) return 4;
-        if (t == BlockEntityType.COMPARATOR || t == BlockEntityType.DAYLIGHT_DETECTOR
-                || t == BlockEntityType.JUKEBOX || t == BlockEntityType.DROPPER
-                || t == BlockEntityType.SHELF) return 3;
-        if (t == BlockEntityType.BEEHIVE) {
-            // Gebauter Bienenstock ja, natuerliches Bienennest nein.
+        Integer g = GEWICHT.get(t);
+        if (g == null) {
+            String id;
+            try {
+                var key = net.minecraft.core.registries.BuiltInRegistries.BLOCK_ENTITY_TYPE.getKey(t);
+                id = key == null ? "" : key.getPath();
+            } catch (Throwable e) {
+                id = "";
+            }
+            g = gewichtFuer(id, be);
+            GEWICHT.put(t, g);
+        }
+        if (g == -1) {
+            // Bienen: gebauter Stock ja, natuerliches Nest nein (selber Typ).
             return be.getBlockState().is(Blocks.BEEHIVE) ? 3 : 0;
         }
-        if (t == BlockEntityType.SIGN || t == BlockEntityType.HANGING_SIGN
-                || t == BlockEntityType.BANNER || t == BlockEntityType.SKULL
-                || t == BlockEntityType.TRAPPED_CHEST || t == BlockEntityType.CRAFTER
-                || t == BlockEntityType.COPPER_GOLEM_STATUE) return 2;
-        if (t == BlockEntityType.CHEST || t == BlockEntityType.BARREL
-                || t == BlockEntityType.FURNACE || t == BlockEntityType.SMOKER
-                || t == BlockEntityType.BLAST_FURNACE || t == BlockEntityType.BREWING_STAND
-                || t == BlockEntityType.BED || t == BlockEntityType.LECTERN
-                || t == BlockEntityType.CAMPFIRE || t == BlockEntityType.DISPENSER
-                || t == BlockEntityType.CHISELED_BOOKSHELF) return 1;
-        return 0;
+        return g;
+    }
+
+    private static int gewichtFuer(String id, BlockEntity be) {
+        switch (id) {
+            case "beacon": return 10;
+            case "shulker_box": return 8;
+            case "conduit": return 6;
+            case "ender_chest": case "command_block": return 5;
+            case "hopper": case "enchanting_table": return 4;
+            case "comparator": case "daylight_detector": case "jukebox": case "dropper": case "shelf": return 3;
+            case "beehive": return -1;
+            case "sign": case "hanging_sign": case "banner": case "skull": case "trapped_chest":
+            case "crafter": case "copper_golem_statue": return 2;
+            case "chest": case "barrel": case "furnace": case "smoker": case "blast_furnace":
+            case "brewing_stand": case "bed": case "lectern": case "campfire": case "dispenser":
+            case "chiseled_bookshelf": return 1;
+            default:
+                // Unbekannte Truhen-Arten (z. B. Kupfertruhen) wie Truhen werten.
+                if (be instanceof ChestBlockEntity || id.endsWith("_chest")) return 1;
+                return 0;
+        }
     }
 
     /** Laeuft ueberhaupt eines der Module, das die Daten braucht? */
