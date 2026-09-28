@@ -60,6 +60,12 @@ for ref in set(re.findall(r'com\.vortex\.client\.[\w.]*\.[A-Z]\w+', quelle)):
     if ref not in inJar and ref not in eigene:
         fehler.append(f'{ref} fehlt in der Client-Jar')
 
+# 3) Keine Klasse darf in Addon UND Client gleich heissen. Sonst laedt Java
+#    nur eine davon -- so ersetzte der Client-"ReachModule" (Reach Display)
+#    das Cheat-Modul "Reach" des Addons: zweimal Reach Display, kein Reach.
+for cls in sorted(eigene & inJar):
+    fehler.append(f'{cls} gibt es im Addon UND im Client -- Klasse im Addon umbenennen')
+
 print(f'  Addon gegen {os.path.basename(JAR)} geprueft')
 for x in sorted(set(fehler)): print('  FEHLT:', x)
 sys.exit(1 if fehler else 0)

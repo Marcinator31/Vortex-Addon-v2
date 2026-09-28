@@ -111,7 +111,7 @@ public class VortexPlusAddon implements ClientModInitializer {
                 "Attacks the nearest target in range automatically, even through walls. With Auto Mace + Mace Kill: one hit. Extreme ban risk.");
         register(new com.vortex.client.module.modules.MaceKillModule(),
                 "Every mace hit counts as a smash from up to 22 blocks, without jumping. Needs free space above you. Extreme ban risk.");
-        register(new com.vortex.client.module.modules.ReachModule(),
+        register(new com.vortex.client.module.modules.ReachCheatModule(),
                 "Longer reach for hits (up to 6 blocks) and blocks (up to 5.5) -- the most the server accepts. High ban risk.");
         register(new com.vortex.client.module.modules.CriticalsModule(),
                 "Every fully charged hit becomes a critical hit (x1.5 damage) without jumping. High ban risk.");

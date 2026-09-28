@@ -292,6 +292,20 @@ public final class MoveCheats {
         }
     }
 
+    /** Ist die Taste dieser Belegung wirklich gedrueckt (Tastatur/Maus)? */
+    private static boolean gedrueckt(Minecraft mc, net.minecraft.client.KeyMapping km) {
+        try {
+            var key = com.mojang.blaze3d.platform.InputConstants.getKey(km.saveString());
+            if (key.getType() == com.mojang.blaze3d.platform.InputConstants.Type.KEYSYM) {
+                return com.mojang.blaze3d.platform.InputConstants.isKeyDown(mc.getWindow(), key.getValue());
+            }
+            if (key.getType() == com.mojang.blaze3d.platform.InputConstants.Type.MOUSE) {
+                return org.lwjgl.glfw.GLFW.glfwGetMouseButton(mc.getWindow().handle(), key.getValue()) == org.lwjgl.glfw.GLFW.GLFW_PRESS;
+            }
+        } catch (Throwable ignored) { }
+        return km.isDown();
+    }
+
     /** Bewegung des gesteuerten Boots, direkt vor dem Ausfuehren. */
     public static Vec3 boot(net.minecraft.world.entity.vehicle.boat.AbstractBoat boot, LocalPlayer p, Vec3 v) {
         com.vortex.client.module.modules.BoatFlyModule m = an(com.vortex.client.module.modules.BoatFlyModule.class);
@@ -312,8 +326,11 @@ public final class MoveCheats {
         // (Schleichen steigt aus dem Boot aus -- deshalb nicht dafuer.)
         double vs = m.verticalSpeed.get() / 20.0;
         double y = 0;
-        if (mc.options.keyJump.isDown()) y = vs;
-        else if (mc.options.keySprint.isDown()) y = -vs;
+        // Die TASTEN selbst abfragen, nicht die Tastenbelegung: Toggle Sprint
+        // haelt die Sprint-Belegung dauerhaft gedrueckt -- das Boot sank
+        // dann ununterbrochen, und Hoch/Runter liess sich nicht mehr steuern.
+        if (gedrueckt(mc, mc.options.keyJump)) y = vs;
+        else if (gedrueckt(mc, mc.options.keySprint)) y = -vs;
         else if (m.antiKick.get() && tick % 40 == 0) y = -0.04;
 
         Vec3 neu = new Vec3(x, y, z);

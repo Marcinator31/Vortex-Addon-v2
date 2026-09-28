@@ -1,7 +1,7 @@
 package com.vortex.client.mixin.client;
 
 import com.vortex.client.module.ModuleManager;
-import com.vortex.client.module.modules.ReachModule;
+import com.vortex.client.module.modules.ReachCheatModule;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.entity.player.Player;
 import org.spongepowered.asm.mixin.Mixin;
@@ -23,14 +23,14 @@ public abstract class ReachMixin {
     @Inject(method = "entityInteractionRange", at = @At("RETURN"), cancellable = true)
     private void vortex$entityReach(CallbackInfoReturnable<Double> cir) {
         if (!vortex$ich()) return;
-        ReachModule m = ModuleManager.INSTANCE.get(ReachModule.class);
+        ReachCheatModule m = ModuleManager.INSTANCE.get(ReachCheatModule.class);
         if (m != null && m.isEnabled()) cir.setReturnValue(Math.max(cir.getReturnValue(), m.entityReach.get()));
     }
 
     @Inject(method = "blockInteractionRange", at = @At("RETURN"), cancellable = true)
     private void vortex$blockReach(CallbackInfoReturnable<Double> cir) {
         if (!vortex$ich()) return;
-        ReachModule m = ModuleManager.INSTANCE.get(ReachModule.class);
+        ReachCheatModule m = ModuleManager.INSTANCE.get(ReachCheatModule.class);
         if (m != null && m.isEnabled()) cir.setReturnValue(Math.max(cir.getReturnValue(), m.blockReach.get()));
     }
 }
