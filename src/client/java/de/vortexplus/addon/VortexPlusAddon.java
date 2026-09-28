@@ -150,6 +150,32 @@ public class VortexPlusAddon implements ClientModInitializer {
         register(new com.vortex.client.module.modules.GodModeModule(),
                 "No damage. Singleplayer only: on servers the server calculates damage, no client can change that.");
 
+        // --- 2.30.0 ---------------------------------------------------------
+        register(new com.vortex.client.module.modules.OffhandModule(),
+                "Keeps the right item in your off hand: totem, crystal or golden apple. Always a totem at low health or before a deadly fall; golden apple while you hold right click with a sword. Pauses while Auto Totem is on. High ban risk.");
+        register(new com.vortex.client.module.modules.BedAuraModule(),
+                "Places beds at opponents in the Nether/End and blows them up. Picks the spot with the most damage and only fires when your own damage stays under Max Self Damage (Anti Suicide). Does nothing while you sneak or in the Overworld. Extreme ban risk.");
+        register(new com.vortex.client.module.modules.MiddleClickPearlModule(),
+                "Middle click throws an ender pearl from anywhere in your inventory, then you hold your previous item again. Middle click on a player still adds a friend.");
+        register(new com.vortex.client.module.modules.NewChunksModule(),
+                "Marks chunks that were just generated (red) and chunks that were loaded before (green), from how water and lava flow. Chunks without water or lava cannot be told apart.");
+        register(new com.vortex.client.module.modules.XrayModule(),
+                "Hides every block that is not on your list, so ores and spawners show through the ground. Select blocks to change the list (empty = all ores, debris, spawners). Servers with anti-xray show fake ores.");
+        register(new com.vortex.client.module.modules.BlinkModule(),
+                "Holds back your movement: the server sees you standing still until you switch Blink off, then the whole way arrives at once. The box shows where the server thinks you are. Detected by most anticheats.");
+        register(new com.vortex.client.module.modules.AntiVoidModule(),
+                "Catches you before you fall into the void: back to the last safe spot, a bounce, or hovering. Return uses the same steps as Click TP.");
+        register(new com.vortex.client.module.modules.GhostHandModule(),
+                "Right click opens chests, furnaces and other containers through walls -- the first one on your line of sight within reach. Anticheats that check line of sight block it.");
+        register(new com.vortex.client.module.modules.ClickTpModule(),
+                "Teleports you onto the block you look at: right click with an empty hand or a key. About 10 (Safe) or 20 (Fast) blocks per tick, longer distances in several hops; the path must be free. Detected by most anticheats.");
+        register(new com.vortex.client.module.modules.CropFarmerModule(),
+                "Harvests ripe wheat, carrots, potatoes, beetroot, nether wart, melons, pumpkins and sugar cane around you, replants and collects the drops. Walks in straight lines -- best on an open, flat farm.");
+        register(new com.vortex.client.module.modules.TreeFarmerModule(),
+                "Chops real trees around you (natural leaves, single trunk), builds up for tall ones, replants a sapling and collects the wood.");
+        register(new com.vortex.client.module.modules.ElytraAutopilotModule(),
+                "Flies to a target with your elytra: /autopilot <x> <z>. Takes off, holds the cruise height with rockets, climbs over mountains and lands at the target.");
+
         registriereRenderer();
 
         // --- Einstellungen ERNEUT laden --------------------------------
@@ -174,7 +200,7 @@ public class VortexPlusAddon implements ClientModInitializer {
         } catch (Throwable pvpErr) {
             com.vortex.client.core.Errors.report("VortexPlusAddon.reload", pvpErr);
         }
-        System.out.println("[vortex-plus-addon] 54 Module angemeldet.");
+        System.out.println("[vortex-plus-addon] 68 Module angemeldet.");
     }
 
     /**
@@ -212,6 +238,15 @@ public class VortexPlusAddon implements ClientModInitializer {
             // 2.25.0
             com.vortex.client.cheat.CrystalAura.register();
             com.vortex.client.cheat.FastAnchor.register();
+            // 2.30.0 -- jedes einzeln, ein Fehler legt nicht die anderen lahm
+            try { com.vortex.client.cheat.HandCheats.register(); } catch (Throwable e) { com.vortex.client.core.Errors.report("HandCheats", e); }
+            try { com.vortex.client.cheat.Teleport.register(); } catch (Throwable e) { com.vortex.client.core.Errors.report("Teleport", e); }
+            try { com.vortex.client.cheat.Blink.register(); } catch (Throwable e) { com.vortex.client.core.Errors.report("Blink", e); }
+            try { com.vortex.client.cheat.BedAura.register(); } catch (Throwable e) { com.vortex.client.core.Errors.report("BedAura", e); }
+            try { com.vortex.client.hud.NewChunks.register(); } catch (Throwable e) { com.vortex.client.core.Errors.report("NewChunks", e); }
+            try { com.vortex.client.bot.CropFarmer.register(); } catch (Throwable e) { com.vortex.client.core.Errors.report("CropFarmer", e); }
+            try { com.vortex.client.bot.TreeFarmer.register(); } catch (Throwable e) { com.vortex.client.core.Errors.report("TreeFarmer", e); }
+            try { com.vortex.client.bot.ElytraPilot.register(); } catch (Throwable e) { com.vortex.client.core.Errors.report("ElytraPilot", e); }
             // registerSafety ruft der Client selbst -- hier wuerde sie
             // ein zweites Mal laufen und den Ereignis-Handler doppelt anmelden.
         } catch (Throwable pvpErr) {

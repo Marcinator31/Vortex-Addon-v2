@@ -26,7 +26,9 @@
 		"ReachMixin",
 		"RightClickDelayAccessor",
 		"SafeWalkMixin",
-		"SpeedMineMixin"
+		"SpeedMineMixin",
+		"XrayFaceMixin",
+		"XrayShapeMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1
