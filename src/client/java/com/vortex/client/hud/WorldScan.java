@@ -5,7 +5,9 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.Container;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.entity.SpawnerBlockEntity;
 import net.minecraft.world.level.chunk.LevelChunk;
 import java.util.ArrayList;
@@ -41,15 +43,35 @@ public final class WorldScan {
         public final BlockPos pos;
         public final boolean inventory;
         public final boolean spawner;
-        Be(BlockPos pos, boolean inventory, boolean spawner) {
-            this.pos = pos; this.inventory = inventory; this.spawner = spawner;
+        /** Lager-Art fuer den Stash Finder (LAGER_*), sonst 0. */
+        public final byte lager;
+        Be(BlockPos pos, boolean inventory, boolean spawner, byte lager) {
+            this.pos = pos; this.inventory = inventory; this.spawner = spawner; this.lager = lager;
         }
     }
+
+    // Lager-Arten (fuer den Stash Finder). Nur echte Aufbewahrung zaehlt --
+    // Oefen, Trichter, Kruege oder Plattenspieler sind kein Lager.
+    public static final byte LAGER_TRUHE = 1, LAGER_FASS = 2, LAGER_SHULKER = 3;
+
+    // Indizes in chunkCounts.
+    /** Container (alles mit Inventar) -- wie frueher. */
+    public static final int C_INV = 0;
+    /** Sonstige Block-Entities -- wie frueher. */
+    public static final int C_OTHER = 1;
+    /** Truhen + Faesser + Shulker. */
+    public static final int C_LAGER = 2;
+    /** Davon Shulker. */
+    public static final int C_SHULKER = 3;
+    /** Gewichteter "Spieler war hier"-Wert (siehe susGewicht). */
+    public static final int C_SUS = 4;
+    /** Hoehenbereich der Spielerspuren (nur Bloecke mit Gewicht > 0). */
+    public static final int C_MIN_Y = 5, C_MAX_Y = 6;
 
     /** Fertige Momentaufnahme -- wird nur ersetzt, nie veraendert. */
     public static final class Snapshot {
         public final List<Be> entries;
-        /** Pro Chunk: [0] = Kisten/Inventare, [1] = sonstige Block-Entities. */
+        /** Pro Chunk, Indizes C_*: Inventare, Sonstige, Lager, Shulker, Sus-Wert, Min-/Max-Y. */
         public final Map<Long, int[]> chunkCounts;
         public final int version;
         Snapshot(List<Be> entries, Map<Long, int[]> counts, int version) {
@@ -63,8 +85,12 @@ public final class WorldScan {
     private static final AtomicReference<Snapshot> SNAPSHOT =
             new AtomicReference<>(EMPTY);
 
-    /** Radius in Chunks -- gross genug fuer alle Nutzer (StashFinder braucht 12). */
-    private static final int RADIUS = 12;
+    /**
+     * Radius in Chunks: die eingestellte Sichtweite (4..32). Frueher fest 12 --
+     * bei hoeherer Sichtweite lagen geladene Chunks ausserhalb und Stashes
+     * darin wurden nie gefunden.
+     */
+    private static int radius = 12;
     /**
      * Zeitbudget pro Tick in Nanosekunden (1 ms).
      *
@@ -80,9 +106,9 @@ public final class WorldScan {
     private static final long TIME_BUDGET_NANOS = 1_000_000L;
 
     /** Obergrenze, damit auch bei leeren Chunks nicht endlos gearbeitet wird. */
-    private static final int MAX_CHUNKS_PER_TICK = 32;
+    private static final int MAX_CHUNKS_PER_TICK = 64;
     /** Sicherheitsgrenze fuer die Gesamtzahl gesammelter Eintraege. */
-    private static final int MAX_ENTRIES = 6000;
+    private static final int MAX_ENTRIES = 20000;
 
     // Zustand des laufenden Durchgangs.
     private static List<Be> building = new ArrayList<>();
@@ -132,23 +158,27 @@ public final class WorldScan {
             return;
         }
 
-        int side = RADIUS * 2 + 1;
-        int total = side * side;
-
         // Neue Runde: Mittelpunkt auf die aktuelle Spielerposition setzen.
         if (cursor == 0) {
+            try {
+                radius = Math.max(4, Math.min(32, client.options.getEffectiveRenderDistance() + 1));
+            } catch (Throwable t) {
+                radius = 12;
+            }
             originX = client.player.getBlockX() >> 4;
             originZ = client.player.getBlockZ() >> 4;
             building = new ArrayList<>();
             buildingCounts = new HashMap<>();
         }
+        int side = radius * 2 + 1;
+        int total = side * side;
 
         int done = 0;
         long deadline = System.nanoTime() + TIME_BUDGET_NANOS;
         while (cursor < total && done < MAX_CHUNKS_PER_TICK
                 && System.nanoTime() < deadline) {
-            int dx = (cursor % side) - RADIUS;
-            int dz = (cursor / side) - RADIUS;
+            int dx = (cursor % side) - radius;
+            int dz = (cursor / side) - radius;
             cursor++;
             done++;
 
@@ -188,9 +218,10 @@ public final class WorldScan {
         } catch (Throwable t) {
             return;
         }
-        if (chunk == null) return;
+        if (chunk == null || chunk.isEmpty()) return;
 
-        int inv = 0, other = 0;
+        int inv = 0, other = 0, lager = 0, shulker = 0, sus = 0;
+        int minY = Integer.MAX_VALUE, maxY = Integer.MIN_VALUE;
         // Sicherer Zugriff: wir sind auf dem Haupt-Thread, niemand veraendert
         // die Liste waehrenddessen.
         for (BlockEntity be : chunk.getBlockEntities().values()) {
@@ -198,13 +229,72 @@ public final class WorldScan {
             boolean isInv = be instanceof Container;
             boolean isSpawner = be instanceof SpawnerBlockEntity;
             if (isInv) inv++; else other++;
+            byte art = lagerArt(be);
+            if (art != 0) lager++;
+            if (art == LAGER_SHULKER) shulker++;
+            int g = susGewicht(be);
+            if (g > 0) {
+                sus += g;
+                int y = be.getBlockPos().getY();
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+            }
             if (building.size() < MAX_ENTRIES) {
-                building.add(new Be(be.getBlockPos(), isInv, isSpawner));
+                building.add(new Be(be.getBlockPos(), isInv, isSpawner, art));
             }
         }
         if (inv > 0 || other > 0) {
-            buildingCounts.put(key(cx, cz), new int[] { inv, other });
+            buildingCounts.put(key(cx, cz), new int[] { inv, other, lager, shulker, sus, minY, maxY });
         }
+    }
+
+    private static byte lagerArt(BlockEntity be) {
+        BlockEntityType<?> t = be.getType();
+        if (t == BlockEntityType.CHEST || t == BlockEntityType.TRAPPED_CHEST) return LAGER_TRUHE;
+        if (t == BlockEntityType.BARREL) return LAGER_FASS;
+        if (t == BlockEntityType.SHULKER_BOX) return LAGER_SHULKER;
+        return 0;
+    }
+
+    /**
+     * Wie stark ein Block-Entity auf SPIELER hindeutet.
+     *
+     * Vorher zaehlte jedes Block-Entity gleich (Kisten x3, Rest x1). Dadurch
+     * leuchteten vor allem natuerliche Orte auf: Antike Staedte (hunderte
+     * Sculk-Sensoren und -Kreischer), Bienennester, Doerfer (Glocken, Betten,
+     * Lesepulte), Pfad-Ruinen (verdaechtiger Sand, Kruege), Trial Chambers
+     * (Spawner, Tresore). Jetzt:
+     *
+     *   0  kommt natuerlich vor oder sagt nichts (Sculk, Spawner, Tresore,
+     *      BienenNEST, Kruege, verdaechtiger Sand, Glocken, Portale ...)
+     *   1  auch in Doerfern/Strukturen, aber meist vom Spieler (Truhe, Ofen, Bett ...)
+     *   2+ praktisch nur vom Spieler (Schild, Banner, Trichter, Shulker, Beacon ...)
+     */
+    public static int susGewicht(BlockEntity be) {
+        BlockEntityType<?> t = be.getType();
+        if (t == BlockEntityType.BEACON) return 10;
+        if (t == BlockEntityType.SHULKER_BOX) return 8;
+        if (t == BlockEntityType.CONDUIT) return 6;
+        if (t == BlockEntityType.ENDER_CHEST || t == BlockEntityType.COMMAND_BLOCK) return 5;
+        if (t == BlockEntityType.HOPPER || t == BlockEntityType.ENCHANTING_TABLE) return 4;
+        if (t == BlockEntityType.COMPARATOR || t == BlockEntityType.DAYLIGHT_DETECTOR
+                || t == BlockEntityType.JUKEBOX || t == BlockEntityType.DROPPER
+                || t == BlockEntityType.SHELF) return 3;
+        if (t == BlockEntityType.BEEHIVE) {
+            // Gebauter Bienenstock ja, natuerliches Bienennest nein.
+            return be.getBlockState().is(Blocks.BEEHIVE) ? 3 : 0;
+        }
+        if (t == BlockEntityType.SIGN || t == BlockEntityType.HANGING_SIGN
+                || t == BlockEntityType.BANNER || t == BlockEntityType.SKULL
+                || t == BlockEntityType.TRAPPED_CHEST || t == BlockEntityType.CRAFTER
+                || t == BlockEntityType.COPPER_GOLEM_STATUE) return 2;
+        if (t == BlockEntityType.CHEST || t == BlockEntityType.BARREL
+                || t == BlockEntityType.FURNACE || t == BlockEntityType.SMOKER
+                || t == BlockEntityType.BLAST_FURNACE || t == BlockEntityType.BREWING_STAND
+                || t == BlockEntityType.BED || t == BlockEntityType.LECTERN
+                || t == BlockEntityType.CAMPFIRE || t == BlockEntityType.DISPENSER
+                || t == BlockEntityType.CHISELED_BOOKSHELF) return 1;
+        return 0;
     }
 
     /** Laeuft ueberhaupt eines der Module, das die Daten braucht? */

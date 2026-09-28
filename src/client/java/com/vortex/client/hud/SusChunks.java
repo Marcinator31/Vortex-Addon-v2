@@ -1,169 +1,126 @@
 package com.vortex.client.hud;
 
-import com.vortex.client.module.Module;
+import com.mojang.blaze3d.vertex.PoseStack;
 import com.vortex.client.module.ModuleManager;
 import com.vortex.client.module.modules.SusChunksModule;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.world.phys.AABB;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.atomic.AtomicReference;
-import com.mojang.blaze3d.vertex.PoseStack;
-import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.renderer.SubmitNodeCollector;
-import net.minecraft.core.BlockPos;
-import net.minecraft.world.Container;
-import net.minecraft.world.level.block.entity.BlockEntity;
-import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
 /**
- * Sus Chunks: faerbt Chunks als Heatmap nach Spieler-Aktivitaet.
+ * Sus Chunks: faerbt Chunks als Heatmap nach Spieler-Spuren.
  *
- * Hintergrund-Thread berechnet pro geladenem Chunk einen Score:
- *   Score = Container * 3 + sonstige Block-Entities * 1
- * (Container zaehlen staerker, weil sie der deutlichste Base-Indikator sind.)
- * Chunks ueber dem Mindest-Score bekommen eine vertikale Saeulen-Outline, deren
- * Farbe von gruen (wenig) ueber gelb nach rot (viel) geht.
+ * Der Wert je Chunk kommt fertig aus WorldScan (gewichtete Block-Entities,
+ * siehe WorldScan.susGewicht). Hier wird nur noch in Rahmen umgesetzt -- und
+ * nur, wenn WorldScan eine neue Runde fertig hat. Frueher lief dafuer ein
+ * eigener Thread ununterbrochen alle 0,4 Sekunden.
  */
 public final class SusChunks {
 
-    private static final class ChunkMark {
-        final AABB box;
-        final int color;
-        ChunkMark(AABB box, int color) { this.box = box; this.color = color; }
-    }
+    private SusChunks() {}
 
-    private static final AtomicReference<List<ChunkMark>> RESULT =
-            new AtomicReference<>(new ArrayList<>());
-    private static final int CHUNK_RADIUS = 10;
+    private record Mark(AABB box, int color) {}
 
-    private static volatile boolean running = false;
-    private static Thread worker;
+    private static volatile List<Mark> marks = List.of();
+    private static int letzteVersion = -1;
+    private static int letzteEinstellung = 0;
+    private static final Set<Long> GEMELDET = new HashSet<>();
 
     public static void register() {
+        ClientTickEvents.END_CLIENT_TICK.register(SusChunks::tick);
+        ClientPlayConnectionEvents.DISCONNECT.register((h, c) -> {
+            marks = List.of();
+            letzteVersion = -1;
+            GEMELDET.clear();
+        });
         LevelRenderEvents.AFTER_TRANSLUCENT_FEATURES.register(context -> {
-            SusChunksModule mod = (SusChunksModule) find(SusChunksModule.class);
+            SusChunksModule mod = ModuleManager.INSTANCE.get(SusChunksModule.class);
             if (mod == null || !mod.isEnabled()) return;
-
             Minecraft client = Minecraft.getInstance();
             if (client.level == null || client.player == null) return;
-
-            ensureWorker();
-
             PoseStack matrices = context.poseStack();
             SubmitNodeCollector collector = context.submitNodeCollector();
             if (matrices == null || collector == null) return;
 
-            long pvpT0 = System.nanoTime();
+            long t0 = System.nanoTime();
             try {
                 float tickDelta = client.getDeltaTracker().getGameTimeDeltaPartialTick(false);
                 Vec3 cam = EspRender.cameraOffset(client, tickDelta);
-
-                List<ChunkMark> marks = RESULT.get();
-                for (int i = 0; i < marks.size(); i++) {
-                    ChunkMark m = marks.get(i);
-                    EspRender.submitBox(collector, matrices, m.box, cam, m.color, 2.0f);
-                }
+                for (Mark m : marks) EspRender.submitBox(collector, matrices, m.box(), cam, m.color(), 2.0f);
             } catch (Throwable pvpErr) {
                 com.vortex.client.core.Errors.report("SusChunks", pvpErr);
             } finally {
-                // Draw cost only -- the scan runs on the worker thread.
-                com.vortex.client.core.Profiler.record("SusChunks",
-                        System.nanoTime() - pvpT0);
+                com.vortex.client.core.Profiler.record("SusChunks", System.nanoTime() - t0);
             }
         });
     }
 
-    private static void ensureWorker() {
-        if (running) return;
-        running = true;
-        worker = new Thread(SusChunks::workerLoop, "vortexclient-suschunks");
-        worker.setDaemon(true);
-        worker.start();
-    }
-
-    private static void workerLoop() {
-        while (true) {
-            try {
-                Thread.sleep(400);
-
-                Minecraft client = Minecraft.getInstance();
-                SusChunksModule mod = (SusChunksModule) find(SusChunksModule.class);
-                if (client == null || mod == null || !mod.isEnabled()) {
-                    if (!RESULT.get().isEmpty()) RESULT.set(new ArrayList<>());
-                    continue;
-                }
-                ClientLevel world = client.level;
-                if (world == null || client.player == null) {
-                    if (!RESULT.get().isEmpty()) RESULT.set(new ArrayList<>());
-                    continue;
-                }
-
-                int minScore = mod.getMinScore();
-                int maxScore = Math.max(mod.getMaxScore(), minScore + 1);
-                int minY = world.getMinY();
-                int maxY = world.getMaxY();
-
-                // Daten aus der sicheren Momentaufnahme (Haupt-Thread).
-                WorldScan.Snapshot snap = WorldScan.get();
-                if (snap.chunkCounts.isEmpty()) {
-                    if (!RESULT.get().isEmpty()) RESULT.set(new ArrayList<>());
-                    continue;
-                }
-
-                List<ChunkMark> marks = new ArrayList<>();
-                for (java.util.Map.Entry<Long, int[]> e : snap.chunkCounts.entrySet()) {
-                    int[] c = e.getValue();
-                    // Kisten zaehlen dreifach, sonstige Block-Entities einfach.
-                    int score = c[0] * 3 + c[1];
-                    if (score < minScore) continue;
-
-                    long ck = e.getKey();
-                    int ccx = (int) (ck >> 32);
-                    int ccz = (int) ck;
-
-                    // Score auf 0..1 normieren -> Heatmap-Farbe.
-                    float t = (float) (score - minScore) / (float) (maxScore - minScore);
-                    if (t > 1f) t = 1f;
-                    int color = heatColor(t);
-
-                    double x0 = ccx << 4, z0 = ccz << 4;
-                    AABB box = new AABB(x0 + 0.5, minY, z0 + 0.5,
-                            x0 + 15.5, maxY, z0 + 15.5);
-                    marks.add(new ChunkMark(box, color));
-                }
-
-                RESULT.set(marks);
-            } catch (InterruptedException ie) {
+    private static void tick(Minecraft mc) {
+        try {
+            SusChunksModule mod = ModuleManager.INSTANCE.get(SusChunksModule.class);
+            if (mod == null || !mod.isEnabled() || mc.level == null || mc.player == null) {
+                if (!marks.isEmpty()) marks = List.of();
+                letzteVersion = -1;
                 return;
-            } catch (Throwable pvpErr) {
-                // Durchlauf ueberspringen.
             }
+            // Neu rechnen bei neuer Scan-Runde ODER geaenderten Einstellungen
+            // (sonst wirkte ein Regler erst Sekunden spaeter).
+            int einst = mod.getMinScore() * 31 * 31 + mod.getMaxScore() * 31 + (mod.fullHeight.get() ? 1 : 0);
+            WorldScan.Snapshot snap = WorldScan.get();
+            if (snap.version == letzteVersion && einst == letzteEinstellung) return;
+            letzteVersion = snap.version;
+            letzteEinstellung = einst;
+
+            int minScore = mod.getMinScore();
+            int maxScore = Math.max(mod.getMaxScore(), minScore + 1);
+            int weltMin = mc.level.getMinY(), weltMax = mc.level.getMaxY();
+            List<Mark> out = new ArrayList<>();
+            List<String> meldungen = new ArrayList<>();
+            for (Map.Entry<Long, int[]> e : snap.chunkCounts.entrySet()) {
+                int[] c = e.getValue();
+                if (c.length <= WorldScan.C_MAX_Y) continue;
+                int score = c[WorldScan.C_SUS];
+                if (score < minScore) continue;
+                long ck = e.getKey();
+                int ccx = (int) (ck >> 32), ccz = (int) ck;
+                float t = Math.min(1f, (float) (score - minScore) / (maxScore - minScore));
+                double y0, y1;
+                if (mod.fullHeight.get()) { y0 = weltMin; y1 = weltMax; }
+                else {
+                    y0 = Math.max(weltMin, c[WorldScan.C_MIN_Y] - 1);
+                    y1 = Math.min(weltMax, c[WorldScan.C_MAX_Y] + 2);
+                }
+                double x0 = ccx << 4, z0 = ccz << 4;
+                out.add(new Mark(new AABB(x0 + 0.5, y0, z0 + 0.5, x0 + 15.5, y1, z0 + 15.5), heatColor(t)));
+                if (mod.notify.get() && score >= maxScore && GEMELDET.add(ck)) {
+                    meldungen.add("§c[Sus Chunks] §fVery active chunk at §e"
+                            + ((ccx << 4) + 8) + " " + c[WorldScan.C_MIN_Y] + " " + ((ccz << 4) + 8)
+                            + " §7(score " + score + ")");
+                }
+            }
+            marks = out;
+            for (String m : meldungen) mc.player.sendSystemMessage(Component.literal(m));
+        } catch (Throwable pvpErr) {
+            com.vortex.client.core.Errors.report("SusChunks.tick", pvpErr);
         }
     }
 
-    /** Heatmap: t=0 -> gruen, t=0.5 -> gelb, t=1 -> rot. ARGB mit fixem Alpha. */
+    /** Heatmap: t=0 -> gruen, t=0.5 -> gelb, t=1 -> rot. ARGB mit festem Alpha. */
     private static int heatColor(float t) {
         int r, g;
-        if (t < 0.5f) {
-            // gruen -> gelb
-            r = (int) (255 * (t / 0.5f));
-            g = 255;
-        } else {
-            // gelb -> rot
-            r = 255;
-            g = (int) (255 * (1f - (t - 0.5f) / 0.5f));
-        }
-        int a = 0xC0; // leicht transparent
-        return (a << 24) | (r << 16) | (g << 8);
-    }
-
-    private static Module find(Class<? extends Module> type) {
-        // Konstante Laufzeit statt die ganze Liste zu durchlaufen.
-        return ModuleManager.INSTANCE.get(type);
+        if (t < 0.5f) { r = (int) (255 * (t / 0.5f)); g = 255; }
+        else { r = 255; g = (int) (255 * (1f - (t - 0.5f) / 0.5f)); }
+        return (0xC0 << 24) | (r << 16) | (g << 8);
     }
 }

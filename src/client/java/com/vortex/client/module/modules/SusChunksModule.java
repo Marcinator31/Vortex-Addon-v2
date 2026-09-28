@@ -1,34 +1,42 @@
 package com.vortex.client.module.modules;
 
+import com.vortex.client.core.setting.BooleanSetting;
 import com.vortex.client.core.setting.NumberSetting;
 import com.vortex.client.module.Module;
 
 /**
- * Sus Chunks: markiert Chunks mit viel Spieler-Aktivitaet als "verdaechtig"
- * (suspicious) -- ein klassisches Base-Hunting-Werkzeug.
+ * Sus Chunks: markiert Chunks mit Spuren von Spielern -- ein klassisches
+ * Base-Hunting-Werkzeug.
  *
- * Idee: Von Menschen genutzte Chunks enthalten Dinge, die natuerlich generierte
- * Chunks praktisch nie in der Menge haben -- vor allem Container (Truhen,
- * Shulker, Faesser) und andere Block-Entities (Oefen, Schilder, Crafting-
- * Stationen). Der Finder berechnet daraus pro geladenem Chunk einen
- * Aktivitaets-Score und zeichnet eine farbige Chunk-Saeule als Heatmap:
- * niedrige Aktivitaet dezent, hohe Aktivitaet kraeftig -- so sieht man auf einen
- * Blick, wo wahrscheinlich eine Base ist.
+ * Jedes Block-Entity im Chunk bekommt ein Gewicht danach, wie sicher es von
+ * einem Spieler stammt: Beacon, Shulker, Trichter, Schilder, Banner viel;
+ * Truhen, Oefen, Betten wenig (gibt es auch in Doerfern); Sculk, Spawner,
+ * Bienennester, Kruege, verdaechtiger Sand gar nicht (natuerlich). Vorher
+ * zaehlte jedes Block-Entity mit -- Antike Staedte und Bienenwaelder
+ * leuchteten heller als echte Basen.
  *
- * Es werden nur GELADENE Chunks ausgewertet (Render-Distanz), kein Server-
- * Exploit -- man fliegt die Welt ab und auffaellige Chunks leuchten auf.
+ * Die Markierung sitzt auf der Hoehe, auf der die Spuren liegen (eine Base
+ * unter der Erde ist so sofort als solche zu erkennen), Farbe gruen -> rot.
+ *
+ * Es werden nur GELADENE Chunks ausgewertet (Sichtweite).
  */
 public class SusChunksModule extends Module {
 
-    // Ab welchem Aktivitaets-Score ein Chunk ueberhaupt markiert wird.
+    /** Ab welchem Wert ein Chunk markiert wird (1 Shulker = 8, 1 Schild = 2). */
     public final NumberSetting minScore = new NumberSetting("Min Score", 8, 1, 100, 1);
-    // Score, ab dem ein Chunk als "maximal verdaechtig" (volle Farbe) gilt.
+    /** Ab diesem Wert volle Farbe (rot). */
     public final NumberSetting maxScore = new NumberSetting("Max Score", 60, 10, 300, 5);
+    /** Saeule ueber die ganze Welthoehe statt nur um die Spuren. */
+    public final BooleanSetting fullHeight = new BooleanSetting("Full Height", false);
+    /** Chat-Meldung, wenn ein Chunk "Max Score" erreicht. */
+    public final BooleanSetting notify = new BooleanSetting("Chat Message", false);
 
     public SusChunksModule() {
         super("Sus Chunks", Category.CHEATS);
         addSetting(minScore);
         addSetting(maxScore);
+        addSetting(fullHeight);
+        addSetting(notify);
     }
 
     public int getMinScore() { return minScore.getInt(); }
