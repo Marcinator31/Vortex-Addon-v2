@@ -33,10 +33,16 @@ public class MaceKillModule extends Module {
 
     public final NumberSetting height = new NumberSetting("Height", 20, 2, 22, 1);
     public final BooleanSetting playersOnly = new BooleanSetting("Players Only", false);
+    /** Mit Schwert/Axt in der Hand: fuer den Schlag den Streitkolben aus der Hotbar nehmen. */
+    public final BooleanSetting autoMace = new BooleanSetting("Auto Mace", true);
+    /** In der Aktionsleiste zeigen, mit welcher Hoehe geschlagen wurde -- oder warum nicht. */
+    public final BooleanSetting showInfo = new BooleanSetting("Show Info", true);
 
     public MaceKillModule() {
         super("Mace Kill", Category.CHEATS);
         addSetting(height);
         addSetting(playersOnly);
+        addSetting(autoMace);
+        addSetting(showInfo);
     }
 }

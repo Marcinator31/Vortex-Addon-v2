@@ -51,6 +51,12 @@ public abstract class MaceKillMixin {
     @Inject(method = "attack", at = @At("TAIL"))
     private void vortex$nachSchlag(Player player, Entity target, CallbackInfo ci) {
         try {
+            // Mace Kill "Auto Mace": wieder das vorige Item in die Hand (vor Attribute Swap, das ggf. davor gewechselt hat)
+            if (com.vortex.client.cheat.MaceKill.nachDemSchlag(player)) ensureHasSentCarriedItem();
+        } catch (Throwable t) {
+            com.vortex.client.core.Errors.report("MaceKill", t);
+        }
+        try {
             // Attribute Swap: Slot zurueck und SOFORT melden (selber Paket-Stapel)
             if (com.vortex.client.cheat.AttributeSwap.nachDemSchlag(player)) ensureHasSentCarriedItem();
         } catch (Throwable t) {
