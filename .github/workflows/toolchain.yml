@@ -1,10 +1,14 @@
 name: toolchain
 
-# Werkzeugkette fuer den 1.21.11-Port: Minecraft 1.21.11 mit Mojang-Namen und
-# die Fabric API als Zip in ein PRIVATES Release dieses Repos. Nur zum
+# Werkzeugkette fuer die Ports (1.21.11, 26.1.1): Minecraft mit Mojang-Namen
+# und die Fabric API als Zip in ein PRIVATES Release dieses Repos. Nur zum
 # Pruefen beim Entwickeln -- wird nicht an Spieler verteilt.
 on:
   workflow_dispatch:
+    inputs:
+      mc:
+        description: 'Minecraft-Version (1.21.11 oder 26.1.1)'
+        default: '1.21.11'
   push:
     branches: [ "main" ]
     paths: [ "tools/toolchain/**", ".github/workflows/toolchain.yml" ]
@@ -15,23 +19,28 @@ permissions:
 jobs:
   dump:
     runs-on: ubuntu-latest
+    env:
+      MC: ${{ github.event.inputs.mc || '1.21.11' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
-          java-version: '21'
+          java-version: ${{ startsWith(github.event.inputs.mc || '1.21.11', '26') && '25' || '21' }}
           distribution: 'temurin'
-      - name: Klassenpfad fuer 1.21.11 holen
+      - name: Fabric-API-Versionen (Info)
+        run: curl -s https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/maven-metadata.xml | grep -o "<version>[^<]*26\.1[^<]*</version>" | tail -8 || true
+      - name: Klassenpfad holen
         run: |
-          cp -r gradle gradlew tools/toolchain/
-          cd tools/toolchain
+          D=tools/toolchain; [ -d "tools/toolchain/$MC" ] && D="tools/toolchain/$MC"
+          cp -r gradle gradlew "$D/"
+          cd "$D"
           chmod +x gradlew
           ./gradlew dumpCp --no-daemon -q
           ls -la build/cp | head -80
-          cd build && zip -qr "$RUNNER_TEMP/toolchain-1.21.11.zip" cp
+          cd build && zip -qr "$RUNNER_TEMP/toolchain-$MC.zip" cp
       - name: Als privates Release ablegen
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view toolchain-1.21.11 >/dev/null 2>&1 || gh release create toolchain-1.21.11 --prerelease --title "Toolchain 1.21.11 (intern)" --notes "Nur zum Pruefen beim Entwickeln. Nicht verteilen."
-          gh release upload toolchain-1.21.11 "$RUNNER_TEMP/toolchain-1.21.11.zip" --clobber
+          gh release view "toolchain-$MC" >/dev/null 2>&1 || gh release create "toolchain-$MC" --prerelease --title "Toolchain $MC (intern)" --notes "Nur zum Pruefen beim Entwickeln. Nicht verteilen."
+          gh release upload "toolchain-$MC" "$RUNNER_TEMP/toolchain-$MC.zip" --clobber

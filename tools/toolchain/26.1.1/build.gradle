@@ -1,0 +1,16 @@
+// Nur fuer die Werkzeugkette: holt Minecraft 26.1.1 (unverschleiert) und die
+// Fabric API und legt alle Jars des Compile-Klassenpfads in build/cp ab.
+// Wird NICHT ausgeliefert.
+plugins {
+    id 'net.fabricmc.fabric-loom' version '1.17-SNAPSHOT'
+}
+repositories { }
+dependencies {
+    minecraft "com.mojang:minecraft:26.1.1"
+    implementation "net.fabricmc:fabric-loader:0.19.3"
+    implementation "net.fabricmc.fabric-api:fabric-api:0.155.2+26.1.2"
+}
+tasks.register('dumpCp', Copy) {
+    from sourceSets.main.compileClasspath
+    into layout.buildDirectory.dir('cp')
+}
