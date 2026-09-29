@@ -257,6 +257,16 @@ public class BotGameTest implements FabricClientGameTest {
             }
         }
         ctx.takeScreenshot("tree-end");
+        for (int[] b : new int[][]{{104, 6}, {111, 12}, {99, 15}}) {
+            notiz("tree spot " + b[0] + "/" + b[1] + ": " + srv.computeOnServer(s -> {
+                StringBuilder sb = new StringBuilder();
+                for (int y = -62; y <= -57; y++) {
+                    sb.append(y).append('=').append(net.minecraft.core.registries.BuiltInRegistries.BLOCK
+                            .getKey(s.overworld().getBlockState(new BlockPos(b[0], y, b[1])).getBlock()).getPath()).append(' ');
+                }
+                return sb.toString();
+            }));
+        }
         notiz("end status: " + botStatus(ctx, TreeFarmerModule.class));
         stamm = zaehle(srv, 90, -60, -8, 122, -44, 24, st -> st.is(BlockTags.LOGS));
         int setzlinge = zaehle(srv, 90, -60, -8, 122, -60, 24,
