@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "vortex-bot-tests",
+  "version": "1.0.0",
+  "name": "Vortex Bot Tests",
+  "description": "Automatic tests of the Vortex Plus bots in a real game (CI only, never shipped).",
+  "environment": "client",
+  "entrypoints": {
+    "fabric-client-gametest": ["com.vortex.bottest.BotGameTest"]
+  },
+  "depends": {
+    "vortexplusaddon": "*",
+    "vortexclient": "*"
+  }
+}

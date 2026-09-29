@@ -1,0 +1,32 @@
+// Bot-Tests in einem echten Minecraft (Fabric Client-Gametests).
+//
+// Nur aktiv mit  ./gradlew runClientGameTest -PbotTests  (siehe
+// .github/workflows/bot-tests.yml) -- der normale Build bleibt unberuehrt.
+// Der Test startet das Spiel, baut eine Testfarm und Baeume, schaltet die
+// Bots ein und prueft danach die Welt (src/gametest).
+
+fabricApi {
+    configureTests {
+        createSourceSet = true
+        modId = "vortex-bot-tests"
+        enableGameTests = false
+        enableClientGameTests = true
+        eula = true
+    }
+}
+
+def vortexClientJar = file("libs/vortexclient.jar")
+
+sourceSets {
+    gametest {
+        compileClasspath += sourceSets.main.output + sourceSets.client.output
+        runtimeClasspath += sourceSets.main.output + sourceSets.client.output
+    }
+}
+
+dependencies {
+    // Der Vortex Client muss als Mod mitlaufen (das Addon braucht ihn)
+    gametestCompileOnly files(vortexClientJar)
+    runtimeOnly files(vortexClientJar)
+    gametestRuntimeOnly files(vortexClientJar)
+}

@@ -1,0 +1,73 @@
+name: bot-tests
+
+# Bot-Tests in einem ECHTEN Minecraft 26.2 (Fabric Client-Gametests):
+# Testwelt bauen, Bots einschalten, Welt pruefen (src/gametest).
+# Ergebnis, Log und Screenshots landen im privaten Release "bot-tests".
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "src/client/java/com/vortex/client/bot/**"
+      - "src/client/java/com/vortex/client/module/modules/CropFarmerModule.java"
+      - "src/client/java/com/vortex/client/module/modules/TreeFarmerModule.java"
+      - "src/gametest/**"
+      - "gradle/bot-tests.gradle"
+      - ".github/workflows/bot-tests.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-bottest-${{ hashFiles('**/*.gradle*', 'gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-bottest-
+            ${{ runner.os }}-gradle-
+      - name: Client-Jar holen (26.2, neuestes Client-Release)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p libs "$RUNNER_TEMP/dl"
+          gh release download --repo Marcinator31/Vortex-Client --pattern 'vortexclient-fabric-26.2-*.jar' --dir "$RUNNER_TEMP/dl"
+          JAR=$(ls "$RUNNER_TEMP"/dl/*.jar | grep -v -- '-sources' | head -n 1)
+          cp "$JAR" libs/vortexclient.jar
+          echo "Client: $(basename "$JAR")"
+      - name: Grafik (Xvfb + Mesa)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q xvfb mesa-utils libgl1-mesa-dri libegl1 libvulkan1 mesa-vulkan-drivers
+      - name: Bot-Tests im Spiel
+        run: |
+          chmod +x gradlew
+          set -o pipefail
+          xvfb-run -a -s "-screen 0 1280x720x24" ./gradlew runClientGameTest -PbotTests --no-daemon --stacktrace 2>&1 | tee test.log
+      - name: Ergebnis einsammeln
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          OUT="$RUNNER_TEMP/bot-tests"; mkdir -p "$OUT"
+          find build/run -maxdepth 2 -type d | head -20
+          R=$(find build/run -name bot-test-results.txt | head -n 1)
+          if [ -n "$R" ]; then cp "$R" "$OUT/"; { echo '```'; cat "$R"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; else echo "keine Ergebnisdatei" >> "$GITHUB_STEP_SUMMARY"; fi
+          for d in $(find build/run -type d -name screenshots); do cp -r "$d" "$OUT/"; done
+          L=$(find build/run -path '*logs/latest.log' | head -n 1); [ -n "$L" ] && cp "$L" "$OUT/latest.log"
+          [ -f test.log ] && tail -c 400000 test.log > "$OUT/gradle.log"
+          (cd "$RUNNER_TEMP" && zip -qr bot-tests.zip bot-tests)
+          gh release view bot-tests >/dev/null 2>&1 || gh release create bot-tests --prerelease --title "Bot-Tests (intern)" --notes "Ergebnisse der Bot-Tests im Spiel. Nicht verteilen."
+          gh release upload bot-tests "$RUNNER_TEMP/bot-tests.zip" --clobber

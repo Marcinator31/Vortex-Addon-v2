@@ -104,3 +104,8 @@ publishing {
         }
     }
 }
+
+// Bot-Tests (echtes Minecraft in der CI) -- nur mit -PbotTests, siehe gradle/bot-tests.gradle
+if (project.hasProperty('botTests')) {
+    apply from: 'gradle/bot-tests.gradle'
+}
