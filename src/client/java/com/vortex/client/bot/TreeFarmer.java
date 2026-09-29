@@ -211,9 +211,13 @@ public final class TreeFarmer {
         if (m.replant.get() && !OFFEN.isEmpty()) {
             OFFEN.removeIf(b -> {
                 if (!mc.level.getBlockState(b.below()).is(BlockTags.DIRT)) { PFLANZ_VERSUCHE.remove(b); GESEHEN_SEIT.remove(b); return true; }
-                if (mc.level.getBlockState(b).isAir()) { GESEHEN_SEIT.remove(b); return false; }
+                BlockState da = mc.level.getBlockState(b);
+                if (da.isAir()) { GESEHEN_SEIT.remove(b); return false; }
                 long seit = GESEHEN_SEIT.computeIfAbsent(b, k -> tick);
-                if (tick - seit < 40) return false;            // noch nicht sicher bestaetigt
+                boolean setzling = da.getBlock() instanceof net.minecraft.world.level.block.SaplingBlock || da.is(BlockTags.LOGS);
+                // Setzling (oder schon ein Baum): nach 2 s bestaetigt. Etwas anderes
+                // (Block im Weg): noch eine Minute warten, dann aufgeben.
+                if (tick - seit < (setzling ? 40 : 1200)) return false;
                 PFLANZ_VERSUCHE.remove(b);
                 GESEHEN_SEIT.remove(b);
                 return true;
@@ -487,6 +491,10 @@ public final class TreeFarmer {
     private static void pflanzen(Minecraft mc, LocalPlayer p, TreeFarmerModule m) {
         if (!m.replant.get() || basis == null || !mc.level.getBlockState(basis).isAir()
                 || !mc.level.getBlockState(basis.below()).is(BlockTags.DIRT)) {
+            // Steht dort noch etwas (unterster Turmblock, ein Stamm, den der Server
+            // noch nicht bestaetigt hat ...)? Trotzdem vormerken -- sonst bliebe die
+            // Stelle fuer immer leer (gefunden im Bot-Test).
+            if (m.replant.get() && basis != null && mc.level.getBlockState(basis.below()).is(BlockTags.DIRT)) OFFEN.add(basis.immutable());
             nichtsLiegtSeit = -1;
             wechsel(Phase.SAMMELN);
             return;
