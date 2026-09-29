@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       mc:
-        description: 'Minecraft-Version (1.21.11 oder 26.1.1)'
+        description: 'Minecraft-Version (1.21.11, 26.1.1 oder 26.2)'
         default: '1.21.11'
   push:
     branches: [ "main" ]
