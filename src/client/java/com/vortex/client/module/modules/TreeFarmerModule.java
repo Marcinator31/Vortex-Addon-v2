@@ -22,8 +22,13 @@ public class TreeFarmerModule extends Module {
     public final BooleanSetting collect = new BooleanSetting("Collect Drops", true);
     public final BooleanSetting useAxe = new BooleanSetting("Use Axe", true);
     public final BooleanSetting pillar = new BooleanSetting("Pillar Up For Tall Trees", true);
+    public final BooleanSetting boneMeal = new BooleanSetting("Use Bone Meal", false);
     public final BooleanSetting store = new BooleanSetting("Store In Chests", true);
     public final BooleanSetting eat = new BooleanSetting("Eat When Hungry", true);
+    public final BooleanSetting stayNearStart = new BooleanSetting("Stay Near Start", true);
+    public final BooleanSetting defend = new BooleanSetting("Defend Yourself", true);
+    public final NumberSetting stopHealth = new NumberSetting("Stop Below Health", 6, 0, 18, 1);
+    public final NumberSetting playerPause = new NumberSetting("Pause If Player Within", 0, 0, 64, 4);
 
     public TreeFarmerModule() {
         super("Tree Farmer", Category.BOTS);
@@ -32,8 +37,13 @@ public class TreeFarmerModule extends Module {
         addSetting(collect);
         addSetting(useAxe);
         addSetting(pillar);
+        addSetting(boneMeal);
         addSetting(store);
         addSetting(eat);
+        addSetting(stayNearStart);
+        addSetting(defend);
+        addSetting(stopHealth);
+        addSetting(playerPause);
     }
 
     /** Statuszeile auf der Bot-Seite. */

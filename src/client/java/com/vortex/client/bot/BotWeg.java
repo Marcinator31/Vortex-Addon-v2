@@ -227,6 +227,42 @@ final class BotWeg {
         };
     }
 
+    /**
+     * Nahe genug an einem Punkt, um ihn aufzusammeln (waagerecht hoechstens
+     * "r" von der Feldmitte, hoechstens einen Block hoeher/tiefer). Anders als
+     * {@link #feld} muss man nicht AUF dem Block stehen -- wichtig, wenn der
+     * Gegenstand in einem Busch oder an einer Kante liegt.
+     */
+    static Ziel nahBei(double px, double py, double pz, double r) {
+        int ty = (int) Math.floor(py);
+        return new Ziel() {
+            @Override public boolean erreicht(int x, int y, int z) {
+                double dx = x + 0.5 - px, dz = z + 0.5 - pz;
+                return dx * dx + dz * dz <= r * r && Math.abs(y - ty) <= 1;
+            }
+            @Override public double rest(int x, int y, int z) {
+                double dx = x + 0.5 - px, dz = z + 0.5 - pz;
+                return Math.max(0, Math.sqrt(dx * dx + dz * dz) - r) + Math.max(0, Math.abs(y - ty) - 1);
+            }
+        };
+    }
+
+    /** In einem Ring um einen Punkt stehen (waagerecht zwischen min und max, etwa auf gleicher Hoehe). */
+    static Ziel ring(double px, double pz, int ty, double min, double max) {
+        return new Ziel() {
+            @Override public boolean erreicht(int x, int y, int z) {
+                double dx = x + 0.5 - px, dz = z + 0.5 - pz;
+                double h = Math.sqrt(dx * dx + dz * dz);
+                return h >= min && h <= max && Math.abs(y - ty) <= 1;
+            }
+            @Override public double rest(int x, int y, int z) {
+                double dx = x + 0.5 - px, dz = z + 0.5 - pz;
+                double h = Math.sqrt(dx * dx + dz * dz);
+                return (h < min ? min - h : h > max ? h - max : 0) + Math.max(0, Math.abs(y - ty) - 1);
+            }
+        };
+    }
+
     /** Auf einem bestimmten Feld stehen (z. B. wo ein Gegenstand liegt). */
     static Ziel feld(int tx, int ty, int tz) {
         return new Ziel() {

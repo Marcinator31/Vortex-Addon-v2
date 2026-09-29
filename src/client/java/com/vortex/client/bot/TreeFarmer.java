@@ -47,11 +47,14 @@ public final class TreeFarmer {
 
     private TreeFarmer() {}
 
-    private enum Phase { SUCHEN, HINGEHEN, FAELLEN, ABSTEIGEN, PFLANZEN, SAMMELN, NACHPFLANZEN }
+    private enum Phase { SUCHEN, HINGEHEN, FAELLEN, ABSTEIGEN, PFLANZEN, SAMMELN, NACHPFLANZEN, DUENGEN }
 
     private static final BotMotor MOTOR = new BotMotor();
     private static final BotEssen ESSEN = new BotEssen("Tree Farmer");
     private static final BotLager LAGER = new BotLager("Tree Farmer");
+    private static final BotSchutz SCHUTZ = new BotSchutz("Tree Farmer");
+    /** Wo der Bot eingeschaltet wurde -- Mitte des Arbeitsbereichs. */
+    private static BlockPos startPos = null;
     private static long tick = 0;
     private static boolean warAn = false;
     private static Phase phase = Phase.SUCHEN;
@@ -70,6 +73,10 @@ public final class TreeFarmer {
     private static BlockPos pflanzZiel = null;
     private static long nichtsLiegtSeit = -1;
     private static ItemEntity sammelZiel = null;
+    private static BlockPos duengZiel = null;
+    private static long duengZuletzt = -100;
+    /** Wie oft ein Setzling schon Knochenmehl bekam (waechst er nie, wird er ausgelassen). */
+    private static final Map<BlockPos, Integer> DUENG_ZAEHLER = new HashMap<>();
 
     private static int baeume = 0, stammBloecke = 0;
     private static long startZeit = 0;
@@ -119,9 +126,12 @@ public final class TreeFarmer {
                 MOTOR.aus(mc);
                 ESSEN.aus(mc, p);
                 LAGER.zuruecksetzen(mc, p);
+                SCHUTZ.zuruecksetzen(p);
                 wechsel(Phase.SUCHEN);
                 basis = null;
                 GESPERRT.clear();
+                DUENG_ZAEHLER.clear();
+                duengZiel = null;
                 if (p != null && baeume > 0) {
                     long min = (System.currentTimeMillis() - startZeit) / 60000L;
                     melde(p, "Stopped: " + baeume + " trees (" + stammBloecke + " logs) in " + min + " min.");
@@ -130,11 +140,26 @@ public final class TreeFarmer {
             warAn = false;
             return;
         }
-        if (!warAn) { baeume = 0; stammBloecke = 0; startZeit = System.currentTimeMillis(); OFFEN.clear(); }
+        if (!warAn) { baeume = 0; stammBloecke = 0; startZeit = System.currentTimeMillis(); OFFEN.clear(); startPos = p.blockPosition().immutable(); }
         warAn = true;
         if (!p.isAlive()) { MOTOR.anhalten(mc); return; }
         GESPERRT.values().removeIf(bis -> bis < tick);
         try {
+            // Sicherheit zuerst -- auch auf dem Weg zur Truhe (nicht bei offenem Fenster)
+            if (mc.gui.screen() == null) {
+                BotSchutz.Lage lage = SCHUTZ.tick(mc, p, MOTOR, tick, m.defend.get(), m.stopHealth.getInt(), m.playerPause.getInt());
+                if (lage != BotSchutz.Lage.OK) {
+                    ESSEN.aus(mc, p);                      // sonst bleibt die Benutzen-Taste gedrueckt
+                    if (LAGER.aktiv()) LAGER.aus(mc, p);
+                    MOTOR.fortschrittZuruecksetzen();
+                    if (abbau != null) { try { mc.gameMode.stopDestroyBlock(); } catch (Throwable ignored) { } abbau = null; }
+                    MOTOR.springen(mc, false);
+                    phaseSeit++;                           // Pause/Kampf zaehlt nicht gegen die Phasen-Fristen
+                    if (lage == BotSchutz.Lage.STOP) { m.setEnabled(false); return; }
+                    status = lage == BotSchutz.Lage.KAMPF ? "Fighting" : "Paused: " + SCHUTZ.pauseGrund() + " nearby";
+                    return;
+                }
+            }
             if (LAGER.aktiv()) {
                 status = "Storing in chest";
                 LAGER.tick(mc, p, MOTOR, tick, TreeFarmer::einlagern, behalten());
@@ -153,6 +178,7 @@ public final class TreeFarmer {
                 case PFLANZEN -> pflanzen(mc, p, m);
                 case SAMMELN -> sammeln(mc, p, m);
                 case NACHPFLANZEN -> nachpflanzen(mc, p);
+                case DUENGEN -> duengen(mc, p);
             }
         } finally {
             MOTOR.drehen(p, 30f);
@@ -184,16 +210,30 @@ public final class TreeFarmer {
             }
         }
 
-        // 3. Liegengebliebenes Holz / Setzlinge einsammeln (Laub zerfaellt langsam)
-        if (m.collect.get() && BotMotor.freiePlaetze(p) > 0 && naechsterDrop(mc, p, p.getBoundingBox().inflate(r, 4, r)) != null) {
+        // 3. Knochenmehl auf einen Setzling im Bereich (optional) -- der naechste Baum waechst sofort
+        boolean hatKnochenmehl = Inv.hotbar(p, st -> st.is(Items.BONE_MEAL)) >= 0 || Inv.inventar(p, st -> st.is(Items.BONE_MEAL)) >= 0;
+        if (m.boneMeal.get() && hatKnochenmehl) {
+            BlockPos z = null;
+            double zd = Double.MAX_VALUE;
+            BlockPos c = mitte(p, m);
+            for (BlockPos b : BlockPos.betweenClosed(c.offset(-r, -4, -r), c.offset(r, 6, r))) {
+                if (GESPERRT.containsKey(b) || !duengbar(mc.level.getBlockState(b))) continue;
+                double d = p.distanceToSqr(Vec3.atCenterOf(b));
+                if (d < zd) { zd = d; z = b.immutable(); }
+            }
+            if (z != null) { duengZiel = z; wechsel(Phase.DUENGEN); return; }
+        }
+
+        // 4. Liegengebliebenes Holz / Setzlinge einsammeln (Laub zerfaellt langsam)
+        if (m.collect.get() && BotMotor.freiePlaetze(p) > 0 && naechsterDrop(mc, p, new AABB(mitte(p, m)).inflate(r, 4, r)) != null) {
             basis = null;
             nichtsLiegtSeit = -1;
             wechsel(Phase.SAMMELN);
             return;
         }
 
-        // 4. Naechster Baum
-        BlockPos mitte = p.blockPosition();
+        // 5. Naechster Baum
+        BlockPos mitte = mitte(p, m);
         BlockPos best = null;
         Set<BlockPos> bestStamm = null;
         double bestD = Double.MAX_VALUE;
@@ -489,6 +529,68 @@ public final class TreeFarmer {
         }
     }
 
+    /** Mitte des Arbeitsbereichs: der Startpunkt (oder der Spieler, wenn "Stay Near Start" aus ist). */
+    private static BlockPos mitte(LocalPlayer p, TreeFarmerModule m) {
+        return m.stayNearStart.get() && startPos != null ? startPos : p.blockPosition();
+    }
+
+    /**
+     * Setzling, der mit Knochenmehl sicher waechst: keine 2x2-Arten
+     * (Dunkel-/Blasseiche wachsen einzeln nie -- das Knochenmehl waere weg) und
+     * keine, die breit wachsen (Kirsche, Akazie, Mangrove -- deren Holz koennte
+     * in den Spieler hineinwachsen).
+     */
+    private static boolean duengbar(BlockState st) {
+        if (!(st.getBlock() instanceof net.minecraft.world.level.block.SaplingBlock)) return false;
+        return !(st.is(net.minecraft.world.level.block.Blocks.DARK_OAK_SAPLING) || st.is(net.minecraft.world.level.block.Blocks.PALE_OAK_SAPLING)
+                || st.is(net.minecraft.world.level.block.Blocks.CHERRY_SAPLING) || st.is(net.minecraft.world.level.block.Blocks.ACACIA_SAPLING)
+                || st.is(net.minecraft.world.level.block.Blocks.MANGROVE_PROPAGULE));
+    }
+
+    /** Mit Abstand (3.6-4 Bloecke, gleiche Hoehe) an den Setzling stellen und Knochenmehl geben. */
+    private static void duengen(Minecraft mc, LocalPlayer p) {
+        BlockPos z = duengZiel;
+        if (z == null || !duengbar(mc.level.getBlockState(z))) { wechsel(Phase.SUCHEN); return; }      // gewachsen
+        int slot = Inv.hotbar(p, st -> st.is(Items.BONE_MEAL));
+        if (slot < 0 && Inv.inventar(p, st -> st.is(Items.BONE_MEAL)) < 0) { wechsel(Phase.SUCHEN); return; }
+        if (tick - phaseSeit > 20 * 40) { GESPERRT.put(z, tick + 2400); wechsel(Phase.SUCHEN); return; }
+        status = "Using bone meal on a sapling";
+        Vec3 c = Vec3.atCenterOf(z);
+        double fx = c.x - p.getX(), fz = c.z - p.getZ();
+        double flach = Math.sqrt(fx * fx + fz * fz);
+        double reichweite = p.blockInteractionRange() - 0.2;
+        boolean bereit = flach >= 3.4 && Math.abs(BotMotor.fussY(mc.level, p) - z.getY()) <= 1
+                && p.getEyePosition().distanceToSqr(c) <= reichweite * reichweite && p.onGround();
+        if (bereit) {
+            MOTOR.anhalten(mc);
+            MOTOR.blicke(p, c);
+            if (tick - duengZuletzt < 10) return;
+            duengZuletzt = tick;
+            int n = DUENG_ZAEHLER.merge(z, 1, Integer::sum);
+            if (n > 8) {
+                DUENG_ZAEHLER.remove(z);
+                GESPERRT.put(z, tick + 12000);
+                melde(p, "Sapling at " + z.toShortString() + " does not grow (not enough room?) -- skipping it.");
+                wechsel(Phase.SUCHEN);
+                return;
+            }
+            if (slot < 0) slot = BotMotor.holeInHotbar(mc, p, st -> st.is(Items.BONE_MEAL));
+            if (slot < 0) return;
+            int vorher = p.getInventory().getSelectedSlot();
+            try {
+                p.getInventory().setSelectedSlot(slot);
+                mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND,
+                        new BlockHitResult(c, Direction.getApproximateNearest(p.getEyePosition().subtract(c)), z, false));
+                p.swing(InteractionHand.MAIN_HAND);
+            } finally {
+                p.getInventory().setSelectedSlot(vorher);
+            }
+            return;
+        }
+        BotMotor.Lauf l = MOTOR.laufe(mc, p, BotWeg.ring(c.x, c.z, z.getY(), 3.6, 4.0), z, tick);
+        if (l == BotMotor.Lauf.UNERREICHBAR) { GESPERRT.put(z, tick + 2400); wechsel(Phase.SUCHEN); }
+    }
+
     /** Nachbarfeld, auf dem man sicher stehen kann (Boden, keine Gefahr, Kopf frei) -- oder null. */
     private static BlockPos sichereSeite(Minecraft mc, BlockPos mitte) {
         BotMotor.McWelt welt = new BotMotor.McWelt(mc.level);
@@ -517,7 +619,7 @@ public final class TreeFarmer {
     private static boolean hatSetzling(LocalPlayer p, Item wunsch) {
         for (int i = 0; i < 36; i++) {
             ItemStack st = p.getInventory().getItem(i);
-            if (!st.isEmpty() && (wunsch == null ? st.is(ItemTags.SAPLINGS) : st.is(wunsch))) return true;
+            if (!st.isEmpty() && (wunsch == null ? einzelSetzling(st) : st.is(wunsch))) return true;
         }
         return false;
     }
@@ -526,9 +628,14 @@ public final class TreeFarmer {
     private static int setzlingPlatz(Minecraft mc, LocalPlayer p, Item wunsch) {
         int slot = wunsch == null ? -1 : Inv.hotbar(p, st -> st.is(wunsch));
         if (slot < 0 && wunsch != null) slot = BotMotor.holeInHotbar(mc, p, st -> st.is(wunsch));
-        if (slot < 0) slot = Inv.hotbar(p, st -> st.is(ItemTags.SAPLINGS));
-        if (slot < 0) slot = BotMotor.holeInHotbar(mc, p, st -> st.is(ItemTags.SAPLINGS));
+        if (slot < 0) slot = Inv.hotbar(p, TreeFarmer::einzelSetzling);
+        if (slot < 0) slot = BotMotor.holeInHotbar(mc, p, TreeFarmer::einzelSetzling);
         return slot;
+    }
+
+    /** Setzling, der auch einzeln waechst (Dunkel-/Blasseiche brauchen 2x2). */
+    private static boolean einzelSetzling(ItemStack st) {
+        return st.is(ItemTags.SAPLINGS) && !st.is(Items.DARK_OAK_SAPLING) && !st.is(Items.PALE_OAK_SAPLING);
     }
 
     private static void sammeln(Minecraft mc, LocalPlayer p, TreeFarmerModule m) {
@@ -538,7 +645,7 @@ public final class TreeFarmer {
             wechsel(Phase.SUCHEN);
             return;
         }
-        AABB bereich = basis != null ? new AABB(basis).inflate(8, 5, 8) : p.getBoundingBox().inflate(m.range.get(), 4, m.range.get());
+        AABB bereich = basis != null ? new AABB(basis).inflate(8, 5, 8) : new AABB(mitte(p, m)).inflate(m.range.get(), 4, m.range.get());
         ItemEntity naechstes = sammelZiel != null && sammelZiel.isAlive() && !GESPERRT.containsKey(sammelZiel.blockPosition())
                 ? sammelZiel : naechsterDrop(mc, p, bereich);
         sammelZiel = naechstes;
@@ -551,7 +658,7 @@ public final class TreeFarmer {
         }
         nichtsLiegtSeit = -1;
         BlockPos b = naechstes.blockPosition();
-        if (MOTOR.laufe(mc, p, BotWeg.feld(b.getX(), b.getY(), b.getZ()), naechstes.getUUID(), tick) == BotMotor.Lauf.UNERREICHBAR) {
+        if (MOTOR.laufe(mc, p, BotWeg.nahBei(naechstes.getX(), naechstes.getY(), naechstes.getZ(), 1.05), naechstes.getUUID(), tick) == BotMotor.Lauf.UNERREICHBAR) {
             GESPERRT.put(b, tick + 1200);
             sammelZiel = null;
         }

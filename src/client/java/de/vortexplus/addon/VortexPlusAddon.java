@@ -170,9 +170,11 @@ public class VortexPlusAddon implements ClientModInitializer {
         register(new com.vortex.client.module.modules.ClickTpModule(),
                 "Teleports you onto the block you look at: right click with an empty hand or a key. About 10 (Safe) or 20 (Fast) blocks per tick, longer distances in several hops; the path must be free. Detected by most anticheats.");
         register(new com.vortex.client.module.modules.CropFarmerModule(),
-                "Harvests ripe wheat, carrots, potatoes, beetroot, nether wart, melons, pumpkins and sugar cane around you, replants and collects the drops. Finds its way around fences and water, never tramples farmland, eats when hungry and stores the harvest in a nearby chest or barrel when the inventory is full.");
+                "Harvests ripe wheat, carrots, potatoes, beetroot, nether wart, melons, pumpkins, sugar cane, cocoa and sweet berries around the spot where you start it, replants and collects the drops. Finds its way around fences and water, never tramples farmland, eats, fights off monsters, stops at low health, stores the harvest in a nearby chest and can use bone meal.");
         register(new com.vortex.client.module.modules.TreeFarmerModule(),
-                "Chops real trees around you (natural leaves, single trunk), builds up for tall ones, replants a sapling and collects the wood. Finds its way to each tree, eats when hungry, stores wood in a nearby chest and replants later when a sapling was missing.");
+                "Chops real trees around the spot where you start it (natural leaves, single trunk), builds up for tall ones, replants a sapling and collects the wood. Finds its way to each tree, eats, fights off monsters, stops at low health, stores wood in a nearby chest, replants later when a sapling was missing and can use bone meal.");
+        register(new com.vortex.client.module.modules.BotHudModule(),
+                "Shows what each running bot is doing (the same line as on the bot page). Only visible while a bot runs; move it in the HUD editor.");
         register(new com.vortex.client.module.modules.ElytraAutopilotModule(),
                 "Flies to a target with your elytra: /autopilot <x> <z> or /autopilot <waypoint>. Takes off, holds the cruise height with rockets, climbs over mountains, puts on a spare elytra when the worn one breaks and lands gently on a safe spot at the target.");
 
@@ -200,7 +202,7 @@ public class VortexPlusAddon implements ClientModInitializer {
         } catch (Throwable pvpErr) {
             com.vortex.client.core.Errors.report("VortexPlusAddon.reload", pvpErr);
         }
-        System.out.println("[vortex-plus-addon] 68 Module angemeldet.");
+        System.out.println("[vortex-plus-addon] 69 Module angemeldet.");
     }
 
     /**
@@ -247,6 +249,7 @@ public class VortexPlusAddon implements ClientModInitializer {
             try { com.vortex.client.bot.CropFarmer.register(); } catch (Throwable e) { com.vortex.client.core.Errors.report("CropFarmer", e); }
             try { com.vortex.client.bot.TreeFarmer.register(); } catch (Throwable e) { com.vortex.client.core.Errors.report("TreeFarmer", e); }
             try { com.vortex.client.bot.ElytraPilot.register(); } catch (Throwable e) { com.vortex.client.core.Errors.report("ElytraPilot", e); }
+            try { com.vortex.client.bot.BotHud.register(); } catch (Throwable e) { com.vortex.client.core.Errors.report("BotHud", e); }
             // registerSafety ruft der Client selbst -- hier wuerde sie
             // ein zweites Mal laufen und den Ereignis-Handler doppelt anmelden.
         } catch (Throwable pvpErr) {

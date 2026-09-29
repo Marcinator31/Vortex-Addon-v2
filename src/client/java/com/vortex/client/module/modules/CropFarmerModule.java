@@ -24,8 +24,15 @@ public class CropFarmerModule extends Module {
     public final BooleanSetting melons = new BooleanSetting("Melons & Pumpkins", true);
     public final BooleanSetting sugarCane = new BooleanSetting("Sugar Cane", true);
     public final NumberSetting delay = new NumberSetting("Delay Ticks", 2, 0, 10, 1);
+    public final BooleanSetting cocoa = new BooleanSetting("Cocoa", true);
+    public final BooleanSetting berries = new BooleanSetting("Sweet Berries", true);
+    public final BooleanSetting boneMeal = new BooleanSetting("Use Bone Meal", false);
     public final BooleanSetting store = new BooleanSetting("Store In Chests", true);
     public final BooleanSetting eat = new BooleanSetting("Eat When Hungry", true);
+    public final BooleanSetting stayNearStart = new BooleanSetting("Stay Near Start", true);
+    public final BooleanSetting defend = new BooleanSetting("Defend Yourself", true);
+    public final NumberSetting stopHealth = new NumberSetting("Stop Below Health", 6, 0, 18, 1);
+    public final NumberSetting playerPause = new NumberSetting("Pause If Player Within", 0, 0, 64, 4);
 
     public CropFarmerModule() {
         super("Crop Farmer", Category.BOTS);
@@ -38,8 +45,15 @@ public class CropFarmerModule extends Module {
         addSetting(melons);
         addSetting(sugarCane);
         addSetting(delay);
+        addSetting(cocoa);
+        addSetting(berries);
+        addSetting(boneMeal);
         addSetting(store);
         addSetting(eat);
+        addSetting(stayNearStart);
+        addSetting(defend);
+        addSetting(stopHealth);
+        addSetting(playerPause);
     }
 
     /** Statuszeile auf der Bot-Seite. */

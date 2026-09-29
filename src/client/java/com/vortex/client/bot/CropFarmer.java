@@ -32,11 +32,13 @@ import net.minecraft.world.phys.Vec3;
  * Crop Farmer (siehe CropFarmerModule).
  *
  * Ablauf je Tick, in dieser Reihenfolge:
- *   0. einlagern (Truhenfenster offen) / essen, wenn hungrig
+ *   0. einlagern (Truhenfenster offen) / Monster abwehren, bei fremden
+ *      Spielern anhalten, bei wenig Leben stoppen (BotSchutz) / essen
  *   1. laufender Abbau zu Ende bringen
  *   2. Inventar voll -> zur naechsten Truhe, Ernte einlagern
  *   3. abgeerntete Stellen in Reichweite neu bepflanzen
- *   4. reife Pflanze in Reichweite ernten -- sonst hinlaufen (mit Weg)
+ *   4. reife Pflanze in Reichweite ernten (Suessbeeren: pfluecken) -- sonst
+ *      Knochenmehl auf Unreifes in Reichweite (optional) -- sonst hinlaufen
  *   5. Ernte am Boden einsammeln
  *   6. zu abgeernteten Stellen ausser Reichweite laufen
  */
@@ -47,6 +49,10 @@ public final class CropFarmer {
     private static final BotMotor MOTOR = new BotMotor();
     private static final BotEssen ESSEN = new BotEssen("Crop Farmer");
     private static final BotLager LAGER = new BotLager("Crop Farmer");
+    private static final BotSchutz SCHUTZ = new BotSchutz("Crop Farmer");
+    /** Wo der Bot eingeschaltet wurde -- Mitte des Arbeitsbereichs. */
+    private static BlockPos startPos = null;
+    private static long knochenZuletzt = -100;
     private static long tick = 0;
     private static int geerntet = 0;
     private static long startZeit = 0;
@@ -60,12 +66,17 @@ public final class CropFarmer {
 
     private static final java.util.Set<Item> ERNTE = java.util.Set.of(
             Items.WHEAT, Items.WHEAT_SEEDS, Items.CARROT, Items.POTATO, Items.POISONOUS_POTATO, Items.BEETROOT,
-            Items.BEETROOT_SEEDS, Items.NETHER_WART, Items.MELON_SLICE, Items.PUMPKIN, Items.SUGAR_CANE);
+            Items.BEETROOT_SEEDS, Items.NETHER_WART, Items.MELON_SLICE, Items.PUMPKIN, Items.SUGAR_CANE,
+            Items.COCOA_BEANS, Items.SWEET_BERRIES);
 
     /** Abgeerntete Stellen (Pflanzen-Position) -> Saatgut. */
     private static final Map<BlockPos, Item> NACHPFLANZEN = new LinkedHashMap<>();
+    /** Abgeerntete Kakaobohnen -> Richtung zum Tropenbaum-Stamm. */
+    private static final Map<BlockPos, Direction> KAKAO = new LinkedHashMap<>();
     /** Unerreichbare Ziele -> gesperrt bis Tick. */
     private static final Map<BlockPos, Long> GESPERRT = new HashMap<>();
+    /** Unerreichbare Gegenstaende am Boden -> gesperrt bis Tick (nicht der Block, auf dem sie liegen). */
+    private static final Map<java.util.UUID, Long> GESPERRT_ITEMS = new HashMap<>();
     private static List<BlockPos> reif = new ArrayList<>();
     private static BlockPos abbau = null;
     private static boolean abbauIstErnte = false;
@@ -106,8 +117,11 @@ public final class CropFarmer {
                 MOTOR.aus(mc);
                 ESSEN.aus(mc, p);
                 LAGER.zuruecksetzen(mc, p);
+                SCHUTZ.zuruecksetzen(p);
                 NACHPFLANZEN.clear();
+                KAKAO.clear();
                 GESPERRT.clear();
+                GESPERRT_ITEMS.clear();
                 abbau = null;
                 laufZiel = null;
                 sammelZiel = null;
@@ -119,13 +133,27 @@ public final class CropFarmer {
             warAn = false;
             return;
         }
-        if (!warAn) { geerntet = 0; startZeit = System.currentTimeMillis(); }
+        if (!warAn) { geerntet = 0; startZeit = System.currentTimeMillis(); startPos = p.blockPosition().immutable(); }
         warAn = true;
         if (!p.isAlive()) { MOTOR.anhalten(mc); return; }
         GESPERRT.values().removeIf(bis -> bis < tick);
+        GESPERRT_ITEMS.values().removeIf(bis -> bis < tick);
 
         try {
             // Einlagern laeuft auch mit offenem Truhenfenster
+            // Sicherheit zuerst -- auch auf dem Weg zur Truhe (nicht bei offenem Fenster)
+            if (mc.gui.screen() == null) {
+                BotSchutz.Lage lage = SCHUTZ.tick(mc, p, MOTOR, tick, m.defend.get(), m.stopHealth.getInt(), m.playerPause.getInt());
+                if (lage != BotSchutz.Lage.OK) {
+                    ESSEN.aus(mc, p);                      // sonst bleibt die Benutzen-Taste gedrueckt
+                    if (LAGER.aktiv()) LAGER.aus(mc, p);
+                    MOTOR.fortschrittZuruecksetzen();
+                    if (abbau != null) { try { mc.gameMode.stopDestroyBlock(); } catch (Throwable ignored) { } abbau = null; }
+                    if (lage == BotSchutz.Lage.STOP) { m.setEnabled(false); return; }
+                    status = lage == BotSchutz.Lage.KAMPF ? "Fighting" : "Paused: " + SCHUTZ.pauseGrund() + " nearby";
+                    return;
+                }
+            }
             if (LAGER.aktiv()) {
                 status = "Storing in chest";
                 LAGER.tick(mc, p, MOTOR, tick, CropFarmer::einlagern, behalten());
@@ -183,6 +211,24 @@ public final class CropFarmer {
                 status = "Replanting";
                 return;
             }
+            for (Iterator<Map.Entry<BlockPos, Direction>> it = KAKAO.entrySet().iterator(); it.hasNext();) {
+                var e = it.next();
+                BlockPos pos = e.getKey();
+                BlockPos stamm = pos.relative(e.getValue());
+                if (!mc.level.getBlockState(pos).isAir() || !mc.level.getBlockState(stamm).is(net.minecraft.tags.BlockTags.JUNGLE_LOGS)) { it.remove(); continue; }
+                Direction seite = e.getValue().getOpposite();
+                Vec3 treffer = kakaoPunkt(pos, e.getValue());
+                if (auge.distanceToSqr(treffer) > reichweite * reichweite) continue;
+                int slot = Inv.hotbar(p, st -> st.is(Items.COCOA_BEANS));
+                if (slot < 0) slot = BotMotor.holeInHotbar(mc, p, st -> st.is(Items.COCOA_BEANS));
+                if (slot < 0) { it.remove(); continue; }
+                benutze(mc, p, stamm, seite, treffer, slot);
+                it.remove();
+                letzteAktion = tick;
+                MOTOR.anhalten(mc);
+                status = "Replanting cocoa";
+                return;
+            }
         }
 
         // 4. Reife Pflanze: erst in Reichweite ernten, sonst zur naechsten laufen
@@ -199,6 +245,20 @@ public final class CropFarmer {
             MOTOR.vergiss();
             laufZiel = null;
             BlockState st = mc.level.getBlockState(nah);
+            if (st.is(Blocks.SWEET_BERRY_BUSH)) {
+                // Pfluecken statt abbauen -- der Busch waechst nach.
+                int slot = Inv.hotbar(p, x -> !x.is(Items.BONE_MEAL));
+                if (slot < 0) slot = p.getInventory().getSelectedSlot();
+                Vec3 c = Vec3.atCenterOf(nah);
+                benutze(mc, p, nah, Direction.getApproximateNearest(auge.subtract(c)), c, slot);
+                geerntet++;
+                letzteAktion = tick + 4;                  // kurz warten, bis der Busch zurueckgesetzt ist
+                status = "Picking berries";
+                return;
+            }
+            if (st.is(Blocks.COCOA) && m.replant.get()) {
+                KAKAO.put(nah.immutable(), st.getValue(net.minecraft.world.level.block.CocoaBlock.FACING));
+            }
             Item saat = SAAT.get(st.getBlock());
             if (saat != null && m.replant.get()) NACHPFLANZEN.put(nah.immutable(), saat);
             abbau = nah.immutable();
@@ -209,6 +269,14 @@ public final class CropFarmer {
                 abbau = null;
                 letzteAktion = tick;
             }
+            return;
+        }
+        // Knochenmehl auf Unreifes in Reichweite (optional)
+        if (m.boneMeal.get() && tick - knochenZuletzt >= 4 && knochenmehl(mc, p, m, auge, reichweite)) {
+            knochenZuletzt = tick;
+            letzteAktion = tick;
+            MOTOR.anhalten(mc);
+            status = "Using bone meal";
             return;
         }
         if (laufZiel != null && (GESPERRT.containsKey(laufZiel) || !istReif(mc, laufZiel, m))) laufZiel = null;
@@ -222,34 +290,37 @@ public final class CropFarmer {
 
         // 5. Ernte einsammeln
         if (m.collect.get() && !inventarVoll(mc, p, m)) {
-            ItemEntity naechstes = sammelZiel != null && sammelZiel.isAlive() && !GESPERRT.containsKey(sammelZiel.blockPosition()) ? sammelZiel : null;
+            ItemEntity naechstes = sammelZiel != null && sammelZiel.isAlive() && !GESPERRT_ITEMS.containsKey(sammelZiel.getUUID()) ? sammelZiel : null;
             double r = m.range.get();
             if (naechstes == null) {
-                for (ItemEntity ie : mc.level.getEntitiesOfClass(ItemEntity.class, p.getBoundingBox().inflate(r, 3, r))) {
-                    if (!ERNTE.contains(ie.getItem().getItem()) || GESPERRT.containsKey(ie.blockPosition())) continue;
+                for (ItemEntity ie : mc.level.getEntitiesOfClass(ItemEntity.class, new net.minecraft.world.phys.AABB(mitte(p, m)).inflate(r, 3, r))) {
+                    if (!ERNTE.contains(ie.getItem().getItem()) || GESPERRT_ITEMS.containsKey(ie.getUUID())) continue;
                     if (naechstes == null || ie.distanceToSqr(p) < naechstes.distanceToSqr(p)) naechstes = ie;
                 }
             }
             sammelZiel = naechstes;
             if (naechstes != null && m.walk.get()) {
-                BlockPos b = naechstes.blockPosition();
                 status = "Collecting drops";
-                laufen(mc, p, BotWeg.feld(b.getX(), b.getY(), b.getZ()), naechstes.getUUID());
+                laufen(mc, p, BotWeg.nahBei(naechstes.getX(), naechstes.getY(), naechstes.getZ(), 1.05), naechstes.getUUID());
                 return;
             }
         }
 
         // 6. Abgeerntete Stellen ausser Reichweite
-        if (m.replant.get() && m.walk.get() && !NACHPFLANZEN.isEmpty()) {
+        if (m.replant.get() && m.walk.get() && (!NACHPFLANZEN.isEmpty() || !KAKAO.isEmpty())) {
             BlockPos naechste = null;
-            for (BlockPos b : NACHPFLANZEN.keySet()) {
+            // Stelle -> Punkt, der erreicht werden muss (Ackerboden-Oberseite bzw. Stammseite beim Kakao)
+            Map<BlockPos, Vec3> stellen = new LinkedHashMap<>();
+            for (BlockPos b : NACHPFLANZEN.keySet()) stellen.put(b, Vec3.atCenterOf(b.below()).add(0, 0.5, 0));
+            for (var e : KAKAO.entrySet()) stellen.put(e.getKey(), kakaoPunkt(e.getKey(), e.getValue()));
+            for (BlockPos b : stellen.keySet()) {
                 if (GESPERRT.containsKey(b)) continue;
-                if (naechste == null || p.distanceToSqr(Vec3.atCenterOf(b)) < p.distanceToSqr(Vec3.atCenterOf(naechste))) naechste = b;
+                if (naechste == null || p.distanceToSqr(stellen.get(b)) < p.distanceToSqr(stellen.get(naechste))) naechste = b;
             }
             if (naechste != null) {
-                Vec3 c = Vec3.atCenterOf(naechste.below());
+                Vec3 c = stellen.get(naechste);
                 status = "Walking to replant";
-                laufen(mc, p, BotWeg.inReichweite(c.x, c.y + 0.5, c.z, reichweite - 0.4, 1.62), naechste);
+                laufen(mc, p, BotWeg.inReichweite(c.x, c.y, c.z, reichweite - 0.4, 1.62), naechste);
                 return;
             }
         }
@@ -261,10 +332,65 @@ public final class CropFarmer {
         if (MOTOR.laufe(mc, p, ziel, schluessel, tick) == BotMotor.Lauf.UNERREICHBAR) {
             // 1 Minute in Ruhe lassen
             if (schluessel instanceof BlockPos b) GESPERRT.put(b.immutable(), tick + 1200);
-            else if (sammelZiel != null) { GESPERRT.put(sammelZiel.blockPosition(), tick + 1200); sammelZiel = null; }
+            else if (schluessel instanceof java.util.UUID u) { GESPERRT_ITEMS.put(u, tick + 1200); sammelZiel = null; }
             if (schluessel.equals(laufZiel)) laufZiel = null;
             MOTOR.anhalten(mc);
         }
+    }
+
+    /** Klickpunkt zum Nachpflanzen einer Kakaobohne: die Seite des Stamms, an der sie hing. */
+    private static Vec3 kakaoPunkt(BlockPos pod, Direction zumStamm) {
+        BlockPos stamm = pod.relative(zumStamm);
+        Direction seite = zumStamm.getOpposite();
+        return Vec3.atCenterOf(stamm).add(seite.getStepX() * 0.5, 0, seite.getStepZ() * 0.5);
+    }
+
+    /** Mitte des Arbeitsbereichs: der Startpunkt (oder der Spieler, wenn "Stay Near Start" aus ist). */
+    private static BlockPos mitte(LocalPlayer p, CropFarmerModule m) {
+        return m.stayNearStart.get() && startPos != null ? startPos : p.blockPosition();
+    }
+
+    /** Einen Gegenstand aus Hotbar-Platz "slot" auf einen Block anwenden (Platz danach zurueck). */
+    private static void benutze(Minecraft mc, LocalPlayer p, BlockPos pos, Direction seite, Vec3 treffer, int slot) {
+        MOTOR.blicke(p, treffer);
+        int vorher = p.getInventory().getSelectedSlot();
+        try {
+            p.getInventory().setSelectedSlot(slot);
+            mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND, new BlockHitResult(treffer, seite, pos, false));
+            p.swing(InteractionHand.MAIN_HAND);
+        } finally {
+            p.getInventory().setSelectedSlot(vorher);
+        }
+    }
+
+    /** Knochenmehl auf die naechste unreife Pflanze in Reichweite. @return true, wenn benutzt */
+    private static boolean knochenmehl(Minecraft mc, LocalPlayer p, CropFarmerModule m, Vec3 auge, double reichweite) {
+        int slot = Inv.hotbar(p, st -> st.is(Items.BONE_MEAL));
+        if (slot < 0 && Inv.inventar(p, st -> st.is(Items.BONE_MEAL)) < 0) return false;
+        BlockPos best = null;
+        double bestD = reichweite * reichweite;
+        int r = (int) Math.ceil(reichweite);
+        BlockPos fuss = p.blockPosition();
+        for (BlockPos b : BlockPos.betweenClosed(fuss.offset(-r, -2, -r), fuss.offset(r, 3, r))) {
+            if (!unreif(mc, b, m)) continue;
+            double d = auge.distanceToSqr(Vec3.atCenterOf(b));
+            if (d < bestD) { bestD = d; best = b.immutable(); }
+        }
+        if (best == null) return false;
+        if (slot < 0) slot = BotMotor.holeInHotbar(mc, p, st -> st.is(Items.BONE_MEAL));
+        if (slot < 0) return false;
+        Vec3 c = Vec3.atCenterOf(best);
+        benutze(mc, p, best, Direction.getApproximateNearest(auge.subtract(c)), c, slot);
+        return true;
+    }
+
+    /** Waechst noch und laesst sich mit Knochenmehl beschleunigen? */
+    private static boolean unreif(Minecraft mc, BlockPos b, CropFarmerModule m) {
+        BlockState st = mc.level.getBlockState(b);
+        if (st.getBlock() instanceof CropBlock c) return m.wheat.get() && SAAT.containsKey(st.getBlock()) && !c.isMaxAge(st);
+        if (st.is(Blocks.COCOA)) return m.cocoa.get() && st.getValue(net.minecraft.world.level.block.CocoaBlock.AGE) < net.minecraft.world.level.block.CocoaBlock.MAX_AGE;
+        if (st.is(Blocks.SWEET_BERRY_BUSH)) return m.berries.get() && st.getValue(net.minecraft.world.level.block.SweetBerryBushBlock.AGE) < 2;
+        return false;
     }
 
     /** Was in die Truhe darf: die Ernte. */
@@ -274,13 +400,15 @@ public final class CropFarmer {
 
     /** Je ein Stapel Saatgut bleibt zum Nachpflanzen. */
     private static java.util.Set<Item> behalten() {
-        return java.util.Set.copyOf(SAAT.values());
+        java.util.Set<Item> s = new java.util.HashSet<>(SAAT.values());
+        s.add(Items.COCOA_BEANS);
+        return s;
     }
 
     private static List<BlockPos> suchen(Minecraft mc, LocalPlayer p, CropFarmerModule m) {
         List<BlockPos> out = new ArrayList<>();
         int r = m.range.getInt();
-        BlockPos mitte = p.blockPosition();
+        BlockPos mitte = mitte(p, m);
         for (BlockPos b : BlockPos.betweenClosed(mitte.offset(-r, -3, -r), mitte.offset(r, 3, r))) {
             if (istReif(mc, b, m)) out.add(b.immutable());
             if (out.size() > 512) break;
@@ -301,6 +429,12 @@ public final class CropFarmer {
                         && n.getValue(net.minecraft.world.level.block.AttachedStemBlock.FACING) == d.getOpposite()) return true;
             }
             return false;
+        }
+        if (st.is(Blocks.COCOA)) {
+            return m.cocoa.get() && st.getValue(net.minecraft.world.level.block.CocoaBlock.AGE) >= net.minecraft.world.level.block.CocoaBlock.MAX_AGE;
+        }
+        if (st.is(Blocks.SWEET_BERRY_BUSH)) {
+            return m.berries.get() && st.getValue(net.minecraft.world.level.block.SweetBerryBushBlock.AGE) >= 2;
         }
         if (st.is(Blocks.SUGAR_CANE)) {
             return m.sugarCane.get() && mc.level.getBlockState(b.below()).is(Blocks.SUGAR_CANE)
