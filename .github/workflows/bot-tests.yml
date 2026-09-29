@@ -77,4 +77,8 @@ jobs:
           (cd "$RUNNER_TEMP" && zip -qr bot-tests.zip bot-tests)
           gh release view bot-tests >/dev/null 2>&1 || gh release create bot-tests --prerelease --title "Bot-Tests (intern)" --notes "Ergebnisse der Bot-Tests im Spiel. Nicht verteilen."
           cp "$RUNNER_TEMP/bot-tests.zip" "$RUNNER_TEMP/bot-tests-${{ github.run_number }}.zip"
-          gh release upload bot-tests "$RUNNER_TEMP/bot-tests.zip" "$RUNNER_TEMP/bot-tests-${{ github.run_number }}.zip" --clobber
+          # Eigene Datei je Lauf zuerst (parallele Laeufe kommen sich nicht in die Quere)
+          gh release upload bot-tests "$RUNNER_TEMP/bot-tests-${{ github.run_number }}.zip" --clobber
+          gh release upload bot-tests "$RUNNER_TEMP/bot-tests.zip" --clobber || echo "::warning::bot-tests.zip gerade von einem anderen Lauf belegt"
+          # Alte Ergebnisse aufraeumen (die letzten 15 bleiben)
+          gh release view bot-tests --json assets --jq '.assets[].name' | grep -E '^bot-tests-[0-9]+\.zip$' | sort -t- -k3 -n | head -n -15 | while read a; do gh release delete-asset bot-tests "$a" -y || true; done

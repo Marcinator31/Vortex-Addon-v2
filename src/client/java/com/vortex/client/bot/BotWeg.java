@@ -113,9 +113,12 @@ final class BotWeg {
                     continue;
                 }
                 if (schraeg) continue;           // hoch/runter nur gerade
-                // eine Stufe hoch: ueber dem Kopf muss Platz zum Springen sein
+                // eine Stufe hoch: ueber dem Kopf muss Platz zum Springen sein.
+                // Aus dem Wasser NICHT auf Ackerboden: beim Herausschwimmen faellt man
+                // hoeher als bei einer normalen Stufe und zertritt den Acker.
                 if (welt.art(k.x, k.y + 2, k.z) == FREI && !welt.gefahr(k.x, k.y + 2, k.z)
-                        && stehen(welt, nx, k.y + 1, nz)) {
+                        && stehen(welt, nx, k.y + 1, nz)
+                        && !(welt.wasser(k.x, k.y, k.z) && welt.acker(nx, k.y, nz))) {
                     pruefe(welt, alle, offen, k, nx, k.y + 1, nz, 2.0, ziel);
                     continue;
                 }
