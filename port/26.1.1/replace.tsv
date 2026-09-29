@@ -1,5 +1,5 @@
 # 26.2 -> 26.1.1: Regex<TAB>Ersatz[<TAB>Dateifilter] (siehe tools/port.py)
-json:"minecraft": "26\.2"	"minecraft": "26.1.1"
+json:"minecraft": "26\.2"	"minecraft": "{ziel}"
 # --- Bildschirm: 26.1 hatte ihn noch direkt in Minecraft (mc.screen / mc.setScreen) ---
 \.gui\.screen\(\)	.screen
 \.gui\.setScreen\(	.setScreen(

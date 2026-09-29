@@ -149,38 +149,41 @@ jobs:
       # Notizen aelterer Releases im neuen Format ("## Titel", "- Punkt")
       # nachtragen -- die Beta-Checkliste im Launcher liest sie von dort.
       # ---------------------------------------------------------------
-      # WEITERE FASSUNG: Minecraft 26.1.1 (noch mit JDK 25)
+      # WEITERE FASSUNGEN: Minecraft 26.1.1 und 26.1.2 (noch mit JDK 25)
       #
-      # Erst den Client fuer 26.1.1 bauen (sein tools/port.py), dann das
+      # Je Version erst den Client bauen (sein tools/port.py), dann das
       # Addon (dieses tools/port.py) gegen genau diese Client-Jar.
+      # Scheitert eine, werden die anderen trotzdem gebaut und veroeffentlicht.
       # ---------------------------------------------------------------
-      - name: Build 26.1.1
+      - name: Build 26.1.x
         id: port261
         continue-on-error: true
         run: |
-          set -e
           SRC="$RUNNER_TEMP/client-src"
           [ -d "$SRC" ] || git clone --depth 1 "https://github.com/Marcinator31/Vortex-Client.git" "$SRC"
-          python3 "$SRC/tools/port.py" 26.1.1 "$RUNNER_TEMP/client-261"
-          ( cd "$RUNNER_TEMP/client-261" && chmod +x gradlew && ./gradlew build --no-daemon -q ) || ( cd "$RUNNER_TEMP/client-261" && sleep 20 && ./gradlew build --no-daemon )
-          CJAR=$(ls "$RUNNER_TEMP"/client-261/build/libs/*.jar | grep -v -- '-sources' | head -n 1)
-          echo "Client 26.1.1: $(basename "$CJAR")"
-          python3 tools/port.py 26.1.1 build-port/26.1.1
-          mkdir -p build-port/26.1.1/libs
-          cp "$CJAR" build-port/26.1.1/libs/vortexclient.jar
-          cd build-port/26.1.1
-          chmod +x gradlew
-          for attempt in 1 2 3; do
-            echo "=== 26.1.1 build attempt $attempt of 3 ==="
-            if ./gradlew build --no-daemon --stacktrace 2>&1 | tee build.log; test ${PIPESTATUS[0]} -eq 0; then
-              echo "26.1.1 build succeeded."
-              exit 0
-            fi
-            grep -A3 -E '^/.*\.java:[0-9]+: error: ' build.log | head -60 | sed 's/^/::error::[26.1.1] /' || true
-            grep -A6 'What went wrong' build.log | head -14 | sed 's/^/::error::[26.1.1] /' || true
-            [ "$attempt" -lt 3 ] && sleep 20
+          FAIL=""
+          for V in 26.1.1 26.1.2; do
+            C="$RUNNER_TEMP/client-$V"
+            python3 "$SRC/tools/port.py" "$V" "$C" || { FAIL="$FAIL $V"; continue; }
+            ( cd "$C" && chmod +x gradlew && ./gradlew build --no-daemon -q ) || ( cd "$C" && sleep 20 && ./gradlew build --no-daemon ) || { echo "::error::[$V] Client-Build fehlgeschlagen"; FAIL="$FAIL $V"; continue; }
+            CJAR=$(ls "$C"/build/libs/*.jar | grep -v -- '-sources' | head -n 1)
+            echo "Client $V: $(basename "$CJAR")"
+            python3 tools/port.py "$V" "build-port/$V" || { FAIL="$FAIL $V"; continue; }
+            mkdir -p "build-port/$V/libs"
+            cp "$CJAR" "build-port/$V/libs/vortexclient.jar"
+            ok=""
+            for attempt in 1 2 3; do
+              echo "=== $V build attempt $attempt of 3 ==="
+              if ( cd "build-port/$V" && chmod +x gradlew && ./gradlew build --no-daemon --stacktrace ) 2>&1 | tee "build-port/$V/build.log"; test ${PIPESTATUS[0]} -eq 0; then
+                echo "$V build succeeded."; ok=1; break
+              fi
+              grep -A3 -E '^/.*\.java:[0-9]+: error: ' "build-port/$V/build.log" | head -60 | sed "s/^/::error::[$V] /" || true
+              grep -A6 'What went wrong' "build-port/$V/build.log" | head -14 | sed "s/^/::error::[$V] /" || true
+              [ "$attempt" -lt 3 ] && sleep 20
+            done
+            [ -n "$ok" ] || { FAIL="$FAIL $V"; rm -rf "build-port/$V/build/libs"; }
           done
-          exit 1
+          [ -z "$FAIL" ] || { echo "::error::Nicht gebaut:$FAIL"; exit 1; }
 
       # ---------------------------------------------------------------
       # ZWEITE FASSUNG: Minecraft 1.21.11

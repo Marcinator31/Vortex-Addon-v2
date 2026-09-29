@@ -28,6 +28,11 @@ Was passiert (Reihenfolge):
   5. Dateien aus port/<ziel>/delete.txt entfernen (eine pro Zeile)
   6. gradle.properties: Werte aus port/<ziel>/gradle.properties ueberschreiben;
      build.gradle / settings.gradle aus port/<ziel>/ ersetzen, falls vorhanden
+
+Gemeinsame Regeln: Steht in port/<ziel>/basis eine andere Version (z. B.
+"26.1.1" in port/26.1.2/basis), gelten erst deren replace.tsv, overlay/,
+delete.txt, build.gradle und settings.gradle, danach die eigenen.
+"{ziel}" im Ersatztext von replace.tsv wird durch die Zielversion ersetzt.
 """
 import os, re, shutil, sys
 
@@ -43,21 +48,31 @@ def main():
         shutil.rmtree(out)
     shutil.copytree(repo, out, ignore=shutil.ignore_patterns('.git', 'build', '.gradle', 'port', 'build-port', 'run'))
 
+    # Regel-Ordner: erst die Basis (falls angegeben), dann der eigene
+    dirs = [pdir]
+    while os.path.exists(os.path.join(dirs[0], 'basis')):
+        b = open(os.path.join(dirs[0], 'basis'), encoding='utf-8').read().strip()
+        bd = os.path.join(repo, 'port', b)
+        if not os.path.isdir(bd) or bd in dirs:
+            sys.exit(f'port/{ziel}: Basis "{b}" fehlt oder ist zirkulaer')
+        dirs.insert(0, bd)
+
     ersetzen = []
-    rp = os.path.join(pdir, 'replace.tsv')
-    if os.path.exists(rp):
+    for rp in [os.path.join(d, 'replace.tsv') for d in dirs]:
+      if os.path.exists(rp):
         for n, zeile in enumerate(open(rp, encoding='utf-8'), 1):
             zeile = zeile.rstrip('\n')
             if not zeile.strip() or zeile.startswith('#'):
                 continue
             teile = zeile.split('\t')
             if len(teile) not in (2, 3):
-                sys.exit(f'replace.tsv Zeile {n}: Regex<TAB>Ersatz[<TAB>Dateifilter] erwartet')
+                sys.exit(f'{rp} Zeile {n}: Regex<TAB>Ersatz[<TAB>Dateifilter] erwartet')
             art = 'java'
             if teile[0].startswith('json:'):
                 art, teile[0] = 'json', teile[0][5:]
             filt = [f.strip() for f in teile[2].split(',')] if len(teile) == 3 else []
-            ersetzen.append((art, re.compile(teile[0]), teile[1].replace('\\t', '\t'), filt))
+            ersatz = teile[1].replace('\\t', '\t').replace('{ziel}', ziel)
+            ersetzen.append((art, re.compile(teile[0]), ersatz, filt))
 
     zaehler = {'dateien': 0, 'bloecke': 0}
     for wurzel, _, dateien in os.walk(os.path.join(out, 'src')):
@@ -75,8 +90,8 @@ def main():
                 open(pfad, 'w', encoding='utf-8').write(neu)
                 zaehler['dateien'] += 1
 
-    ov = os.path.join(pdir, 'overlay')
-    if os.path.isdir(ov):
+    for ov in [os.path.join(d, 'overlay') for d in dirs]:
+      if os.path.isdir(ov):
         for wurzel, _, dateien in os.walk(ov):
             for d in dateien:
                 q = os.path.join(wurzel, d)
@@ -84,8 +99,8 @@ def main():
                 os.makedirs(os.path.dirname(z), exist_ok=True)
                 shutil.copy2(q, z)
 
-    dl = os.path.join(pdir, 'delete.txt')
-    if os.path.exists(dl):
+    for dl in [os.path.join(d, 'delete.txt') for d in dirs]:
+      if os.path.exists(dl):
         for zeile in open(dl, encoding='utf-8'):
             z = zeile.strip()
             if z and not z.startswith('#'):
@@ -93,10 +108,11 @@ def main():
                 if os.path.exists(p):
                     os.remove(p)
 
-    for name in ('build.gradle', 'settings.gradle'):
-        q = os.path.join(pdir, name)
-        if os.path.exists(q):
-            shutil.copy2(q, os.path.join(out, name))
+    for d in dirs:
+        for name in ('build.gradle', 'settings.gradle'):
+            q = os.path.join(d, name)
+            if os.path.exists(q):
+                shutil.copy2(q, os.path.join(out, name))
     gp = os.path.join(pdir, 'gradle.properties')
     if os.path.exists(gp):
         werte = {}
