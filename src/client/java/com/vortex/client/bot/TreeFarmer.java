@@ -640,6 +640,16 @@ public final class TreeFarmer {
 
     private static void sammeln(Minecraft mc, LocalPlayer p, TreeFarmerModule m) {
         status = "Collecting wood and saplings";
+        // Setzling eingesammelt und eine Stelle wartet? Erst pflanzen -- zerfallendes
+        // Laub wirft laufend Neues ab, sonst kaeme der Bot nie dazu.
+        if (m.replant.get() && !OFFEN.isEmpty() && hatSetzling(p, null)) {
+            BlockPos naechste = null;
+            for (BlockPos b : OFFEN) {
+                if (GESPERRT.containsKey(b) || !mc.level.getBlockState(b).isAir()) continue;
+                if (naechste == null || p.distanceToSqr(Vec3.atCenterOf(b)) < p.distanceToSqr(Vec3.atCenterOf(naechste))) naechste = b;
+            }
+            if (naechste != null) { pflanzZiel = naechste; wechsel(Phase.NACHPFLANZEN); return; }
+        }
         if (!m.collect.get() || tick - phaseSeit > 20 * 30 || BotMotor.freiePlaetze(p) == 0) {
             MOTOR.anhalten(mc);
             wechsel(Phase.SUCHEN);

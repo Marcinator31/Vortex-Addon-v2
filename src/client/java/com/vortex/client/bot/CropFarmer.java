@@ -71,6 +71,8 @@ public final class CropFarmer {
 
     /** Abgeerntete Stellen (Pflanzen-Position) -> Saatgut. */
     private static final Map<BlockPos, Item> NACHPFLANZEN = new LinkedHashMap<>();
+    /** Seit wann eine Stelle auf Saatgut wartet (nach 10 Minuten ohne Saatgut vergessen). */
+    private static final Map<BlockPos, Long> NACHPFLANZEN_SEIT = new HashMap<>();
     /** Abgeerntete Kakaobohnen -> Richtung zum Tropenbaum-Stamm. */
     private static final Map<BlockPos, Direction> KAKAO = new LinkedHashMap<>();
     /** Unerreichbare Ziele -> gesperrt bis Tick. */
@@ -119,6 +121,7 @@ public final class CropFarmer {
                 LAGER.zuruecksetzen(mc, p);
                 SCHUTZ.zuruecksetzen(p);
                 NACHPFLANZEN.clear();
+                NACHPFLANZEN_SEIT.clear();
                 KAKAO.clear();
                 GESPERRT.clear();
                 GESPERRT_ITEMS.clear();
@@ -199,13 +202,17 @@ public final class CropFarmer {
             for (Iterator<Map.Entry<BlockPos, Item>> it = NACHPFLANZEN.entrySet().iterator(); it.hasNext();) {
                 var e = it.next();
                 BlockPos pos = e.getKey();
-                if (!mc.level.getBlockState(pos).isAir()) { it.remove(); continue; }
+                long seit = NACHPFLANZEN_SEIT.computeIfAbsent(pos, k -> tick);
+                if (!mc.level.getBlockState(pos).isAir() || tick - seit > 20 * 600) { it.remove(); NACHPFLANZEN_SEIT.remove(pos); continue; }
+                // Noch kein Saatgut (z. B. gleich nach dem Ernten, bevor es eingesammelt ist): Stelle merken
+                if (!hat(p, e.getValue())) continue;
                 if (auge.distanceToSqr(Vec3.atCenterOf(pos.below())) > reichweite * reichweite) continue;
                 int slot = Inv.hotbar(p, st -> st.is(e.getValue()));
                 if (slot < 0) slot = BotMotor.holeInHotbar(mc, p, st -> st.is(e.getValue()));
-                if (slot < 0) { it.remove(); continue; }
+                if (slot < 0) continue;
                 pflanzen(mc, p, pos, slot);
                 it.remove();
+                NACHPFLANZEN_SEIT.remove(pos);
                 letzteAktion = tick;
                 MOTOR.anhalten(mc);
                 status = "Replanting";
@@ -311,8 +318,9 @@ public final class CropFarmer {
             BlockPos naechste = null;
             // Stelle -> Punkt, der erreicht werden muss (Ackerboden-Oberseite bzw. Stammseite beim Kakao)
             Map<BlockPos, Vec3> stellen = new LinkedHashMap<>();
-            for (BlockPos b : NACHPFLANZEN.keySet()) stellen.put(b, Vec3.atCenterOf(b.below()).add(0, 0.5, 0));
-            for (var e : KAKAO.entrySet()) stellen.put(e.getKey(), kakaoPunkt(e.getKey(), e.getValue()));
+            // Nur Stellen, fuer die Saatgut da ist -- sonst waere der Weg umsonst
+            for (var e : NACHPFLANZEN.entrySet()) if (hat(p, e.getValue())) stellen.put(e.getKey(), Vec3.atCenterOf(e.getKey().below()).add(0, 0.5, 0));
+            if (hat(p, Items.COCOA_BEANS)) for (var e : KAKAO.entrySet()) stellen.put(e.getKey(), kakaoPunkt(e.getKey(), e.getValue()));
             for (BlockPos b : stellen.keySet()) {
                 if (GESPERRT.containsKey(b)) continue;
                 if (naechste == null || p.distanceToSqr(stellen.get(b)) < p.distanceToSqr(stellen.get(naechste))) naechste = b;
@@ -336,6 +344,12 @@ public final class CropFarmer {
             if (schluessel.equals(laufZiel)) laufZiel = null;
             MOTOR.anhalten(mc);
         }
+    }
+
+    /** Liegt dieser Gegenstand irgendwo im Inventar? */
+    private static boolean hat(LocalPlayer p, Item item) {
+        for (int i = 0; i < 36; i++) if (p.getInventory().getItem(i).is(item)) return true;
+        return false;
     }
 
     /** Klickpunkt zum Nachpflanzen einer Kakaobohne: die Seite des Stamms, an der sie hing. */

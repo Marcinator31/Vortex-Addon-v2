@@ -53,7 +53,11 @@ public final class BotHud {
             z.add(new HudText.Zeile("Crop Farmer", "Harvesting  |  42 harvested  |  3 min"));
         }
         if (z.isEmpty()) return;
-        HudText.block(ctx, mc.font, m.x.getInt(), m.y.getInt(), m.scale.getFloat(), m.style, m.color, z,
+        // Nie ausserhalb des Bildschirms (kleines Fenster, grosser GUI-Massstab)
+        int hoehe = Math.round((z.size() * 10 + 8) * m.scale.getFloat());
+        int x = Math.max(0, Math.min(m.x.getInt(), mc.getWindow().getGuiScaledWidth() - 60));
+        int y = Math.max(0, Math.min(m.y.getInt(), mc.getWindow().getGuiScaledHeight() - hoehe));
+        HudText.block(ctx, mc.font, x, y, m.scale.getFloat(), m.style, m.color, z,
                 HudStyle.FORM_LABEL_FIRST, 0, 1f, null);
     }
 }

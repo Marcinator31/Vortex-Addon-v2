@@ -234,7 +234,13 @@ public class BotGameTest implements FabricClientGameTest {
             if (t % 600 == 0) notiz("t=" + t + "  status: " + botStatus(ctx, TreeFarmerModule.class));
             stamm = zaehle(srv, 90, -60, -8, 122, -44, 24, st -> st.is(BlockTags.LOGS));
             if (stamm == 0 && t >= 600) {
-                ctx.waitTicks(400);                                        // Zeit zum Pflanzen/Einsammeln
+                // Laub zerfaellt langsam und wirft erst dann Setzlinge ab: bis 2 Minuten warten
+                for (int w = 0; w < 2400; w += 100) {
+                    ctx.waitTicks(100);
+                    int sz = zaehle(srv, 90, -60, -8, 122, -60, 24,
+                            st -> st.getBlock() instanceof net.minecraft.world.level.block.SaplingBlock);
+                    if (sz >= 3) break;
+                }
                 break;
             }
         }
@@ -251,7 +257,7 @@ public class BotGameTest implements FabricClientGameTest {
             return n;
         });
         pruefe("all trees chopped", stamm == 0, stamm + " logs left of " + stammVorher);
-        pruefe("saplings replanted", setzlinge >= 2, setzlinge + " saplings in the ground");
+        pruefe("saplings replanted", setzlinge >= 3, setzlinge + " saplings in the ground (3 trees)");
         pruefe("wood collected", holz >= stammVorher / 2, holz + " logs in the inventory");
         pruefe("not stuck on a tower", y < -58.5, "player y " + y);
     }
