@@ -148,6 +148,46 @@ jobs:
       # Zu finden auf der Repo-Startseite rechts unter "Releases".
       # Notizen aelterer Releases im neuen Format ("## Titel", "- Punkt")
       # nachtragen -- die Beta-Checkliste im Launcher liest sie von dort.
+      # ---------------------------------------------------------------
+      # ZWEITE FASSUNG: Minecraft 1.21.11
+      #
+      # Erst den Client fuer 1.21.11 bauen (sein tools/port.py), dann das
+      # Addon (dieses tools/port.py) gegen genau diese Client-Jar.
+      # Scheitert es, wird die 26.2-Jar trotzdem veroeffentlicht.
+      # ---------------------------------------------------------------
+      - name: Set up JDK 21 (fuer 1.21.11)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - name: Build 1.21.11
+        id: port
+        continue-on-error: true
+        run: |
+          set -e
+          SRC="$RUNNER_TEMP/client-src"
+          [ -d "$SRC" ] || git clone --depth 1 "https://github.com/Marcinator31/Vortex-Client.git" "$SRC"
+          python3 "$SRC/tools/port.py" 1.21.11 "$RUNNER_TEMP/client-121"
+          ( cd "$RUNNER_TEMP/client-121" && chmod +x gradlew && ./gradlew build --no-daemon -q ) || ( cd "$RUNNER_TEMP/client-121" && sleep 20 && ./gradlew build --no-daemon )
+          CJAR=$(ls "$RUNNER_TEMP"/client-121/build/libs/*.jar | grep -v -- '-sources' | head -n 1)
+          echo "Client 1.21.11: $(basename "$CJAR")"
+          python3 tools/port.py 1.21.11 build-port/1.21.11
+          mkdir -p build-port/1.21.11/libs
+          cp "$CJAR" build-port/1.21.11/libs/vortexclient.jar
+          cd build-port/1.21.11
+          chmod +x gradlew
+          for attempt in 1 2 3; do
+            echo "=== 1.21.11 build attempt $attempt of 3 ==="
+            if ./gradlew build --no-daemon --stacktrace 2>&1 | tee build.log; test ${PIPESTATUS[0]} -eq 0; then
+              echo "1.21.11 build succeeded."
+              exit 0
+            fi
+            grep -A3 -E '^/.*\.java:[0-9]+: error: ' build.log | head -60 | sed 's/^/::error::[1.21.11] /' || true
+            grep -A6 'What went wrong' build.log | head -14 | sed 's/^/::error::[1.21.11] /' || true
+            [ "$attempt" -lt 3 ] && sleep 20
+          done
+          exit 1
+
       - name: Release-Notizen nachtragen
         if: github.event_name != 'pull_request'
         env:
@@ -169,7 +209,8 @@ jobs:
           TAG="v${VERSION}"
           # Loom erzeugt mehrere Jars; die ohne "-sources" ist die Mod.
           JAR=$(ls build/libs/*.jar | grep -v -- '-sources' | head -n 1)
-          echo "Jar: $JAR  ->  Release $TAG"
+          PORTJAR=$(ls build-port/1.21.11/build/libs/*.jar 2>/dev/null | grep -v -- '-sources' | head -n 1 || true)
+          echo "Jar: $JAR ${PORTJAR:+und $PORTJAR} ->  Release $TAG"
           export TAG
           # "Was ist neu" fuer die Spieler: die Commit-Nachrichten dieses Pushs
           # (ohne technische Zeilen). Der Launcher zeigt sie nach dem Update an.
@@ -225,7 +266,7 @@ jobs:
           else
             gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
           fi
-          gh release upload "$TAG" "$JAR" --clobber
+          gh release upload "$TAG" "$JAR" ${PORTJAR:+"$PORTJAR"} --clobber
 
       # Zusaetzlich als Artifact, aber nur 3 Tage aufbewahrt und ohne den
       # Build scheitern zu lassen, wenn das Speicherlimit erreicht ist.

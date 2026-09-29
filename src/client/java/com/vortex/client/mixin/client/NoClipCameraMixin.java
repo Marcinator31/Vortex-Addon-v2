@@ -13,10 +13,19 @@ import org.spongepowered.asm.mixin.injection.At;
  * genau diese Abfrage wird hier fuer die Dauer von No Clip auf "ja"
  * gestellt. Dieselbe Stelle wie Meteor fuer die Freecam in 26.2.
  */
+//#if 26.2
 @Mixin(Camera.class)
+//#else
+//$ @Mixin(net.minecraft.client.renderer.LevelRenderer.class)
+//#endif
 public abstract class NoClipCameraMixin {
 
+    //#if 26.2
     @ModifyExpressionValue(method = "extractRenderState",
+    //#else
+    //$ // 1.21.11: renderLevel fragt isSpectator() fuer das Ausblenden von Waenden.
+    //$ @ModifyExpressionValue(method = "renderLevel",
+    //#endif
             at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;isSpectator()Z"),
             require = 0)
     private boolean vortex$sehen(boolean original) {

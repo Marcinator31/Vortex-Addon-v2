@@ -27,10 +27,18 @@ public class EspScreen extends SelectionScreen {
         entries.add(new Entry(Items.PLAYER_HEAD, "minecraft:player", "Players"));
         for (EntityType<?> type : BuiltInRegistries.ENTITY_TYPE) {
             var egg = SpawnEggItem.byId(type);
+            //#if 26.2
             if (egg.isEmpty()) continue; // kein Spawn-Ei -> kein Mob
+            //#else
+            //$ if (egg == null) continue;
+            //#endif
             Identifier id = BuiltInRegistries.ENTITY_TYPE.getKey(type);
             if (id == null) continue;
+            //#if 26.2
             entries.add(new Entry(egg.get().value(), id.toString(), type.getDescription().getString()));
+            //#else
+            //$ entries.add(new Entry(egg, id.toString(), type.getDescription().getString()));
+            //#endif
         }
     }
 

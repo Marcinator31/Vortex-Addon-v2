@@ -1,0 +1,62 @@
+// Build fuer Minecraft 1.21.11 -- erzeugt von tools/port.py aus dem
+// 26.2-Quelltext. 1.21.11 ist verschleiert: klassisches fabric-loom mit
+// Mojang-Namen und Java 21. Die Client-Jar (libs/vortexclient.jar, ebenfalls
+// 1.21.11) kommt als modCompileOnly: Loom mappt sie auf die Mojang-Namen.
+plugins {
+    id 'fabric-loom' version "${loom_version}"
+    id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+repositories { }
+
+loom {
+    splitEnvironmentSourceSets()
+    mods {
+        "vortexclient" {
+            sourceSet sourceSets.main
+            sourceSet sourceSets.client
+        }
+    }
+}
+
+def vortexJar = file("libs/vortexclient.jar")
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings loom.officialMojangMappings()
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+    if (vortexJar.exists()) {
+        modCompileOnly files(vortexJar)
+    }
+}
+
+tasks.named("compileJava").configure {
+    doFirst {
+        if (!vortexJar.exists()) throw new GradleException("libs/vortexclient.jar (1.21.11) fehlt.")
+    }
+}
+
+processResources {
+    inputs.property "version", project.version
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = 21
+    it.options.compilerArgs += ['-Xmaxerrs', '10000']
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}

@@ -277,7 +277,9 @@ public final class AutoTotem {
 
     /** Im Kreativ-Inventar sind die Plaetze anders verdrahtet -- dort nicht. */
     private static boolean istKreativ(Object screen) {
-        return screen.getClass().getSimpleName().contains("Creative");
+        // instanceof statt Klassenname: in verschleierten Fassungen (1.21.11)
+        // heisst die Klasse zur Laufzeit anders.
+        return screen instanceof net.minecraft.client.gui.screens.inventory.CreativeModeInventoryScreen;
     }
 
     private static Module find(Class<? extends Module> type) {

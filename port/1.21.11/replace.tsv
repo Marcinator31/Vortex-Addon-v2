@@ -1,0 +1,71 @@
+# Ersetzungen 26.2 -> 1.21.11 (Regex<TAB>Ersatz, Python-Syntax, $1 = \1)
+# --- GUI: 26.x "extract..." hiess in 1.21.x "render..." ---
+\bGuiGraphicsExtractor\b	GuiGraphics
+\bextractRenderStateWithTooltipAndSubtitles\b	renderWithTooltipAndSubtitles
+\bextractWidgetRenderState\b	renderWidget
+\bextractRenderState\b	render	!LivingEntityRendererMixin.java,!ZoomFovMixin.java,!GhostSelfMixin.java,!NoClipCameraMixin.java
+\bextractBackground\b	renderBackground
+\bextractMenuBackground\b	renderMenuBackground
+\bextractBlurredBackground\b	renderBlurredBackground
+\bextractTransparentBackground\b	renderTransparentBackground
+\bextractPanorama\b	renderPanorama
+\b(ctx|context|g)\.text\(	\1.drawString(
+\b(ctx|context|g)\.centeredText\(	\1.drawCenteredString(
+\b(ctx|context|g)\.textWithBackdrop\(	\1.drawStringWithBackdrop(
+\b(ctx|context|g)\.itemDecorations\(	\1.renderItemDecorations(
+\b(ctx|context|g)\.fakeItem\(	\1.renderFakeItem(
+\b(ctx|context|g)\.item\(	\1.renderItem(
+# --- Bildschirm: 26.2 fuehrt ihn ueber mc.gui ---
+\.gui\.screen\(\)	.screen
+\.gui\.setScreen\(	.setScreen(
+# --- Befehle: Fabric benannte ClientCommandManager in 26.x um ---
+\bnet\.fabricmc\.fabric\.api\.client\.command\.v2\.ClientCommands\b	net.fabricmc.fabric.api.client.command.v2.ClientCommandManager
+# --- Welt-Render-Ereignisse ---
+net\.fabricmc\.fabric\.api\.client\.rendering\.v1\.level\.LevelRenderEvents	net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents
+\bLevelRenderEvents\.AFTER_TRANSLUCENT_FEATURES\b	WorldRenderEvents.AFTER_ENTITIES
+\bLevelRenderEvents\b	WorldRenderEvents
+\bcontext\.poseStack\(\)	context.matrices()
+\bcontext\.submitNodeCollector\(\)	context.commandQueue()
+# --- Inventar-Klicks ---
+\bnet\.minecraft\.world\.inventory\.ContainerInput\b	net.minecraft.world.inventory.ClickType
+\bContainerInput\b	ClickType
+\bhandleContainerInput\b	handleInventoryMouseClick
+# --- Meldungen an den Spieler ---
+\.sendOverlayMessage\(((?:[^()]|\((?:[^()]|\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\))*\))*)\)	.displayClientMessage(\1, true)
+\.sendSystemMessage\(((?:[^()]|\((?:[^()]|\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\))*\))*)\)	.displayClientMessage(\1, false)
+# --- fabric.mod.json ---
+json:"minecraft": "26\.2"	"minecraft": "~1.21.11"
+json:"java": ">=25"	"java": ">=21"
+# --- Klassen, die in 26.x umgezogen sind ---
+net([./])minecraft\1client\1renderer\1state\1level\1CameraRenderState	net\1minecraft\1client\1renderer\1state\1CameraRenderState
+net([./])minecraft\1client\1multiplayer\1chat\1GuiMessage\b	net\1minecraft\1client\1GuiMessage
+net([./])minecraft\1client\1resources\1model\1geometry\1BakedQuad\b	net\1minecraft\1client\1renderer\1block\1model\1BakedQuad
+\bmainCamera\(\)	getMainCamera()
+\bScreenEvents\.afterExtract\(	ScreenEvents.afterRender(
+\bVanillaHudElements\.MOB_EFFECTS\b	VanillaHudElements.STATUS_EFFECTS
+\bScreens\.getWidgets\(	Screens.getButtons(
+net\.fabricmc\.fabric\.api\.client\.keymapping\.v1\.KeyMappingHelper	net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper
+\bKeyMappingHelper\.registerKeyMapping\(	KeyBindingHelper.registerKeyBinding(
+\bKeyMappingHelper\b	KeyBindingHelper
+# --- 26.2 hat das HUD aus Gui in eine eigene Klasse Hud gezogen ---
+,\s*net\.minecraft\.client\.gui\.Hud\.class\s*\}	}
+\bnet\.minecraft\.client\.gui\.Hud\b	net.minecraft.client.gui.Gui
+net/minecraft/client/gui/Hud;	net/minecraft/client/gui/Gui;
+@Mixin\(Hud\.class\)	@Mixin(net.minecraft.client.gui.Gui.class)
+\bextract(Crosshair|CameraOverlays|TextureOverlay|Title)\b	render\1
+\bAFTER_TRANSLUCENT_FEATURES\b	AFTER_ENTITIES
+(\.submitNameTag\([^;]*?), (camState)\)	\1, 0.0, \2)
+\bgetDefaultClockTime\(\)	getDayTime()
+"submitBlockOutline"	"renderBlockOutline"	OutlineHideMixin.java
+"alignWithEntity"	"setup"	CameraMixin.java
+json:"ClockTimeMixin",	"ClockTimeMixin",\n    "ClockTimeLegacyMixin",
+# ===== Addon-spezifisch =====
+net\.fabricmc\.fabric\.api\.client\.rendering\.v1\.level\.LevelRenderContext	net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderContext
+\bChunkPos\.containing\(([^()]*(?:\([^()]*\))?[^()]*)\)\.pack\(\)	new ChunkPos(\1).toLong()
+\bChunkPos\.containing\(	new ChunkPos(
+\.getPos\(\)\.pack\(\)	.getPos().toLong()
+\bChunkPos\.pack\(	ChunkPos.asLong(
+\bbew\.id\(\)	bew.getId()	PacketCheats.java
+\bbew\.movement\(\)	bew.getMovement()	PacketCheats.java
+json:"minecraft": "26\.2"	"minecraft": "~1.21.11"
+json:"java": ">=25"	"java": ">=21"

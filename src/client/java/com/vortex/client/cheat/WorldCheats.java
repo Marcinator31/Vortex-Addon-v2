@@ -168,9 +168,9 @@ public final class WorldCheats {
         boolean kiste = menu instanceof ChestMenu || menu instanceof ShulkerBoxMenu;
         if (!kiste) {
             if (m.onlyChests.get()) return;
-            String art = menu.getClass().getSimpleName();
             boolean lager = menu instanceof net.minecraft.world.inventory.AbstractFurnaceMenu
-                    || art.equals("HopperMenu") || art.equals("DispenserMenu");
+                    || menu instanceof net.minecraft.world.inventory.HopperMenu
+                    || menu instanceof net.minecraft.world.inventory.DispenserMenu;
             if (!lager) return;
         }
         // Kurz warten, bis der Inhalt vom Server da ist -- sonst ist die Kiste
