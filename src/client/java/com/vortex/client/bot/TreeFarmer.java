@@ -4,10 +4,9 @@ import com.vortex.client.cheat.Inv;
 import com.vortex.client.module.ModuleManager;
 import com.vortex.client.module.modules.TreeFarmerModule;
 import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.List;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -21,32 +20,38 @@ import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.item.ItemEntity;
-import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 
 /**
  * Tree Farmer (siehe TreeFarmerModule).
  *
- *   SUCHEN     naechsten Baum finden (Stamm auf Erde + natuerliches Laub)
- *   HINGEHEN   an den Stamm laufen
- *   FAELLEN    Stammbloecke in Reichweite abbauen, von unten nach oben; danach
- *              in die Stammspalte treten, fuer hohe Baeume hochbauen
- *   ABSTEIGEN  den eigenen Turm wieder abbauen
- *   PFLANZEN   einen Schritt zur Seite, Setzling setzen
- *   SAMMELN    Holz und Setzlinge am Boden einsammeln
+ *   SUCHEN        erst Aufgaben rund um die Farm (einlagern, liegengebliebene
+ *                 Setzlinge nachpflanzen, Holz/Setzlinge einsammeln), dann den
+ *                 naechsten Baum finden (Stamm auf Erde + natuerliches Laub)
+ *   HINGEHEN      mit Weg an den Stamm laufen
+ *   FAELLEN       Stammbloecke in Reichweite abbauen, von unten nach oben; danach
+ *                 in die Stammspalte treten, fuer hohe Baeume hochbauen
+ *   ABSTEIGEN     den eigenen Turm wieder abbauen
+ *   PFLANZEN      einen Schritt zur Seite, Setzling setzen (fehlt einer: merken)
+ *   SAMMELN       Holz und Setzlinge am Boden einsammeln
+ *   NACHPFLANZEN  gemerkte Stelle bepflanzen, sobald ein Setzling da ist
  */
 public final class TreeFarmer {
 
     private TreeFarmer() {}
 
-    private enum Phase { SUCHEN, HINGEHEN, FAELLEN, ABSTEIGEN, PFLANZEN, SAMMELN }
+    private enum Phase { SUCHEN, HINGEHEN, FAELLEN, ABSTEIGEN, PFLANZEN, SAMMELN, NACHPFLANZEN }
 
     private static final BotMotor MOTOR = new BotMotor();
+    private static final BotEssen ESSEN = new BotEssen("Tree Farmer");
+    private static final BotLager LAGER = new BotLager("Tree Farmer");
     private static long tick = 0;
     private static boolean warAn = false;
     private static Phase phase = Phase.SUCHEN;
@@ -58,7 +63,17 @@ public final class TreeFarmer {
     private static BlockPos abbau = null;
     private static int standY = Integer.MIN_VALUE;
     private static boolean keinTurmGemeldet = false;
+    private static boolean turmGemeldet = false;
     private static final Map<BlockPos, Long> GESPERRT = new HashMap<>();
+    /** Gefaellte Baeume, fuer die noch ein Setzling fehlt: Boden-Position (Erde) +1. */
+    private static final Set<BlockPos> OFFEN = new LinkedHashSet<>();
+    private static BlockPos pflanzZiel = null;
+    private static long nichtsLiegtSeit = -1;
+    private static ItemEntity sammelZiel = null;
+
+    private static int baeume = 0, stammBloecke = 0;
+    private static long startZeit = 0;
+    private static String status = "Idle";
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(mc -> {
@@ -66,9 +81,21 @@ public final class TreeFarmer {
             try { tick(mc); } catch (Throwable e) {
                 com.vortex.client.core.Errors.report("TreeFarmer", e);
                 MOTOR.aus(mc);
+                ESSEN.aus(mc, mc.player);
+                LAGER.aus(mc, mc.player);
                 wechsel(Phase.SUCHEN);
             }
         });
+    }
+
+    /** Statuszeile fuer die Bot-Seite. */
+    public static String status() {
+        TreeFarmerModule m = ModuleManager.INSTANCE.get(TreeFarmerModule.class);
+        if (m == null || !m.isEnabled()) return "Idle";
+        long min = startZeit == 0 ? 0 : (System.currentTimeMillis() - startZeit) / 60000L;
+        return status + "  |  " + baeume + " trees, " + stammBloecke + " logs"
+                + (LAGER.gelagert() > 0 ? "  |  " + LAGER.gelagert() + " stacks stored" : "")
+                + (OFFEN.isEmpty() ? "" : "  |  " + OFFEN.size() + " to replant") + "  |  " + min + " min";
     }
 
     private static void wechsel(Phase p) {
@@ -76,6 +103,7 @@ public final class TreeFarmer {
         phaseSeit = tick;
         abbau = null;
         MOTOR.fortschrittZuruecksetzen();
+        MOTOR.vergiss();
     }
 
     private static void melde(LocalPlayer p, String text) {
@@ -87,14 +115,36 @@ public final class TreeFarmer {
         LocalPlayer p = mc.player;
         boolean an = m != null && m.isEnabled() && p != null && mc.level != null && mc.gameMode != null;
         if (!an) {
-            if (warAn) { MOTOR.aus(mc); wechsel(Phase.SUCHEN); basis = null; GESPERRT.clear(); }
+            if (warAn) {
+                MOTOR.aus(mc);
+                ESSEN.aus(mc, p);
+                LAGER.zuruecksetzen(mc, p);
+                wechsel(Phase.SUCHEN);
+                basis = null;
+                GESPERRT.clear();
+                if (p != null && baeume > 0) {
+                    long min = (System.currentTimeMillis() - startZeit) / 60000L;
+                    melde(p, "Stopped: " + baeume + " trees (" + stammBloecke + " logs) in " + min + " min.");
+                }
+            }
             warAn = false;
             return;
         }
+        if (!warAn) { baeume = 0; stammBloecke = 0; startZeit = System.currentTimeMillis(); OFFEN.clear(); }
         warAn = true;
-        if (!p.isAlive() || mc.gui.screen() != null) { MOTOR.anhalten(mc); return; }
+        if (!p.isAlive()) { MOTOR.anhalten(mc); return; }
         GESPERRT.values().removeIf(bis -> bis < tick);
         try {
+            if (LAGER.aktiv()) {
+                status = "Storing in chest";
+                LAGER.tick(mc, p, MOTOR, tick, TreeFarmer::einlagern, behalten());
+                return;
+            }
+            if (mc.gui.screen() != null) { MOTOR.anhalten(mc); status = "Paused (menu open)"; return; }
+            // Nicht mitten im Turmbau essen -- oben auf dem Turm waere das riskant.
+            boolean ruhig = phase != Phase.FAELLEN && phase != Phase.ABSTEIGEN;
+            if (!m.eat.get()) ESSEN.aus(mc, p);
+            else if ((ruhig || ESSEN.isst()) && ESSEN.tick(mc, p, tick, 14)) { MOTOR.anhalten(mc); status = "Eating"; return; }
             switch (phase) {
                 case SUCHEN -> suchen(mc, p, m);
                 case HINGEHEN -> hingehen(mc, p);
@@ -102,6 +152,7 @@ public final class TreeFarmer {
                 case ABSTEIGEN -> absteigen(mc, p);
                 case PFLANZEN -> pflanzen(mc, p, m);
                 case SAMMELN -> sammeln(mc, p, m);
+                case NACHPFLANZEN -> nachpflanzen(mc, p);
             }
         } finally {
             MOTOR.drehen(p, 30f);
@@ -112,8 +163,36 @@ public final class TreeFarmer {
 
     private static void suchen(Minecraft mc, LocalPlayer p, TreeFarmerModule m) {
         MOTOR.anhalten(mc);
+        status = "Looking for trees";
         if (tick % 20 != 0) return;
         int r = m.range.getInt();
+
+        // 1. Inventar (fast) voll -> einlagern
+        if (m.store.get() && BotMotor.freiePlaetze(p) <= 2
+                && LAGER.starten(mc, p, tick, r + 8, TreeFarmer::einlagern, behalten())) return;
+
+        // 2. Gemerkte Stellen nachpflanzen, sobald ein Setzling da ist
+        if (m.replant.get() && !OFFEN.isEmpty()) {
+            OFFEN.removeIf(b -> !mc.level.getBlockState(b).isAir() || !mc.level.getBlockState(b.below()).is(BlockTags.DIRT));
+            if (hatSetzling(p, null)) {
+                BlockPos naechste = null;
+                for (BlockPos b : OFFEN) {
+                    if (GESPERRT.containsKey(b)) continue;
+                    if (naechste == null || p.distanceToSqr(Vec3.atCenterOf(b)) < p.distanceToSqr(Vec3.atCenterOf(naechste))) naechste = b;
+                }
+                if (naechste != null) { pflanzZiel = naechste; wechsel(Phase.NACHPFLANZEN); return; }
+            }
+        }
+
+        // 3. Liegengebliebenes Holz / Setzlinge einsammeln (Laub zerfaellt langsam)
+        if (m.collect.get() && BotMotor.freiePlaetze(p) > 0 && naechsterDrop(mc, p, p.getBoundingBox().inflate(r, 4, r)) != null) {
+            basis = null;
+            nichtsLiegtSeit = -1;
+            wechsel(Phase.SAMMELN);
+            return;
+        }
+
+        // 4. Naechster Baum
         BlockPos mitte = p.blockPosition();
         BlockPos best = null;
         Set<BlockPos> bestStamm = null;
@@ -130,12 +209,13 @@ public final class TreeFarmer {
             bestStamm = s;
             bestD = d;
         }
-        if (best == null) return;
+        if (best == null) { status = OFFEN.isEmpty() ? "No trees in range -- waiting" : "Waiting for saplings"; return; }
         basis = best;
         stamm = bestStamm;
         setzling = passenderSetzling(mc.level.getBlockState(best));
         standY = Integer.MIN_VALUE;
         keinTurmGemeldet = false;
+        turmGemeldet = false;
         wechsel(Phase.HINGEHEN);
     }
 
@@ -183,14 +263,16 @@ public final class TreeFarmer {
 
     private static void hingehen(Minecraft mc, LocalPlayer p) {
         if (basis == null || !mc.level.getBlockState(basis).is(BlockTags.LOGS)) { wechsel(Phase.SUCHEN); return; }
+        status = "Walking to a tree";
         double reichweite = p.blockInteractionRange() - 0.5;
-        if (p.getEyePosition().distanceToSqr(Vec3.atCenterOf(basis)) <= reichweite * reichweite && p.onGround()) {
+        Vec3 c = Vec3.atCenterOf(basis);
+        if (p.getEyePosition().distanceToSqr(c) <= reichweite * reichweite && p.onGround()) {
             MOTOR.anhalten(mc);
             wechsel(Phase.FAELLEN);
             return;
         }
-        MOTOR.gehe(mc, p, Vec3.atBottomCenterOf(basis), true);
-        if (MOTOR.steckt(p, tick) || tick - phaseSeit > 600) {
+        BotMotor.Lauf l = MOTOR.laufe(mc, p, BotWeg.inReichweite(c.x, c.y, c.z, reichweite - 0.3, 1.62), basis, tick);
+        if (l == BotMotor.Lauf.UNERREICHBAR || tick - phaseSeit > 20 * 60) {
             GESPERRT.put(basis, tick + 2400);
             MOTOR.anhalten(mc);
             wechsel(Phase.SUCHEN);
@@ -198,14 +280,15 @@ public final class TreeFarmer {
     }
 
     private static void faellen(Minecraft mc, LocalPlayer p, TreeFarmerModule m) {
+        status = "Chopping";
         if (tick - phaseSeit > 20 * 120) { melde(p, "Tree took too long -- skipping it."); wechsel(Phase.ABSTEIGEN); return; }
         stamm.removeIf(b -> !mc.level.getBlockState(b).is(BlockTags.LOGS));
-        if (stamm.isEmpty()) { MOTOR.anhalten(mc); wechsel(Phase.ABSTEIGEN); return; }
+        if (stamm.isEmpty()) { MOTOR.anhalten(mc); baeume++; wechsel(Phase.ABSTEIGEN); return; }
 
         if (abbau != null) {
             MOTOR.anhalten(mc);
             if (m.useAxe.get()) axt(p);
-            if (MOTOR.abbauen(mc, p, abbau, tick)) abbau = null;
+            if (MOTOR.abbauen(mc, p, abbau, tick)) { if (mc.level.getBlockState(abbau).isAir()) stammBloecke++; abbau = null; }
             return;
         }
         double reichweite = p.blockInteractionRange() - 0.3;
@@ -220,7 +303,7 @@ public final class TreeFarmer {
             MOTOR.anhalten(mc);
             if (m.useAxe.get()) axt(p);
             abbau = ziel;
-            if (MOTOR.abbauen(mc, p, abbau, tick)) abbau = null;
+            if (MOTOR.abbauen(mc, p, abbau, tick)) { if (mc.level.getBlockState(abbau).isAir()) stammBloecke++; abbau = null; }
             return;
         }
         // Nichts in Reichweite: in die Stammspalte treten, dann hochbauen.
@@ -236,21 +319,31 @@ public final class TreeFarmer {
             return;
         }
         MOTOR.anhalten(mc);
-        if (!m.pillar.get()) { wechsel(Phase.ABSTEIGEN); return; }
+        if (!m.pillar.get() || !lohntHochbauen(p)) { wechsel(Phase.ABSTEIGEN); return; }
+        status = "Building up";
         hochbauen(mc, p);
     }
 
     /** Springen und im hoechsten Punkt einen Block unter die Fuesse setzen. */
     private static void hochbauen(Minecraft mc, LocalPlayer p) {
-        int slot = Inv.hotbar(p, st -> st.getItem() instanceof BlockItem bi
-                && bi.getBlock().defaultBlockState().isCollisionShapeFullBlock(mc.level, BlockPos.ZERO)
-                && !st.is(ItemTags.SAPLINGS));
+        int slot = Inv.hotbar(p, TreeFarmer::turmBlock);
+        if (slot < 0) slot = BotMotor.holeInHotbar(mc, p, TreeFarmer::turmBlock);
         if (slot < 0) {
             if (!keinTurmGemeldet) { keinTurmGemeldet = true; melde(p, "Tree is taller than my reach and I have no blocks to build up -- leaving the top."); }
             wechsel(Phase.ABSTEIGEN);
             return;
         }
         if (p.onGround()) {
+            // Laub (oder anderes) ueber dem Kopf? Erst weg damit -- sonst springt
+            // der Bot nur auf der Stelle.
+            BlockPos kopf = new BlockPos(basis.getX(), (int) Math.floor(p.getY() + 0.01) + 2, basis.getZ());
+            BlockState ks = mc.level.getBlockState(kopf);
+            if (!ks.isAir() && !ks.canBeReplaced()) {
+                MOTOR.springen(mc, false);
+                werkzeug(p, ks);
+                MOTOR.abbauen(mc, p, kopf, tick);
+                return;
+            }
             standY = (int) Math.floor(p.getY() + 0.01);
             MOTOR.blickeRichtung(p.getYRot(), 90f);
             MOTOR.springen(mc, true);
@@ -272,10 +365,49 @@ public final class TreeFarmer {
         }
     }
 
+    /**
+     * Nur Bloecke, die sich mit Axt oder Hand schnell wieder abbauen lassen --
+     * mit Stein oder Obsidian unter den Fuessen kaeme der Bot nicht mehr
+     * herunter.
+     */
+    private static boolean turmBlock(ItemStack st) {
+        return st.is(ItemTags.LOGS) || st.is(ItemTags.PLANKS) || st.is(Items.DIRT) || st.is(Items.COARSE_DIRT)
+                || st.is(Items.ROOTED_DIRT);
+    }
+
+    /** Gibt es noch Stamm ueber dem Kopf, den man vom Turm aus erreicht? */
+    private static boolean lohntHochbauen(LocalPlayer p) {
+        double reichweite = p.blockInteractionRange() - 1.0;
+        double augeY = p.getEyeY();
+        for (BlockPos b : stamm) {
+            double dx = b.getX() - basis.getX(), dz = b.getZ() - basis.getZ();
+            if (b.getY() + 0.5 > augeY && Math.sqrt(dx * dx + dz * dz) <= reichweite) return true;
+        }
+        return false;
+    }
+
+    /** Schnellstes Werkzeug der Hotbar fuer diesen Block in die Hand. */
+    private static void werkzeug(LocalPlayer p, BlockState st) {
+        int best = -1;
+        float bestTempo = 1.0f;
+        for (int i = 0; i < 9; i++) {
+            ItemStack it = p.getInventory().getItem(i);
+            if (it.isEmpty() || (it.isDamageableItem() && it.getMaxDamage() - it.getDamageValue() <= 3)) continue;
+            float tempo = it.getDestroySpeed(st);
+            if (tempo > bestTempo) { bestTempo = tempo; best = i; }
+        }
+        if (best >= 0 && p.getInventory().getSelectedSlot() != best) p.getInventory().setSelectedSlot(best);
+    }
+
     private static void absteigen(Minecraft mc, LocalPlayer p) {
         MOTOR.anhalten(mc);
+        status = "Coming down";
         if (basis == null) { wechsel(Phase.SUCHEN); return; }
-        if (tick - phaseSeit > 20 * 60) { wechsel(Phase.PFLANZEN); return; }
+        if (tick - phaseSeit > 20 * 60) {
+            // Nie oben auf dem Turm stehen lassen -- von dort findet kein Weg herunter.
+            if (p.getY() <= basis.getY() + 1.5) { wechsel(Phase.PFLANZEN); return; }
+            if (!turmGemeldet) { turmGemeldet = true; melde(p, "I can't get down from my tower -- please help (break the block under me)."); }
+        }
         // Nur den eigenen Turm in der Stammspalte abbauen -- steht der Bot
         // woanders (z. B. hangaufwaerts), wird NICHT in den Boden gegraben.
         boolean inSpalte = p.blockPosition().getX() == basis.getX() && p.blockPosition().getZ() == basis.getZ();
@@ -290,33 +422,86 @@ public final class TreeFarmer {
             if (unter.getY() < basis.getY()) { wechsel(Phase.PFLANZEN); return; }
             abbau = unter;
         }
+        werkzeug(p, mc.level.getBlockState(abbau));
         if (MOTOR.abbauen(mc, p, abbau, tick)) abbau = null;
     }
 
     private static void pflanzen(Minecraft mc, LocalPlayer p, TreeFarmerModule m) {
         if (!m.replant.get() || basis == null || !mc.level.getBlockState(basis).isAir()
                 || !mc.level.getBlockState(basis.below()).is(BlockTags.DIRT)) {
+            nichtsLiegtSeit = -1;
             wechsel(Phase.SAMMELN);
             return;
         }
-        Item wunsch = setzling;
-        int slot = wunsch == null ? -1 : Inv.hotbar(p, st -> st.is(wunsch));
-        if (slot < 0) slot = Inv.hotbar(p, st -> st.is(ItemTags.SAPLINGS));
-        if (slot < 0) { wechsel(Phase.SAMMELN); return; }
+        status = "Replanting";
+        int slot = setzlingPlatz(mc, p, setzling);
+        if (slot < 0) {
+            // Kein Setzling (noch): merken und spaeter nachpflanzen.
+            OFFEN.add(basis.immutable());
+            nichtsLiegtSeit = -1;
+            wechsel(Phase.SAMMELN);
+            return;
+        }
         // Steht der Bot noch in der Stammspalte, erst einen Schritt zur Seite.
-        if (p.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(basis))) {
-            BlockPos seite = null;
-            for (Direction d : Direction.Plane.HORIZONTAL) {
-                BlockPos n = basis.relative(d);
-                if (mc.level.getBlockState(n).getCollisionShape(mc.level, n).isEmpty()
-                        && mc.level.getBlockState(n.above()).getCollisionShape(mc.level, n.above()).isEmpty()) { seite = n; break; }
-            }
-            if (seite == null || tick - phaseSeit > 100) { wechsel(Phase.SAMMELN); return; }
+        if (p.getBoundingBox().intersects(new AABB(basis))) {
+            BlockPos seite = sichereSeite(mc, basis);
+            if (seite == null || tick - phaseSeit > 100) { OFFEN.add(basis.immutable()); wechsel(Phase.SAMMELN); return; }
             MOTOR.gehe(mc, p, Vec3.atBottomCenterOf(seite), false);
             return;
         }
         MOTOR.anhalten(mc);
-        BlockPos boden = basis.below();
+        setzen(mc, p, basis, slot);
+        OFFEN.remove(basis);
+        nichtsLiegtSeit = -1;
+        wechsel(Phase.SAMMELN);
+    }
+
+    private static void nachpflanzen(Minecraft mc, LocalPlayer p) {
+        BlockPos z = pflanzZiel;
+        if (z == null || !mc.level.getBlockState(z).isAir() || !mc.level.getBlockState(z.below()).is(BlockTags.DIRT)) {
+            if (z != null) OFFEN.remove(z);
+            wechsel(Phase.SUCHEN);
+            return;
+        }
+        status = "Replanting a missing sapling";
+        int slot = setzlingPlatz(mc, p, null);
+        if (slot < 0) { wechsel(Phase.SUCHEN); return; }
+        double reichweite = p.blockInteractionRange() - 0.5;
+        Vec3 boden = new Vec3(z.getX() + 0.5, z.getY(), z.getZ() + 0.5);
+        boolean steht = p.getBoundingBox().intersects(new AABB(z));
+        if (!steht && p.getEyePosition().distanceToSqr(boden) <= reichweite * reichweite && p.onGround()) {
+            MOTOR.anhalten(mc);
+            setzen(mc, p, z, slot);
+            OFFEN.remove(z);
+            wechsel(Phase.SUCHEN);
+            return;
+        }
+        if (steht) {                                                    // erst vom Fleck gehen
+            BlockPos seite = sichereSeite(mc, z);
+            if (seite == null || tick - phaseSeit > 20 * 10) { GESPERRT.put(z, tick + 2400); wechsel(Phase.SUCHEN); return; }
+            MOTOR.gehe(mc, p, Vec3.atBottomCenterOf(seite), false);
+            return;
+        }
+        BotMotor.Lauf l = MOTOR.laufe(mc, p, BotWeg.inReichweite(boden.x, boden.y, boden.z, reichweite - 0.4, 1.62), z, tick);
+        if (l == BotMotor.Lauf.UNERREICHBAR || tick - phaseSeit > 20 * 45) {
+            GESPERRT.put(z, tick + 2400);
+            wechsel(Phase.SUCHEN);
+        }
+    }
+
+    /** Nachbarfeld, auf dem man sicher stehen kann (Boden, keine Gefahr, Kopf frei) -- oder null. */
+    private static BlockPos sichereSeite(Minecraft mc, BlockPos mitte) {
+        BotMotor.McWelt welt = new BotMotor.McWelt(mc.level);
+        for (Direction d : Direction.Plane.HORIZONTAL) {
+            BlockPos n = mitte.relative(d);
+            if (BotWeg.stehen(welt, n.getX(), n.getY(), n.getZ())) return n;
+        }
+        return null;
+    }
+
+    /** Setzling auf die Erde unter "stelle" setzen. */
+    private static void setzen(Minecraft mc, LocalPlayer p, BlockPos stelle, int slot) {
+        BlockPos boden = stelle.below();
         Vec3 treffer = new Vec3(boden.getX() + 0.5, boden.getY() + 1.0, boden.getZ() + 0.5);
         MOTOR.blicke(p, treffer);
         int vorher = p.getInventory().getSelectedSlot();
@@ -327,21 +512,86 @@ public final class TreeFarmer {
         } finally {
             p.getInventory().setSelectedSlot(vorher);
         }
-        wechsel(Phase.SAMMELN);
+    }
+
+    private static boolean hatSetzling(LocalPlayer p, Item wunsch) {
+        for (int i = 0; i < 36; i++) {
+            ItemStack st = p.getInventory().getItem(i);
+            if (!st.isEmpty() && (wunsch == null ? st.is(ItemTags.SAPLINGS) : st.is(wunsch))) return true;
+        }
+        return false;
+    }
+
+    /** Hotbar-Platz mit Setzling (bevorzugt die passende Art), notfalls aus dem Rucksack geholt; -1 = keiner. */
+    private static int setzlingPlatz(Minecraft mc, LocalPlayer p, Item wunsch) {
+        int slot = wunsch == null ? -1 : Inv.hotbar(p, st -> st.is(wunsch));
+        if (slot < 0 && wunsch != null) slot = BotMotor.holeInHotbar(mc, p, st -> st.is(wunsch));
+        if (slot < 0) slot = Inv.hotbar(p, st -> st.is(ItemTags.SAPLINGS));
+        if (slot < 0) slot = BotMotor.holeInHotbar(mc, p, st -> st.is(ItemTags.SAPLINGS));
+        return slot;
     }
 
     private static void sammeln(Minecraft mc, LocalPlayer p, TreeFarmerModule m) {
-        if (!m.collect.get() || basis == null || tick - phaseSeit > 200) { MOTOR.anhalten(mc); wechsel(Phase.SUCHEN); return; }
+        status = "Collecting wood and saplings";
+        if (!m.collect.get() || tick - phaseSeit > 20 * 30 || BotMotor.freiePlaetze(p) == 0) {
+            MOTOR.anhalten(mc);
+            wechsel(Phase.SUCHEN);
+            return;
+        }
+        AABB bereich = basis != null ? new AABB(basis).inflate(8, 5, 8) : p.getBoundingBox().inflate(m.range.get(), 4, m.range.get());
+        ItemEntity naechstes = sammelZiel != null && sammelZiel.isAlive() && !GESPERRT.containsKey(sammelZiel.blockPosition())
+                ? sammelZiel : naechsterDrop(mc, p, bereich);
+        sammelZiel = naechstes;
+        if (naechstes == null) {
+            MOTOR.anhalten(mc);
+            // Kurz warten: frisch zerfallendes Laub wirft noch Setzlinge ab.
+            if (nichtsLiegtSeit < 0) nichtsLiegtSeit = tick;
+            if (tick - nichtsLiegtSeit > 40) wechsel(Phase.SUCHEN);
+            return;
+        }
+        nichtsLiegtSeit = -1;
+        BlockPos b = naechstes.blockPosition();
+        if (MOTOR.laufe(mc, p, BotWeg.feld(b.getX(), b.getY(), b.getZ()), naechstes.getUUID(), tick) == BotMotor.Lauf.UNERREICHBAR) {
+            GESPERRT.put(b, tick + 1200);
+            sammelZiel = null;
+        }
+    }
+
+    private static ItemEntity naechsterDrop(Minecraft mc, LocalPlayer p, AABB bereich) {
         ItemEntity naechstes = null;
-        for (ItemEntity ie : mc.level.getEntitiesOfClass(ItemEntity.class, new net.minecraft.world.phys.AABB(basis).inflate(7, 4, 7))) {
+        for (ItemEntity ie : mc.level.getEntitiesOfClass(ItemEntity.class, bereich)) {
             ItemStack st = ie.getItem();
-            if (!(st.is(ItemTags.LOGS) || st.is(ItemTags.SAPLINGS) || st.is(net.minecraft.world.item.Items.APPLE)
-                    || st.is(net.minecraft.world.item.Items.STICK))) continue;
+            if (!(st.is(ItemTags.LOGS) || st.is(ItemTags.SAPLINGS) || st.is(Items.APPLE) || st.is(Items.STICK))) continue;
+            if (GESPERRT.containsKey(ie.blockPosition())) continue;
             if (naechstes == null || ie.distanceToSqr(p) < naechstes.distanceToSqr(p)) naechstes = ie;
         }
-        if (naechstes == null) { MOTOR.anhalten(mc); wechsel(Phase.SUCHEN); return; }
-        MOTOR.gehe(mc, p, naechstes.position(), true);
-        if (MOTOR.steckt(p, tick)) { MOTOR.anhalten(mc); wechsel(Phase.SUCHEN); }
+        return naechstes;
+    }
+
+    /** Was in die Truhe darf: Holz, Aepfel, Stoecke, ueberzaehlige Setzlinge. */
+    private static boolean einlagern(ItemStack st) {
+        return st.is(ItemTags.LOGS) || st.is(Items.APPLE) || st.is(Items.STICK) || st.is(ItemTags.SAPLINGS);
+    }
+
+    /** Je ein Stapel jeder Setzlingsart bleibt; ebenso ein Stapel Holz fuer den Turm. */
+    private static Set<Item> behalten() {
+        Set<Item> s = new HashSet<>();
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player != null) {
+            for (int i = 0; i < 36; i++) {
+                ItemStack st = mc.player.getInventory().getItem(i);
+                if (st.is(ItemTags.SAPLINGS)) s.add(st.getItem());
+            }
+            // Ein Stapel Stammholz als Turmbaumaterial (falls keine anderen Bloecke da sind)
+            if (Inv.hotbar(mc.player, st -> turmBlock(st) && !st.is(ItemTags.LOGS)) < 0
+                    && Inv.inventar(mc.player, st -> turmBlock(st) && !st.is(ItemTags.LOGS)) < 0) {
+                for (int i = 0; i < 36; i++) {
+                    ItemStack st = mc.player.getInventory().getItem(i);
+                    if (st.is(ItemTags.LOGS)) { s.add(st.getItem()); break; }
+                }
+            }
+        }
+        return s;
     }
 
     /** Beste Axt aus der Hotbar in die Hand (echt gewechselt -- der Server rechnet mit dem gehaltenen Werkzeug). */

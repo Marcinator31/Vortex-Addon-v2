@@ -41,6 +41,24 @@ public final class AfkBot {
         } catch (Throwable ignored) { }
     }
 
+    /** Statuszeile fuer die Bot-Seite. */
+    public static String status() {
+        AfkBotModule mod = modul();
+        if (mod == null || !mod.isEnabled()) return "Idle";
+        if (Minecraft.getInstance().player == null) return "Waiting for a server";
+        if (befehlBei != 0 && befehlBei > tick) {
+            return "Sending /afk in " + Math.max(1, (befehlBei - tick + 19) / 20) + " s";
+        }
+        String s = afkGemeldet ? "AFK" : "Waiting";
+        if (mod.antiIdle.get()) {
+            int abstand = (int) (mod.idleInterval.get() * 20);
+            int rest = Math.max(0, abstand - (tick - letzteBewegung));
+            s += "  |  next move in " + (rest + 19) / 20 + " s";
+        }
+        if (!autoReconnectAn()) s += "  |  Auto Reconnect is off";
+        return s;
+    }
+
     private static AfkBotModule modul() {
         try {
             return ModuleManager.INSTANCE.get(AfkBotModule.class);

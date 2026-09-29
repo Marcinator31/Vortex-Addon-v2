@@ -67,4 +67,9 @@ public class AfkBotModule extends Module {
     public void onDisable() {
         com.vortex.client.bot.AfkBot.stop();
     }
+
+    /** Statuszeile auf der Bot-Seite. */
+    public String getStatus() {
+        return com.vortex.client.bot.AfkBot.status();
+    }
 }

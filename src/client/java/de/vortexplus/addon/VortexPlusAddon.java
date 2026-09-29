@@ -170,11 +170,11 @@ public class VortexPlusAddon implements ClientModInitializer {
         register(new com.vortex.client.module.modules.ClickTpModule(),
                 "Teleports you onto the block you look at: right click with an empty hand or a key. About 10 (Safe) or 20 (Fast) blocks per tick, longer distances in several hops; the path must be free. Detected by most anticheats.");
         register(new com.vortex.client.module.modules.CropFarmerModule(),
-                "Harvests ripe wheat, carrots, potatoes, beetroot, nether wart, melons, pumpkins and sugar cane around you, replants and collects the drops. Walks in straight lines -- best on an open, flat farm.");
+                "Harvests ripe wheat, carrots, potatoes, beetroot, nether wart, melons, pumpkins and sugar cane around you, replants and collects the drops. Finds its way around fences and water, never tramples farmland, eats when hungry and stores the harvest in a nearby chest or barrel when the inventory is full.");
         register(new com.vortex.client.module.modules.TreeFarmerModule(),
-                "Chops real trees around you (natural leaves, single trunk), builds up for tall ones, replants a sapling and collects the wood.");
+                "Chops real trees around you (natural leaves, single trunk), builds up for tall ones, replants a sapling and collects the wood. Finds its way to each tree, eats when hungry, stores wood in a nearby chest and replants later when a sapling was missing.");
         register(new com.vortex.client.module.modules.ElytraAutopilotModule(),
-                "Flies to a target with your elytra: /autopilot <x> <z>. Takes off, holds the cruise height with rockets, climbs over mountains and lands at the target.");
+                "Flies to a target with your elytra: /autopilot <x> <z> or /autopilot <waypoint>. Takes off, holds the cruise height with rockets, climbs over mountains, puts on a spare elytra when the worn one breaks and lands gently on a safe spot at the target.");
 
         registriereRenderer();
 

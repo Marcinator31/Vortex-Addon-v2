@@ -11,7 +11,9 @@ import com.vortex.client.module.Module;
  * Nur echte Baeume (mit natuerlichem Laub) -- Holzhaeuser bleiben stehen.
  * Nur Baeume mit einem Stamm (keine 2x2-Riesen). Ist der Stamm hoeher als
  * die Reichweite, baut der Bot sich mit Bloecken aus der Hotbar hoch und
- * raeumt den Turm danach wieder ab.
+ * raeumt den Turm danach wieder ab. Seit 2.33 mit Wegfindung, eigenem Essen,
+ * Einlagern in Truhen und geduldigem Einsammeln der Setzlinge; fehlt beim
+ * Faellen ein Setzling, wird spaeter nachgepflanzt.
  */
 public class TreeFarmerModule extends Module {
 
@@ -20,6 +22,8 @@ public class TreeFarmerModule extends Module {
     public final BooleanSetting collect = new BooleanSetting("Collect Drops", true);
     public final BooleanSetting useAxe = new BooleanSetting("Use Axe", true);
     public final BooleanSetting pillar = new BooleanSetting("Pillar Up For Tall Trees", true);
+    public final BooleanSetting store = new BooleanSetting("Store In Chests", true);
+    public final BooleanSetting eat = new BooleanSetting("Eat When Hungry", true);
 
     public TreeFarmerModule() {
         super("Tree Farmer", Category.BOTS);
@@ -28,5 +32,12 @@ public class TreeFarmerModule extends Module {
         addSetting(collect);
         addSetting(useAxe);
         addSetting(pillar);
+        addSetting(store);
+        addSetting(eat);
+    }
+
+    /** Statuszeile auf der Bot-Seite. */
+    public String getStatus() {
+        return com.vortex.client.bot.TreeFarmer.status();
     }
 }

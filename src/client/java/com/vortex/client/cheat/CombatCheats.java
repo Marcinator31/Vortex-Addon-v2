@@ -87,6 +87,16 @@ public final class CombatCheats {
         return (nf != null && nf.isEnabled()) || (afk != null && afk.isEnabled());
     }
 
+    /**
+     * Isst gerade ein Farm-Bot selbst (BotEssen)? Dann pausiert Auto Eat --
+     * es wuerde dem Bot den Hotbar-Platz beim Pflanzen/Faellen wegschnappen.
+     */
+    private static boolean farmerIsst() {
+        var crop = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.CropFarmerModule.class);
+        var tree = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.TreeFarmerModule.class);
+        return (crop != null && crop.isEnabled() && crop.eat.get()) || (tree != null && tree.isEnabled() && tree.eat.get());
+    }
+
     /** Naechster fremder Spieler (kein Freund) innerhalb von "weite", sonst null. */
     private static Player gegner(Minecraft mc, LocalPlayer p, double weite) {
         Player best = null;
@@ -230,7 +240,7 @@ public final class CombatCheats {
 
     private static void autoEat(Minecraft mc, LocalPlayer p) {
         AutoEatModule m = an(AutoEatModule.class);
-        if (m == null || botLaeuft() || p.isCreative()) {
+        if (m == null || botLaeuft() || farmerIsst() || p.isCreative()) {
             if ("eat".equals(hand)) essenAbbrechen(mc);
             return;
         }

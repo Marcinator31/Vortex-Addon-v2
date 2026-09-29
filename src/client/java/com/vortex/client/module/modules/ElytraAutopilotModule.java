@@ -34,4 +34,9 @@ public class ElytraAutopilotModule extends Module {
         addSetting(minDurability);
         addSetting(turnSpeed);
     }
+
+    /** Statuszeile auf der Bot-Seite. */
+    public String getStatus() {
+        return com.vortex.client.bot.ElytraPilot.status();
+    }
 }
