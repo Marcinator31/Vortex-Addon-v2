@@ -1,0 +1,18 @@
+// Nur fuer die Werkzeugkette: holt Minecraft 1.21.11 (Mojang-Namen) und die
+// Fabric API und legt alle Jars des Compile-Klassenpfads in build/cp ab.
+// Daraus wird lokal gegen 1.21.11 geprueft, ohne bei jedem Versuch einen
+// ganzen CI-Lauf abzuwarten. Wird NICHT ausgeliefert.
+plugins {
+    id 'fabric-loom' version '1.14-SNAPSHOT'
+}
+repositories { }
+dependencies {
+    minecraft "com.mojang:minecraft:1.21.11"
+    mappings loom.officialMojangMappings()
+    modImplementation "net.fabricmc:fabric-loader:0.19.3"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:0.141.6+1.21.11"
+}
+tasks.register('dumpCp', Copy) {
+    from sourceSets.main.compileClasspath
+    into layout.buildDirectory.dir('cp')
+}
