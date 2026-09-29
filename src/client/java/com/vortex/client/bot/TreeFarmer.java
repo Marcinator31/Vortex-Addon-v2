@@ -121,6 +121,12 @@ public final class TreeFarmer {
         MOTOR.vergiss();
     }
 
+    /** Protokoll fuer die Bot-Tests (nur mit -Dvortex.bot.debug=true, sonst still). */
+    private static final boolean DEBUG = Boolean.getBoolean("vortex.bot.debug");
+    private static void dbg(String text) {
+        if (DEBUG) System.out.println("[TreeFarmer] t=" + tick + " " + text);
+    }
+
     private static void melde(LocalPlayer p, String text) {
         p.sendSystemMessage(Component.literal("§d[Tree Farmer]§r " + text));
     }
@@ -210,7 +216,7 @@ public final class TreeFarmer {
         // 2. Gemerkte Stellen nachpflanzen, sobald ein Setzling da ist
         if (m.replant.get() && !OFFEN.isEmpty()) {
             OFFEN.removeIf(b -> {
-                if (!mc.level.getBlockState(b.below()).is(BlockTags.DIRT)) { PFLANZ_VERSUCHE.remove(b); GESEHEN_SEIT.remove(b); return true; }
+                if (!mc.level.getBlockState(b.below()).is(BlockTags.DIRT)) { dbg("drop " + b.toShortString() + ": no dirt below"); PFLANZ_VERSUCHE.remove(b); GESEHEN_SEIT.remove(b); return true; }
                 BlockState da = mc.level.getBlockState(b);
                 if (da.isAir()) { GESEHEN_SEIT.remove(b); return false; }
                 long seit = GESEHEN_SEIT.computeIfAbsent(b, k -> tick);
@@ -218,6 +224,7 @@ public final class TreeFarmer {
                 // Setzling (oder schon ein Baum): nach 2 s bestaetigt. Etwas anderes
                 // (Block im Weg): noch eine Minute warten, dann aufgeben.
                 if (tick - seit < (setzling ? 40 : 1200)) return false;
+                dbg("done " + b.toShortString() + ": " + da);
                 PFLANZ_VERSUCHE.remove(b);
                 GESEHEN_SEIT.remove(b);
                 return true;
@@ -275,6 +282,7 @@ public final class TreeFarmer {
         basis = best;
         stamm = bestStamm;
         setzling = passenderSetzling(mc.level.getBlockState(best));
+        dbg("tree at " + best.toShortString() + " with " + bestStamm.size() + " logs");
         standY = Integer.MIN_VALUE;
         keinTurmGemeldet = false;
         turmGemeldet = false;
@@ -495,6 +503,7 @@ public final class TreeFarmer {
             // noch nicht bestaetigt hat ...)? Trotzdem vormerken -- sonst bliebe die
             // Stelle fuer immer leer (gefunden im Bot-Test).
             if (m.replant.get() && basis != null && mc.level.getBlockState(basis.below()).is(BlockTags.DIRT)) OFFEN.add(basis.immutable());
+            dbg("replant skipped at " + (basis == null ? "-" : basis.toShortString() + " (block there: " + mc.level.getBlockState(basis) + ", below: " + mc.level.getBlockState(basis.below()) + ")") + " -> queued=" + (basis != null && OFFEN.contains(basis)));
             nichtsLiegtSeit = -1;
             wechsel(Phase.SAMMELN);
             return;
@@ -504,6 +513,7 @@ public final class TreeFarmer {
         if (slot < 0) {
             // Kein Setzling (noch): merken und spaeter nachpflanzen.
             OFFEN.add(basis.immutable());
+            dbg("no sapling for " + basis.toShortString() + " -> queued");
             nichtsLiegtSeit = -1;
             wechsel(Phase.SAMMELN);
             return;
@@ -518,7 +528,9 @@ public final class TreeFarmer {
         MOTOR.anhalten(mc);
         double reichweite = p.blockInteractionRange() - 0.5;
         Vec3 boden = new Vec3(basis.getX() + 0.5, basis.getY(), basis.getZ() + 0.5);
-        if (p.getEyePosition().distanceToSqr(boden) <= reichweite * reichweite) setzen(mc, p, basis, slot);
+        boolean nah = p.getEyePosition().distanceToSqr(boden) <= reichweite * reichweite;
+        if (nah) setzen(mc, p, basis, slot);
+        dbg("planting at " + basis.toShortString() + (nah ? " (clicked)" : " (out of reach)") + " -> queued for confirmation");
         // Erst als erledigt zaehlen, wenn der Setzling wirklich steht (prueft SUCHEN) --
         // ein still abgelehnter Klick liesse die Stelle sonst leer.
         OFFEN.add(basis.immutable());
@@ -541,6 +553,7 @@ public final class TreeFarmer {
         if (!steht && p.getEyePosition().distanceToSqr(boden) <= reichweite * reichweite && p.onGround()) {
             MOTOR.anhalten(mc);
             setzen(mc, p, z, slot);
+            dbg("replanting later at " + z.toShortString() + " (try " + (PFLANZ_VERSUCHE.getOrDefault(z, 0) + 1) + ")");
             // Bleibt in OFFEN, bis der Setzling wirklich steht; nach 3 vergeblichen Versuchen aufgeben
             if (PFLANZ_VERSUCHE.merge(z, 1, Integer::sum) > 3) {
                 OFFEN.remove(z);

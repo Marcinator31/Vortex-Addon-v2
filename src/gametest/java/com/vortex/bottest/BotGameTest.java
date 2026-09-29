@@ -188,6 +188,11 @@ public class BotGameTest implements FabricClientGameTest {
 
         int weizen = zaehle(srv, 2, -60, 2, 10, -60, 10, st -> st.is(Blocks.WHEAT));
         int acker = zaehle(srv, 2, -61, 2, 10, -61, 10, st -> st.is(Blocks.FARMLAND));
+        notiz("trampled (dirt) at: " + srv.computeOnServer(s -> {
+            List<String> l = new ArrayList<>();
+            for (BlockPos b : BlockPos.betweenClosed(2, -61, 2, 10, -61, 10)) if (s.overworld().getBlockState(b).is(Blocks.DIRT)) l.add(b.toShortString());
+            return l;
+        }));
         int truhe = srv.computeOnServer(s -> {
             if (s.overworld().getBlockEntity(new BlockPos(13, -60, 6)) instanceof Container c) {
                 int n = 0;
@@ -227,6 +232,14 @@ public class BotGameTest implements FabricClientGameTest {
         ctx.waitTicks(40);
         int stammVorher = zaehle(srv, 90, -60, -8, 122, -44, 24, st -> st.is(BlockTags.LOGS));
         notiz("logs before: " + stammVorher);
+        List<BlockPos> basen = srv.computeOnServer(s -> {
+            List<BlockPos> l = new ArrayList<>();
+            for (BlockPos b : BlockPos.betweenClosed(90, -60, -8, 122, -60, 24)) {
+                if (s.overworld().getBlockState(b).is(BlockTags.LOGS)) l.add(b.immutable());
+            }
+            return l;
+        });
+        notiz("tree bases: " + basen);
 
         ctx.runOnClient(mc -> {
             TreeFarmerModule m = ModuleManager.INSTANCE.get(TreeFarmerModule.class);
@@ -257,7 +270,15 @@ public class BotGameTest implements FabricClientGameTest {
             }
         }
         ctx.takeScreenshot("tree-end");
-        for (int[] b : new int[][]{{104, 6}, {111, 12}, {99, 15}}) {
+        notiz("saplings now at: " + srv.computeOnServer(s -> {
+            List<String> l = new ArrayList<>();
+            for (BlockPos b : BlockPos.betweenClosed(90, -61, -8, 122, -58, 24)) {
+                if (s.overworld().getBlockState(b).getBlock() instanceof net.minecraft.world.level.block.SaplingBlock) l.add(b.toShortString());
+            }
+            return l;
+        }));
+        for (BlockPos bb : basen) {
+            int[] b = {bb.getX(), bb.getZ()};
             notiz("tree spot " + b[0] + "/" + b[1] + ": " + srv.computeOnServer(s -> {
                 StringBuilder sb = new StringBuilder();
                 for (int y = -62; y <= -57; y++) {

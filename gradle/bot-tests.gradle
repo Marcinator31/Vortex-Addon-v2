@@ -35,3 +35,6 @@ dependencies {
 if (project.hasProperty('botOnly')) {
     loom.runs.configureEach { vmArg("-Dvortex.bottest.only=${project.property('botOnly')}") }
 }
+
+// Bot-Protokoll im Test (TreeFarmer.dbg ...)
+loom.runs.configureEach { vmArg("-Dvortex.bot.debug=true") }
