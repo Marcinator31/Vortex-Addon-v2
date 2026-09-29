@@ -216,7 +216,7 @@ public final class TreeFarmer {
         // 2. Gemerkte Stellen nachpflanzen, sobald ein Setzling da ist
         if (m.replant.get() && !OFFEN.isEmpty()) {
             OFFEN.removeIf(b -> {
-                if (!mc.level.getBlockState(b.below()).is(BlockTags.DIRT)) { dbg("drop " + b.toShortString() + ": no dirt below"); PFLANZ_VERSUCHE.remove(b); GESEHEN_SEIT.remove(b); return true; }
+                if (!pflanzboden(mc.level.getBlockState(b.below()))) { dbg("drop " + b.toShortString() + ": no dirt below"); PFLANZ_VERSUCHE.remove(b); GESEHEN_SEIT.remove(b); return true; }
                 BlockState da = mc.level.getBlockState(b);
                 if (da.isAir()) { GESEHEN_SEIT.remove(b); return false; }
                 long seit = GESEHEN_SEIT.computeIfAbsent(b, k -> tick);
@@ -269,7 +269,7 @@ public final class TreeFarmer {
         for (BlockPos b : BlockPos.betweenClosed(mitte.offset(-r, -4, -r), mitte.offset(r, 6, r))) {
             if (GESPERRT.containsKey(b)) continue;
             BlockState st = mc.level.getBlockState(b);
-            if (!st.is(BlockTags.LOGS) || !mc.level.getBlockState(b.below()).is(BlockTags.DIRT)) continue;
+            if (!st.is(BlockTags.LOGS) || !pflanzboden(mc.level.getBlockState(b.below()))) continue;
             double d = p.distanceToSqr(Vec3.atCenterOf(b));
             if (d >= bestD) continue;
             Set<BlockPos> s = baum(mc, b.immutable());
@@ -294,7 +294,7 @@ public final class TreeFarmer {
         // 2x2-Stamm? Dann auslassen.
         for (Direction d : Direction.Plane.HORIZONTAL) {
             BlockPos n = basis.relative(d);
-            if (mc.level.getBlockState(n).is(BlockTags.LOGS) && mc.level.getBlockState(n.below()).is(BlockTags.DIRT)) return null;
+            if (mc.level.getBlockState(n).is(BlockTags.LOGS) && pflanzboden(mc.level.getBlockState(n.below()))) return null;
         }
         Set<BlockPos> s = new HashSet<>();
         ArrayDeque<BlockPos> offen = new ArrayDeque<>();
@@ -498,11 +498,11 @@ public final class TreeFarmer {
 
     private static void pflanzen(Minecraft mc, LocalPlayer p, TreeFarmerModule m) {
         if (!m.replant.get() || basis == null || !mc.level.getBlockState(basis).isAir()
-                || !mc.level.getBlockState(basis.below()).is(BlockTags.DIRT)) {
+                || !pflanzboden(mc.level.getBlockState(basis.below()))) {
             // Steht dort noch etwas (unterster Turmblock, ein Stamm, den der Server
             // noch nicht bestaetigt hat ...)? Trotzdem vormerken -- sonst bliebe die
             // Stelle fuer immer leer (gefunden im Bot-Test).
-            if (m.replant.get() && basis != null && mc.level.getBlockState(basis.below()).is(BlockTags.DIRT)) OFFEN.add(basis.immutable());
+            if (m.replant.get() && basis != null && pflanzboden(mc.level.getBlockState(basis.below()))) OFFEN.add(basis.immutable());
             dbg("replant skipped at " + (basis == null ? "-" : basis.toShortString() + " (block there: " + mc.level.getBlockState(basis) + ", below: " + mc.level.getBlockState(basis.below()) + ")") + " -> queued=" + (basis != null && OFFEN.contains(basis)));
             nichtsLiegtSeit = -1;
             wechsel(Phase.SAMMELN);
@@ -540,7 +540,7 @@ public final class TreeFarmer {
 
     private static void nachpflanzen(Minecraft mc, LocalPlayer p) {
         BlockPos z = pflanzZiel;
-        if (z == null || !mc.level.getBlockState(z).isAir() || !mc.level.getBlockState(z.below()).is(BlockTags.DIRT)) {
+        if (z == null || !mc.level.getBlockState(z).isAir() || !pflanzboden(mc.level.getBlockState(z.below()))) {
             wechsel(Phase.SUCHEN);                              // abgehakt wird in SUCHEN (nach Bestaetigung)
             return;
         }
@@ -636,6 +636,20 @@ public final class TreeFarmer {
         }
         BotMotor.Lauf l = MOTOR.laufe(mc, p, BotWeg.ring(c.x, c.z, z.getY(), 3.6, 4.0), z, tick);
         if (l == BotMotor.Lauf.UNERREICHBAR) { GESPERRT.put(z, tick + 2400); wechsel(Phase.SUCHEN); }
+    }
+
+    /**
+     * Boden, auf dem ein Baum steht bzw. ein Setzling waechst. NICHT nur
+     * BlockTags.DIRT: seit 26.1 enthaelt dieser Tag nur noch Erde, grobe Erde
+     * und Wurzelerde -- Gras, Podsol, Moos ... fehlen. Waechst nach dem Faellen
+     * Gras ueber die Erde, galt die Stelle sonst als ungeeignet (gefunden im
+     * Bot-Test im echten 26.2).
+     */
+    private static boolean pflanzboden(BlockState st) {
+        return st.is(BlockTags.DIRT) || st.is(net.minecraft.world.level.block.Blocks.GRASS_BLOCK)
+                || st.is(net.minecraft.world.level.block.Blocks.PODZOL) || st.is(net.minecraft.world.level.block.Blocks.MYCELIUM)
+                || st.is(net.minecraft.world.level.block.Blocks.MOSS_BLOCK) || st.is(net.minecraft.world.level.block.Blocks.PALE_MOSS_BLOCK)
+                || st.is(net.minecraft.world.level.block.Blocks.MUD) || st.is(net.minecraft.world.level.block.Blocks.MUDDY_MANGROVE_ROOTS);
     }
 
     /** Nachbarfeld, auf dem man sicher stehen kann (Boden, keine Gefahr, Kopf frei) -- oder null. */
