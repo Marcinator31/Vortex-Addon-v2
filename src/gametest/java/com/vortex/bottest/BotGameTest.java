@@ -69,6 +69,7 @@ public class BotGameTest implements FabricClientGameTest {
             abschnitt(ctx, "Crop Farmer", () -> cropTest(ctx, srv));
             abschnitt(ctx, "Tree Farmer", () -> treeTest(ctx, srv));
             abschnitt(ctx, "Defence", () -> defenceTest(ctx, srv));
+            abschnitt(ctx, "Elytra Autopilot", () -> elytraTest(ctx, srv));
         } finally {
             schreibe();
         }
@@ -85,6 +86,8 @@ public class BotGameTest implements FabricClientGameTest {
             for (StackTraceElement e : t.getStackTrace()) { notiz("at " + e); if (bericht.size() > 400) break; }
         } finally {
             ctx.runOnClient(mc -> {
+                var e = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.ElytraAutopilotModule.class);
+                if (e != null) e.setEnabled(false);
                 var c = ModuleManager.INSTANCE.get(CropFarmerModule.class);
                 if (c != null) c.setEnabled(false);
                 var t = ModuleManager.INSTANCE.get(TreeFarmerModule.class);
@@ -307,6 +310,53 @@ public class BotGameTest implements FabricClientGameTest {
         pruefe("player survived", lebt && leben > 4, "health " + leben);
         srv.runCommand("difficulty peaceful");
         srv.runCommand("time set day");
+    }
+
+    // ------------------------------------------------------------------
+    // ELYTRA: fast kaputte Elytra an, Ersatz im Inventar, 300 Bloecke weit
+
+    private void elytraTest(ClientGameTestContext ctx, TestServerContext srv) {
+        srv.runCommand("tp @a 400.5 -60 0.5");
+        ctx.waitTicks(40);
+        flaeche(srv, 395, -5, 405, 5);
+        srv.runCommand("clear @a");
+        srv.runCommand("effect clear @a");
+        srv.runCommand("item replace entity @a armor.chest with minecraft:elytra[minecraft:damage=420]");
+        srv.runCommand("give @a minecraft:elytra 1");
+        srv.runCommand("give @a minecraft:firework_rocket 64");
+        srv.runCommand("give @a minecraft:bread 8");
+        ctx.waitTicks(20);
+        ctx.runOnClient(mc -> {
+            var m = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.ElytraAutopilotModule.class);
+            m.cruiseY.set(64);
+            m.land.set(true);
+            m.rockets.set(true);
+            m.minDurability.set(20);
+            mc.getConnection().sendCommand("autopilot 700 0");
+        });
+        boolean an = true;
+        for (int t = 0; t < 3600; t += 20) {
+            ctx.waitTicks(20);
+            if (t == 200) ctx.takeScreenshot("elytra-flying");
+            if (t % 400 == 0) notiz("t=" + t + "  status: " + botStatus(ctx, com.vortex.client.module.modules.ElytraAutopilotModule.class));
+            an = ctx.computeOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.ElytraAutopilotModule.class).isEnabled());
+            if (!an) break;
+        }
+        ctx.takeScreenshot("elytra-end");
+        double x = srv.computeOnServer(s -> spieler(s).getX());
+        double z = srv.computeOnServer(s -> spieler(s).getZ());
+        float leben = srv.computeOnServer(s -> spieler(s).getHealth());
+        boolean amBoden = srv.computeOnServer(s -> spieler(s).onGround());
+        int brustRest = srv.computeOnServer(s -> {
+            ItemStack b = spieler(s).getItemBySlot(net.minecraft.world.entity.EquipmentSlot.CHEST);
+            return b.is(Items.ELYTRA) ? b.getMaxDamage() - b.getDamageValue() : -1;
+        });
+        double abstand = Math.sqrt((x - 700) * (x - 700) + z * z);
+        pruefe("autopilot finished by itself", !an, an ? "still flying after 3 min" : "stopped");
+        pruefe("landed near the target", abstand <= 60, Math.round(abstand) + " blocks from 700/0");
+        pruefe("on the ground", amBoden, "onGround=" + amBoden);
+        pruefe("no fall damage", leben >= 18, "health " + leben);
+        pruefe("switched to the spare elytra", brustRest > 100, "worn elytra durability " + brustRest);
     }
 
     // ------------------------------------------------------------------
