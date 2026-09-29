@@ -169,7 +169,14 @@ public class BotGameTest implements FabricClientGameTest {
             if (t == 1000) ctx.takeScreenshot("crop-middle");
             if (t % 500 == 0) notiz("t=" + t + "  status: " + botStatus(ctx, CropFarmerModule.class));
             reif = zaehle(srv, 2, -60, 2, 10, -60, 10, st -> st.getBlock() instanceof CropBlock c && c.isMaxAge(st));
-            if (reif == 0 && t >= 400) break;
+            if (reif == 0 && t >= 400) {
+                // Zeit zum Nachpflanzen (Samen muessen erst eingesammelt werden): bis 60 s
+                for (int w = 0; w < 1200; w += 100) {
+                    ctx.waitTicks(100);
+                    if (zaehle(srv, 2, -60, 2, 10, -60, 10, st -> st.is(Blocks.WHEAT)) >= 72) break;
+                }
+                break;
+            }
         }
         ctx.takeScreenshot("crop-end");
         notiz("end status: " + botStatus(ctx, CropFarmerModule.class));
@@ -190,7 +197,7 @@ public class BotGameTest implements FabricClientGameTest {
         float leben = srv.computeOnServer(s -> spieler(s).getHealth());
         int hunger = srv.computeOnServer(s -> spieler(s).getFoodData().getFoodLevel());
         pruefe("all ripe wheat harvested", reif == 0, reif + " ripe left of 72");
-        pruefe("wheat replanted", weizen >= 60, weizen + " of 72 spots have wheat again");
+        pruefe("wheat replanted", weizen >= 70, weizen + " of 72 spots have wheat again");
         pruefe("no farmland trampled", acker == ackerVorher, acker + " of " + ackerVorher + " farmland left");
         pruefe("harvest stored in the chest", truhe > 0, truhe + " wheat/seeds in the chest");
         pruefe("player healthy", leben >= 14, "health " + leben);

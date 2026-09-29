@@ -70,6 +70,7 @@ public final class TreeFarmer {
     private static final Map<BlockPos, Long> GESPERRT = new HashMap<>();
     /** Gefaellte Baeume, fuer die noch ein Setzling fehlt: Boden-Position (Erde) +1. */
     private static final Set<BlockPos> OFFEN = new LinkedHashSet<>();
+    private static final Map<BlockPos, Integer> PFLANZ_VERSUCHE = new HashMap<>();
     private static BlockPos pflanzZiel = null;
     private static long nichtsLiegtSeit = -1;
     private static ItemEntity sammelZiel = null;
@@ -131,6 +132,7 @@ public final class TreeFarmer {
                 basis = null;
                 GESPERRT.clear();
                 DUENG_ZAEHLER.clear();
+                PFLANZ_VERSUCHE.clear();
                 duengZiel = null;
                 if (p != null && baeume > 0) {
                     long min = (System.currentTimeMillis() - startZeit) / 60000L;
@@ -199,7 +201,11 @@ public final class TreeFarmer {
 
         // 2. Gemerkte Stellen nachpflanzen, sobald ein Setzling da ist
         if (m.replant.get() && !OFFEN.isEmpty()) {
-            OFFEN.removeIf(b -> !mc.level.getBlockState(b).isAir() || !mc.level.getBlockState(b.below()).is(BlockTags.DIRT));
+            OFFEN.removeIf(b -> {
+                boolean fertig = !mc.level.getBlockState(b).isAir() || !mc.level.getBlockState(b.below()).is(BlockTags.DIRT);
+                if (fertig) PFLANZ_VERSUCHE.remove(b);
+                return fertig;
+            });
             if (hatSetzling(p, null)) {
                 BlockPos naechste = null;
                 for (BlockPos b : OFFEN) {
@@ -490,8 +496,12 @@ public final class TreeFarmer {
             return;
         }
         MOTOR.anhalten(mc);
-        setzen(mc, p, basis, slot);
-        OFFEN.remove(basis);
+        double reichweite = p.blockInteractionRange() - 0.5;
+        Vec3 boden = new Vec3(basis.getX() + 0.5, basis.getY(), basis.getZ() + 0.5);
+        if (p.getEyePosition().distanceToSqr(boden) <= reichweite * reichweite) setzen(mc, p, basis, slot);
+        // Erst als erledigt zaehlen, wenn der Setzling wirklich steht (prueft SUCHEN) --
+        // ein still abgelehnter Klick liesse die Stelle sonst leer.
+        OFFEN.add(basis.immutable());
         nichtsLiegtSeit = -1;
         wechsel(Phase.SAMMELN);
     }
@@ -512,7 +522,12 @@ public final class TreeFarmer {
         if (!steht && p.getEyePosition().distanceToSqr(boden) <= reichweite * reichweite && p.onGround()) {
             MOTOR.anhalten(mc);
             setzen(mc, p, z, slot);
-            OFFEN.remove(z);
+            // Bleibt in OFFEN, bis der Setzling wirklich steht; nach 3 vergeblichen Versuchen aufgeben
+            if (PFLANZ_VERSUCHE.merge(z, 1, Integer::sum) > 3) {
+                OFFEN.remove(z);
+                PFLANZ_VERSUCHE.remove(z);
+                melde(p, "Could not plant a sapling at " + z.toShortString() + " -- skipping that spot.");
+            }
             wechsel(Phase.SUCHEN);
             return;
         }
