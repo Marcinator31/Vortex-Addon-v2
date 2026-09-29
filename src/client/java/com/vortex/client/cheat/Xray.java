@@ -112,7 +112,7 @@ public final class Xray {
                 int r = mc.options.renderDistance().get() + 1;
                 int sx = mc.player.getBlockX() >> 4, sz = mc.player.getBlockZ() >> 4;
                 int y0 = mc.level.getMinY() >> 4, y1 = (mc.level.getMaxY() - 1) >> 4;
-                //#if 26.2
+                //#if 26
                 //#else
                 //$ // 1.21.11: Namen sind zur Laufzeit verschleiert -- direkt aufrufen.
                 //$ mc.levelRenderer.setSectionRangeDirty(sx - r, y0, sz - r, sx + r, y1, sz + r);

@@ -9,13 +9,18 @@ dort landet automatisch auch in der anderen Fassung.
 Was passiert (Reihenfolge):
   1. Repo in den Zielordner kopieren (ohne .git, build, port/)
   2. Bedingte Bloecke aufloesen -- in .java und .json:
-         //#if 26.2
-         ... Code nur fuer 26.2 ...
+         //#if 26
+         ... Code fuer 26.x (muss 26.2 einschliessen, ist der "echte" Code) ...
+         //#elif 26.1
+         //$ ... Code nur fuer 26.1.x (auskommentiert, optional) ...
          //#else
-         //$ ... Code nur fuer die andere Fassung (auskommentiert) ...
+         //$ ... Code fuer alle anderen, z. B. 1.21.11 (auskommentiert) ...
          //#endif
-     Fuer 26.2 bleibt die Datei, wie sie ist (der else-Teil ist Kommentar).
-     Fuer die andere Fassung faellt der if-Teil weg und "//$ " wird entfernt.
+     Bedingung = Versionen mit Komma; "26" passt auf 26, 26.1.1, 26.2 ...,
+     "26.1" auf 26.1, 26.1.1, 26.1.2 ...; "1.21.11" nur auf 1.21.11.
+     Es gilt der ERSTE passende Zweig. Ist das der erste, bleibt sein Code;
+     sonst faellt er weg und beim gewaehlten Zweig wird "//$ " entfernt.
+     Passt kein Zweig und gibt es kein //#else, faellt der ganze Block weg.
   3. Ersetzungen aus port/<ziel>/replace.tsv (Regex <TAB> Ersatz [<TAB> Dateien]),
      fuer .java; dritte Spalte optional: "A.java,B.java" nur dort, "!A.java" ausser dort;
      Zeilen mit "json:" vor dem Regex gelten nur fuer .json-Dateien
@@ -61,7 +66,7 @@ def main():
                 continue
             pfad = os.path.join(wurzel, d)
             text = open(pfad, encoding='utf-8').read()
-            neu = bloecke(text, pfad, zaehler)
+            neu = bloecke(text, pfad, zaehler, ziel)
             endung = 'java' if d.endswith('.java') else 'json'
             for art, rx, rep, filt in ersetzen:
                 if art == endung and passt(d, filt):
@@ -131,40 +136,60 @@ def passt(datei, filt):
 
 
 RX_IF = re.compile(r'^\s*//#if\s+(\S+)\s*$')
+RX_ELIF = re.compile(r'^\s*//#elif\s+(\S+)\s*$')
 RX_ELSE = re.compile(r'^\s*//#else\s*$')
 RX_END = re.compile(r'^\s*//#endif\s*$')
 RX_ALT = re.compile(r'^(\s*)//\$ ?(.*)$')
+QUELLE = '26.2'          # Version, fuer die der Quelltext geschrieben ist
 
-def bloecke(text, pfad, zaehler):
+def trifft(bedingung, version):
+    """"26" passt auf 26.2 und 26.1.1, "26.1" auf 26.1.1, "1.21.11" nur auf sich."""
+    for t in bedingung.split(','):
+        t = t.strip()
+        if t and (version == t or version.startswith(t + '.')):
+            return True
+    return False
+
+def bloecke(text, pfad, zaehler, ziel):
     if '//#if' not in text:
         return text
     raus = []
-    zustand = None          # None | 'if' | 'else'
+    zweig = None            # None = ausserhalb; sonst Index des Zweigs im Block
+    gewaehlt = None         # Index des Zweigs, der fuer das Ziel gilt (oder -1)
     for n, zeile in enumerate(text.split('\n'), 1):
-        if RX_IF.match(zeile):
-            if zustand:
+        m_if, m_elif = RX_IF.match(zeile), RX_ELIF.match(zeile)
+        if m_if:
+            if zweig is not None:
                 sys.exit(f'{pfad}:{n}: verschachteltes //#if')
-            zustand = 'if'
+            if not trifft(m_if.group(1), QUELLE):
+                sys.exit(f'{pfad}:{n}: der erste Zweig muss {QUELLE} einschliessen')
+            zweig, gewaehlt = 0, (0 if trifft(m_if.group(1), ziel) else -1)
             zaehler['bloecke'] += 1
             continue
-        if RX_ELSE.match(zeile):
-            if zustand != 'if':
-                sys.exit(f'{pfad}:{n}: //#else ohne //#if')
-            zustand = 'else'
+        if m_elif or RX_ELSE.match(zeile):
+            if zweig is None:
+                sys.exit(f'{pfad}:{n}: //#elif/#else ohne //#if')
+            if zweig == 'else':
+                sys.exit(f'{pfad}:{n}: Zweig nach //#else')
+            zweig = zweig + 1 if m_elif else 'else'
+            if gewaehlt == -1 and (RX_ELSE.match(zeile) or trifft(m_elif.group(1), ziel)):
+                gewaehlt = zweig
             continue
         if RX_END.match(zeile):
-            if not zustand:
+            if zweig is None:
                 sys.exit(f'{pfad}:{n}: //#endif ohne //#if')
-            zustand = None
+            zweig = gewaehlt = None
             continue
-        if zustand == 'if':
-            continue                       # 26.2-Code faellt weg
-        if zustand == 'else':
-            m = RX_ALT.match(zeile)
-            raus.append(m.group(1) + m.group(2) if m else zeile)
-            continue
-        raus.append(zeile)
-    if zustand:
+        if zweig is None:
+            raus.append(zeile)
+        elif zweig == gewaehlt:
+            if zweig == 0:
+                raus.append(zeile)              # echter Code bleibt
+            else:
+                m = RX_ALT.match(zeile)
+                raus.append(m.group(1) + m.group(2) if m else zeile)
+        # andere Zweige fallen weg
+    if zweig is not None:
         sys.exit(f'{pfad}: //#if ohne //#endif')
     return '\n'.join(raus)
 

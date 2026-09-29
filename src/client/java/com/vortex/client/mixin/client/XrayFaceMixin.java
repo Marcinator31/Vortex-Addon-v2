@@ -1,6 +1,6 @@
 package com.vortex.client.mixin.client;
 
-//#if 26.2
+//#if 26
 import net.minecraft.client.renderer.block.BlockAndTintGetter;
 //#endif
 import net.minecraft.client.renderer.block.ModelBlockRenderer;
@@ -23,7 +23,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(ModelBlockRenderer.class)
 public abstract class XrayFaceMixin {
 
-    //#if 26.2
+    //#if 26
     @Inject(method = "shouldRenderFace(Lnet/minecraft/client/renderer/block/BlockAndTintGetter;Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/core/Direction;Lnet/minecraft/core/BlockPos;)Z",
             at = @At("HEAD"), cancellable = true, require = 0)
     private void vortex$xrayFace(BlockAndTintGetter level, BlockState state, Direction dir, BlockPos pos,
