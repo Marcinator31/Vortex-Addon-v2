@@ -233,8 +233,13 @@ public final class ElytraPilot {
             landePlatz = landeplatz(mc, landen ? p.getX() + v.x * 30 : zielX, landen ? p.getZ() + v.z * 30 : zielZ);
         }
 
+        // Steht der Spieler, ist er gelandet -- auch wenn der Client noch "gleitet"
+        // meldet (im echten Spiel bleibt das nach der Landung manchmal haengen;
+        // gefunden im Bot-Test).
+        boolean gleitet = p.isFallFlying() && !(p.onGround() && tempo < 6);
+
         // --- im Wasser gelandet: oben bleiben (sonst ertrinkt ein AFK-Spieler) --
-        if (!p.isFallFlying() && p.isInWater()) {
+        if (!gleitet && p.isInWater()) {
             mc.options.keyJump.setDown(true);
             phase = "In water -- swim to land";
             if (!imWasserGemeldet) { imWasserGemeldet = true; melde(p, "Landed in water -- holding you at the surface. Swim to land or stop with /autopilot stop."); }
@@ -243,7 +248,7 @@ public final class ElytraPilot {
         imWasserGemeldet = false;
 
         // --- am Boden -------------------------------------------------------
-        if (!p.isFallFlying()) {
+        if (!gleitet) {
             if (p.onGround()) {
                 double platzAbstand = landePlatz == null ? abstand
                         : Math.sqrt(Math.pow(landePlatz.getX() + 0.5 - p.getX(), 2) + Math.pow(landePlatz.getZ() + 0.5 - p.getZ(), 2));

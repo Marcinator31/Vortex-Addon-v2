@@ -66,10 +66,12 @@ public class BotGameTest implements FabricClientGameTest {
             srv.runCommand("weather clear 1000000");
             ctx.waitTicks(20);
 
-            abschnitt(ctx, "Crop Farmer", () -> cropTest(ctx, srv));
-            abschnitt(ctx, "Tree Farmer", () -> treeTest(ctx, srv));
-            abschnitt(ctx, "Defence", () -> defenceTest(ctx, srv));
-            abschnitt(ctx, "Elytra Autopilot", () -> elytraTest(ctx, srv));
+            // -Dvortex.bottest.only=elytra,crop ... : nur diese Abschnitte (schnelleres Nachpruefen)
+            String nur = System.getProperty("vortex.bottest.only", "").toLowerCase();
+            if (nur.isEmpty() || nur.contains("crop")) abschnitt(ctx, "Crop Farmer", () -> cropTest(ctx, srv));
+            if (nur.isEmpty() || nur.contains("tree")) abschnitt(ctx, "Tree Farmer", () -> treeTest(ctx, srv));
+            if (nur.isEmpty() || nur.contains("defen")) abschnitt(ctx, "Defence", () -> defenceTest(ctx, srv));
+            if (nur.isEmpty() || nur.contains("elytra")) abschnitt(ctx, "Elytra Autopilot", () -> elytraTest(ctx, srv));
         } finally {
             schreibe();
         }
@@ -343,6 +345,8 @@ public class BotGameTest implements FabricClientGameTest {
             if (!an) break;
         }
         ctx.takeScreenshot("elytra-end");
+        notiz("client: " + ctx.computeOnClient(mc -> "fallFlying=" + mc.player.isFallFlying() + " onGround=" + mc.player.onGround()
+                + " y=" + Math.round(mc.player.getY() * 10) / 10.0 + " motion=" + mc.player.getDeltaMovement()));
         double x = srv.computeOnServer(s -> spieler(s).getX());
         double z = srv.computeOnServer(s -> spieler(s).getZ());
         float leben = srv.computeOnServer(s -> spieler(s).getHealth());

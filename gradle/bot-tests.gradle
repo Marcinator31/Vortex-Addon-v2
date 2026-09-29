@@ -30,3 +30,8 @@ dependencies {
     runtimeOnly files(vortexClientJar)
     gametestRuntimeOnly files(vortexClientJar)
 }
+
+// Nur einzelne Abschnitte:  -PbotOnly=elytra  (Komma-Liste: crop, tree, defence, elytra)
+if (project.hasProperty('botOnly')) {
+    loom.runs.configureEach { vmArg("-Dvortex.bottest.only=${project.property('botOnly')}") }
+}
