@@ -73,6 +73,9 @@ public final class CropFarmer {
     private static final Map<BlockPos, Item> NACHPFLANZEN = new LinkedHashMap<>();
     /** Seit wann eine Stelle auf Saatgut wartet (nach 10 Minuten ohne Saatgut vergessen). */
     private static final Map<BlockPos, Long> NACHPFLANZEN_SEIT = new HashMap<>();
+    /** Nach einem Pflanzversuch: bis wann auf die Bestaetigung des Servers gewartet wird. */
+    private static final Map<BlockPos, Long> BESTAETIGEN_BIS = new HashMap<>();
+    private static final Map<BlockPos, Integer> PFLANZ_VERSUCHE = new HashMap<>();
     /** Abgeerntete Kakaobohnen -> Richtung zum Tropenbaum-Stamm. */
     private static final Map<BlockPos, Direction> KAKAO = new LinkedHashMap<>();
     /** Unerreichbare Ziele -> gesperrt bis Tick. */
@@ -122,6 +125,8 @@ public final class CropFarmer {
                 SCHUTZ.zuruecksetzen(p);
                 NACHPFLANZEN.clear();
                 NACHPFLANZEN_SEIT.clear();
+                BESTAETIGEN_BIS.clear();
+                PFLANZ_VERSUCHE.clear();
                 KAKAO.clear();
                 GESPERRT.clear();
                 GESPERRT_ITEMS.clear();
@@ -203,7 +208,15 @@ public final class CropFarmer {
                 var e = it.next();
                 BlockPos pos = e.getKey();
                 long seit = NACHPFLANZEN_SEIT.computeIfAbsent(pos, k -> tick);
-                if (!mc.level.getBlockState(pos).isAir() || tick - seit > 20 * 600) { it.remove(); NACHPFLANZEN_SEIT.remove(pos); continue; }
+                Long warte = BESTAETIGEN_BIS.get(pos);
+                if (warte != null && tick < warte) continue;          // Server-Antwort abwarten
+                boolean steht = !mc.level.getBlockState(pos).isAir();
+                // Gepflanzt und nach 2 s noch da -> erledigt. Lehnt der Server ab,
+                // verschwindet die Pflanze wieder -> neuer Versuch (hoechstens 3).
+                if (steht || tick - seit > 20 * 600 || PFLANZ_VERSUCHE.getOrDefault(pos, 0) >= 3) {
+                    it.remove(); NACHPFLANZEN_SEIT.remove(pos); BESTAETIGEN_BIS.remove(pos); PFLANZ_VERSUCHE.remove(pos);
+                    continue;
+                }
                 // Noch kein Saatgut (z. B. gleich nach dem Ernten, bevor es eingesammelt ist): Stelle merken
                 if (!hat(p, e.getValue())) continue;
                 if (auge.distanceToSqr(Vec3.atCenterOf(pos.below())) > reichweite * reichweite) continue;
@@ -211,8 +224,8 @@ public final class CropFarmer {
                 if (slot < 0) slot = BotMotor.holeInHotbar(mc, p, st -> st.is(e.getValue()));
                 if (slot < 0) continue;
                 pflanzen(mc, p, pos, slot);
-                it.remove();
-                NACHPFLANZEN_SEIT.remove(pos);
+                BESTAETIGEN_BIS.put(pos, tick + 40);
+                PFLANZ_VERSUCHE.merge(pos, 1, Integer::sum);
                 letzteAktion = tick;
                 MOTOR.anhalten(mc);
                 status = "Replanting";

@@ -71,6 +71,13 @@ public final class TreeFarmer {
     /** Gefaellte Baeume, fuer die noch ein Setzling fehlt: Boden-Position (Erde) +1. */
     private static final Set<BlockPos> OFFEN = new LinkedHashSet<>();
     private static final Map<BlockPos, Integer> PFLANZ_VERSUCHE = new HashMap<>();
+    /**
+     * Seit wann an einer Stelle ein Setzling zu sehen ist. Erst nach 2 s gilt
+     * sie als erledigt: der Client zeigt einen gesetzten Block sofort an --
+     * lehnt der Server ab, verschwindet er einen Moment spaeter wieder
+     * (gefunden im Bot-Test: die Stelle wurde abgehakt und blieb leer).
+     */
+    private static final Map<BlockPos, Long> GESEHEN_SEIT = new HashMap<>();
     private static BlockPos pflanzZiel = null;
     private static long nichtsLiegtSeit = -1;
     private static ItemEntity sammelZiel = null;
@@ -133,6 +140,7 @@ public final class TreeFarmer {
                 GESPERRT.clear();
                 DUENG_ZAEHLER.clear();
                 PFLANZ_VERSUCHE.clear();
+                GESEHEN_SEIT.clear();
                 duengZiel = null;
                 if (p != null && baeume > 0) {
                     long min = (System.currentTimeMillis() - startZeit) / 60000L;
@@ -202,9 +210,13 @@ public final class TreeFarmer {
         // 2. Gemerkte Stellen nachpflanzen, sobald ein Setzling da ist
         if (m.replant.get() && !OFFEN.isEmpty()) {
             OFFEN.removeIf(b -> {
-                boolean fertig = !mc.level.getBlockState(b).isAir() || !mc.level.getBlockState(b.below()).is(BlockTags.DIRT);
-                if (fertig) PFLANZ_VERSUCHE.remove(b);
-                return fertig;
+                if (!mc.level.getBlockState(b.below()).is(BlockTags.DIRT)) { PFLANZ_VERSUCHE.remove(b); GESEHEN_SEIT.remove(b); return true; }
+                if (mc.level.getBlockState(b).isAir()) { GESEHEN_SEIT.remove(b); return false; }
+                long seit = GESEHEN_SEIT.computeIfAbsent(b, k -> tick);
+                if (tick - seit < 40) return false;            // noch nicht sicher bestaetigt
+                PFLANZ_VERSUCHE.remove(b);
+                GESEHEN_SEIT.remove(b);
+                return true;
             });
             if (hatSetzling(p, null)) {
                 BlockPos naechste = null;
@@ -509,8 +521,7 @@ public final class TreeFarmer {
     private static void nachpflanzen(Minecraft mc, LocalPlayer p) {
         BlockPos z = pflanzZiel;
         if (z == null || !mc.level.getBlockState(z).isAir() || !mc.level.getBlockState(z.below()).is(BlockTags.DIRT)) {
-            if (z != null) OFFEN.remove(z);
-            wechsel(Phase.SUCHEN);
+            wechsel(Phase.SUCHEN);                              // abgehakt wird in SUCHEN (nach Bestaetigung)
             return;
         }
         status = "Replanting a missing sapling";
