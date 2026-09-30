@@ -886,6 +886,7 @@ public final class TreeFarmer {
             ItemStack st = ie.getItem();
             if (!(st.is(ItemTags.LOGS) || st.is(ItemTags.SAPLINGS) || st.is(Items.APPLE) || st.is(Items.STICK))) continue;
             if (GESPERRT.containsKey(ie.blockPosition())) continue;
+            if (!ie.onGround() && !ie.isInWater()) continue;        // faellt noch (z. B. durch die Stammspalte)
             if (naechstes == null || ie.distanceToSqr(p) < naechstes.distanceToSqr(p)) naechstes = ie;
         }
         return naechstes;
