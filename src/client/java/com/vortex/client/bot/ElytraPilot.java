@@ -45,6 +45,15 @@ import static net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal;
  *     langsames Sinken (sonst Fallschaden), Kreisen ueber dem Platz, wenn der
  *     Bot zu hoch ankommt, Abfangen kurz ueber dem Boden
  *   - Statuszeile: Ziel, Entfernung, Restzeit, Raketen, Elytra
+ *
+ * Seit 2.37 -- WAENDE: Eine Rakete zieht in Blickrichtung. Bis 2.36 zuendete
+ * der Pilot bei Wandkontakt ("hochziehen") und beim Feststecken ("zu
+ * langsam") eine Rakete nach der anderen -- in die Wand, bis der Spieler tot
+ * war. Jetzt:
+ *   - vor JEDER Rakete: in Blickrichtung muessen 14 Bloecke frei sein
+ *   - nach Wandkontakt (oder langsam vor einer Wand): 2 s keine Rakete,
+ *     abdrehen in die freieste Richtung nahe am Ziel, notfalls steil nach oben
+ *   - 3 Raketen ohne Vorankommen in 5 s: 5 s Raketenpause
  */
 public final class ElytraPilot {
 
@@ -65,6 +74,11 @@ public final class ElytraPilot {
     private static double tempoGlatt = 0;
     private static boolean imWasserGemeldet = false;
     private static String phase = "Idle";
+    /** Letzter Wandkontakt (Tick): danach 2 s abdrehen, Raketen nur mit freiem Weg. */
+    private static long wandZuletzt = -1000;
+    /** Wann zuletzt Raketen gezuendet wurden, obwohl der Spieler kaum vorankam. */
+    private static final java.util.ArrayDeque<Long> LANGSAME_RAKETEN = new java.util.ArrayDeque<>();
+    private static long raketenPauseBis = -1;
 
     private static final SuggestionProvider<FabricClientCommandSource> WAYPOINTS = (ctx, b) -> {
         try {
@@ -316,7 +330,7 @@ public final class ElytraPilot {
             }
             if (landeAbstand < 3 && hoeheUeber < 6) pitch = Math.min(pitch, 10f);
             // Berg oder Baeume zwischen uns und dem Landeplatz? Hochziehen.
-            if (p.horizontalCollision || (hoeheUeber > 12 && landeAbstand > 20 && gelaendeVoraus(mc, p, zielYaw))) {
+            if (hoeheUeber > 12 && landeAbstand > 20 && gelaendeVoraus(mc, p, zielYaw)) {
                 pitch = -30f;
                 steigen = true;
             }
@@ -324,10 +338,26 @@ public final class ElytraPilot {
             phase = "Flying";
             double soll = m.cruiseY.get();
             double hoehe = p.getY();
-            if (p.horizontalCollision || gelaendeVoraus(mc, p, zielYaw)) { pitch = -35f; steigen = true; }
+            if (gelaendeVoraus(mc, p, zielYaw)) { pitch = -35f; steigen = true; }
             else if (hoehe < soll - 8) { pitch = -30f; steigen = true; }
             else if (hoehe > soll + 8) pitch = 15f;
             else pitch = 3f;
+        }
+        // --- Wand: abdrehen statt Raketen hinein ------------------------------
+        // Gegen die Wand gestossen, oder langsam und direkt vor einer (feststecken)?
+        boolean steckt = tempo < 3 && freiLaenge(mc, p, p.getYRot(), 0f, 3) < 2.5;
+        if (p.horizontalCollision || steckt) wandZuletzt = tick;
+        if (tick - wandZuletzt < 40) {
+            float[] weg = ausweg(mc, p, zielYaw);
+            if (weg != null) {
+                zielYaw = weg[0];
+                pitch = weg[1];
+                steigen = weg[1] < -20f;
+            } else {
+                pitch = p.getY() - bodenUnter(mc, p) > 6 ? 15f : 0f;   // gleiten, Tempo aufbauen
+                steigen = false;
+            }
+            phase = "Avoiding a wall";
         }
         float drehung = Mth.clamp(Mth.wrapDegrees(zielYaw - p.getYRot()), -m.turnSpeed.getFloat(), m.turnSpeed.getFloat());
         p.setYRot(p.getYRot() + drehung);
@@ -349,10 +379,23 @@ public final class ElytraPilot {
         if ((!imLanden || steigen) && m.rockets.get() && tick - raketeZuletzt >= Math.round(m.rocketDelay.get() * 20)) {
             boolean brauchtSchub = tempo < m.minSpeed.get() || steigen;
             boolean vorausGeladen = mc.level.hasChunk((int) Math.floor(p.getX() + v.x * 40) >> 4, (int) Math.floor(p.getZ() + v.z * 40) >> 4);
-            if (brauchtSchub && vorausGeladen) {
+            // Die Rakete zieht dahin, wohin man SCHAUT: dort muss frei sein.
+            boolean wegFrei = freiLaenge(mc, p, p.getYRot(), p.getXRot(), 14) >= 14;
+            boolean nachStoss = tick - wandZuletzt < 40 && p.hurtTime > 0;
+            if (brauchtSchub && vorausGeladen && wegFrei && !nachStoss && tick >= raketenPauseBis) {
                 if (rakete(mc, p)) {
                     raketeZuletzt = tick;
                     ohneRaketenGemeldet = false;
+                    // Feststecken: Raketen, die nichts bringen, nicht weiter zuenden
+                    if (tempo < 4) {
+                        LANGSAME_RAKETEN.addLast(tick);
+                        while (!LANGSAME_RAKETEN.isEmpty() && tick - LANGSAME_RAKETEN.peekFirst() > 100) LANGSAME_RAKETEN.pollFirst();
+                        if (LANGSAME_RAKETEN.size() >= 3) {
+                            LANGSAME_RAKETEN.clear();
+                            raketenPauseBis = tick + 100;
+                            melde(p, "Not getting anywhere with rockets (stuck?) -- pausing rockets for 5 s.");
+                        }
+                    }
                 } else if (!landen) {
                     // Ohne Schub haelt man die Hoehe nicht -- geordnet landen statt abzustuerzen.
                     if (!ohneRaketenGemeldet) { ohneRaketenGemeldet = true; melde(p, "Out of firework rockets -- landing."); }
@@ -361,6 +404,38 @@ public final class ElytraPilot {
                 }
             }
         }
+    }
+
+    /**
+     * Wie weit ist in Richtung (yaw, pitch) frei -- hoechstens "max"? Geprueft
+     * von Augen und Koerpermitte aus (beim Gleiten ist man nur 0.6 hoch).
+     */
+    private static double freiLaenge(Minecraft mc, LocalPlayer p, float yaw, float pitch, double max) {
+        double y = Math.toRadians(yaw), x = Math.toRadians(pitch);
+        Vec3 richtung = new Vec3(-Math.sin(y) * Math.cos(x), -Math.sin(x), Math.cos(y) * Math.cos(x));
+        double frei = max;
+        for (Vec3 von : new Vec3[]{p.getEyePosition(), p.position().add(0, 0.3, 0)}) {
+            Vec3 bis = von.add(richtung.scale(max));
+            var hr = mc.level.clip(new net.minecraft.world.level.ClipContext(von, bis,
+                    net.minecraft.world.level.ClipContext.Block.COLLIDER, net.minecraft.world.level.ClipContext.Fluid.NONE, p));
+            if (hr.getType() != net.minecraft.world.phys.HitResult.Type.MISS) frei = Math.min(frei, hr.getLocation().distanceTo(von));
+        }
+        return frei;
+    }
+
+    /**
+     * Ausweg nach einem Wandkontakt: die Richtung, die dem Ziel am naechsten
+     * liegt und 24 Bloecke frei ist (leicht steigend); sonst steil nach oben,
+     * wenn dort frei ist. {yaw, pitch} oder null (nirgends frei -- nur gleiten).
+     */
+    private static float[] ausweg(Minecraft mc, LocalPlayer p, float zielYaw) {
+        int[] versatz = {0, 30, -30, 60, -60, 90, -90, 120, -120, 150, -150, 180};
+        for (int o : versatz) {
+            float yaw = zielYaw + o;
+            if (freiLaenge(mc, p, yaw, -15f, 24) >= 24) return new float[]{yaw, -15f};
+        }
+        if (freiLaenge(mc, p, p.getYRot(), -80f, 16) >= 16) return new float[]{p.getYRot(), -80f};
+        return null;
     }
 
     /** Liegt voraus (bis ~40 Bloecke) Gelaende auf oder knapp unter Flughoehe? */

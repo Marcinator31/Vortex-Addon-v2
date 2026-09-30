@@ -74,7 +74,7 @@ public class VortexPlusAddon implements ClientModInitializer {
         register(new com.vortex.client.module.modules.AutoToolModule(),
                 "Switches to the fastest tool while mining, optionally the best weapon when hitting.");
         register(new com.vortex.client.module.modules.AutoAnchorModule(),
-                "Places, charges and detonates respawn anchors next to enemies (not in the Nether). Extreme ban risk.");
+                "Places, charges and detonates respawn anchors next to enemies (not in the Nether). Glowstone Shield: a glowstone block on your side of the anchor blocks the blast for you. Extreme ban risk.");
         register(new com.vortex.client.module.modules.AutoMendModule(),
                 "Throws XP bottles at your feet until your Mending gear is repaired. Pauses near enemies.");
 

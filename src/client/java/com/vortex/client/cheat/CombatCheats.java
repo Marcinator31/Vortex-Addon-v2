@@ -522,10 +522,6 @@ public final class CombatCheats {
             return;
         }
         if (tick - ankerZuletzt < m.delay.getInt()) return;
-        if (p.getHealth() + p.getAbsorptionAmount() <= m.safetyHealth.get()) {
-            grund(p, "Paused: your health is at or below Safety Health.");
-            return;
-        }
 
         int ankerPlatz = Inv.hotbar(p, st -> st.is(Items.RESPAWN_ANCHOR));
         int glowPlatz = Inv.hotbar(p, st -> st.is(Items.GLOWSTONE));
@@ -542,38 +538,62 @@ public final class CombatCheats {
             return;
         }
 
-        // 1. Liegt schon ein Anker beim Ziel? Dann laden oder zuenden.
+        // 1. Liegt schon ein Anker beim Ziel? Dann Schild setzen, laden, zuenden.
         BlockPos anker = findeAnker(mc, p, ziel, m);
         if (anker != null) {
             BlockState st = mc.level.getBlockState(anker);
             int ladung = st.getValue(BlockStateProperties.RESPAWN_ANCHOR_CHARGES);
+            // a) Schild: Glowstone auf die Seite des Ankers, die zu mir zeigt
+            //    (zum Laden muss danach noch einer uebrig sein)
+            BlockPos schild = m.shield.get() ? schildPlatz(mc, p, anker, ziel) : null;
+            if (schild != null && glowAnzahl(p) >= (ladung == 0 ? 2 : 1)) {
+                setzeSchild(mc, p, schild, anker, glowPlatz, m.swing.get());
+                ankerGrund = null;
+                ankerZuletzt = tick;
+                return;
+            }
+            // b) laden
             if (ladung == 0) {
                 klickeBlock(mc, p, anker, glowPlatz, m.swing.get());
-            } else {
-                // Zuenden mit etwas, das KEIN Glowstone ist -- sonst laedt man nur weiter.
-                int anderer = leererPlatz(p);
-                if (anderer < 0) anderer = Inv.hotbar(p, s -> !s.is(Items.GLOWSTONE)
-                        && !s.is(Items.RESPAWN_ANCHOR) && !(s.getItem() instanceof net.minecraft.world.item.BlockItem));
-                if (anderer < 0) {
-                    grund(p, "Keep one hotbar slot empty (or holding a tool/weapon) to detonate the anchor.");
-                    return;
-                }
-                klickeBlock(mc, p, anker, anderer, m.swing.get());
+                ankerGrund = null;
+                ankerZuletzt = tick;
+                return;
             }
+            // c) zuenden -- aber nur, wenn es mich (mit dem Schild, der jetzt steht) nicht umbringt
+            float selbst = selbstschaden(p, anker, null);
+            if (selbst > m.maxSelfDamage.get() || (m.antiSuicide.get() && selbst >= Sprengung.leben(p) - 1.0f)) {
+                grund(p, String.format(java.util.Locale.ROOT,
+                        "Not detonating: it would deal %.1f damage to you (Max Self Damage / Anti Suicide). Step back or give me glowstone for a shield.", selbst));
+                return;
+            }
+            // Zuenden mit etwas, das KEIN Glowstone ist -- sonst laedt man nur weiter.
+            int anderer = leererPlatz(p);
+            if (anderer < 0) anderer = Inv.hotbar(p, s -> !s.is(Items.GLOWSTONE)
+                    && !s.is(Items.RESPAWN_ANCHOR) && !(s.getItem() instanceof net.minecraft.world.item.BlockItem));
+            if (anderer < 0) {
+                grund(p, "Keep one hotbar slot empty (or holding a tool/weapon) to detonate the anchor.");
+                return;
+            }
+            if (p.getOffhandItem().is(Items.GLOWSTONE)) {
+                grund(p, "Glowstone in your offhand -- detonating would only charge the anchor.");
+                return;
+            }
+            klickeBlock(mc, p, anker, anderer, m.swing.get());
             ankerGrund = null;
             ankerZuletzt = tick;
             return;
         }
 
-        // 2. Sonst einen setzen: ueber dem Kopf oder neben dem Ziel.
+        // 2. Sonst einen setzen: ueber dem Kopf oder neben dem Ziel -- nur wo der
+        //    Schaden fuer mich (mit dem geplanten Schild) passt.
         if (ankerPlatz < 0) {
             grund(p, "Put respawn anchors in your hotbar.");
             return;
         }
         BlockPos platz = setzPlatz(mc, p, ziel, m);
         if (platz == null) {
-            grund(p, "No free spot next to " + ziel.getName().getString()
-                    + " within Range that is at least Min Self Distance away from you.");
+            grund(p, "No spot next to " + ziel.getName().getString()
+                    + " within Range where the blast would not hurt you too much (Max Self Damage).");
             return;
         }
         int vorher = p.getInventory().getSelectedSlot();
@@ -600,11 +620,80 @@ public final class CombatCheats {
         return -1;
     }
 
+    private static int glowAnzahl(LocalPlayer p) {
+        int n = 0;
+        for (int i = 0; i < 9; i++) {
+            ItemStack st = p.getInventory().getItem(i);
+            if (st.is(Items.GLOWSTONE)) n += st.getCount();
+        }
+        return n;
+    }
+
+    /** Mein Schaden, wenn der Anker bei "anker" explodiert (optional mit geplantem Schild). */
+    private static float selbstschaden(LocalPlayer p, BlockPos anker, BlockPos schild) {
+        java.util.Map<BlockPos, BlockState> ersetze = new java.util.HashMap<>();
+        ersetze.put(anker, Blocks.AIR.defaultBlockState());
+        if (schild != null) ersetze.put(schild, Blocks.GLOWSTONE.defaultBlockState());
+        return Sprengung.schaden(p, Vec3.atCenterOf(anker), Sprengung.ANKER, ersetze, 0);
+    }
+
+    /**
+     * Wo der Schild hin muss: der Nachbar des Ankers, der zu meinen Augen
+     * zeigt (staerkste Achse). Frei, nicht in mir oder dem Gegner. Steht dort
+     * schon ein Block, deckt der ohnehin ab (null). Deckt der Schild auch den
+     * Gegner ab (er steht auf meiner Seite), lieber keinen.
+     */
+    private static BlockPos schildPlatz(Minecraft mc, LocalPlayer p, BlockPos a, Entity ziel) {
+        Vec3 d = p.getEyePosition().subtract(Vec3.atCenterOf(a));
+        Direction richtung = Direction.getApproximateNearest(d.x, d.y, d.z);
+        BlockPos s = a.relative(richtung);
+        BlockState st = mc.level.getBlockState(s);
+        if (!st.isAir() && !st.canBeReplaced()) return null;
+        if (p.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(s))) return null;
+        if (ziel.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(s))) return null;
+        if (Vec3.atCenterOf(s).distanceTo(p.getEyePosition()) > 5.5) return null;
+        if (ziel instanceof net.minecraft.world.entity.LivingEntity le) {
+            java.util.Map<BlockPos, BlockState> ohne = new java.util.HashMap<>();
+            ohne.put(a, Blocks.AIR.defaultBlockState());
+            java.util.Map<BlockPos, BlockState> mit = new java.util.HashMap<>(ohne);
+            mit.put(s, Blocks.GLOWSTONE.defaultBlockState());
+            float zielOhne = Sprengung.schaden(le, Vec3.atCenterOf(a), Sprengung.ANKER, ohne, 0);
+            float zielMit = Sprengung.schaden(le, Vec3.atCenterOf(a), Sprengung.ANKER, mit, 0);
+            if (zielMit < zielOhne * 0.6f) return null;
+        }
+        return s;
+    }
+
+    /**
+     * Glowstone an "schild" setzen -- angelehnt an einen Nachbarn, der NICHT
+     * der Anker ist (ein Klick auf den Anker wuerde ihn laden statt bauen);
+     * ohne Nachbarn direkt in die Luft.
+     */
+    private static void setzeSchild(Minecraft mc, LocalPlayer p, BlockPos schild, BlockPos anker, int glowPlatz, boolean schwingen) {
+        int vorher = p.getInventory().getSelectedSlot();
+        p.getInventory().setSelectedSlot(glowPlatz);
+        try {
+            for (Direction d : Direction.values()) {
+                BlockPos n = schild.relative(d);
+                if (n.equals(anker)) continue;
+                BlockState st = mc.level.getBlockState(n);
+                if (st.isAir() || st.canBeReplaced()) continue;
+                Direction seite = d.getOpposite();
+                Vec3 treffer = Vec3.atCenterOf(n).add(seite.getStepX() * 0.5, seite.getStepY() * 0.5, seite.getStepZ() * 0.5);
+                mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND, new BlockHitResult(treffer, seite, n, false));
+                if (schwingen) p.swing(InteractionHand.MAIN_HAND);
+                return;
+            }
+            mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND,
+                    new BlockHitResult(Vec3.atCenterOf(schild), Direction.UP, schild, false));
+            if (schwingen) p.swing(InteractionHand.MAIN_HAND);
+        } finally {
+            p.getInventory().setSelectedSlot(vorher);
+        }
+    }
+
     private static boolean ok(LocalPlayer p, BlockPos pos, AutoAnchorModule m) {
-        Vec3 mitte = Vec3.atCenterOf(pos);
-        double zuMir = mitte.distanceTo(p.position());
-        double reichweite = mitte.distanceTo(p.getEyePosition());
-        return reichweite <= m.range.get() && zuMir >= m.minSelfDistance.get();
+        return Vec3.atCenterOf(pos).distanceTo(p.getEyePosition()) <= m.range.get();
     }
 
     private static BlockPos findeAnker(Minecraft mc, LocalPlayer p, Entity ziel, AutoAnchorModule m) {
@@ -635,6 +724,7 @@ public final class CombatCheats {
                 fuss.north(), fuss.south(), fuss.east(), fuss.west(),
                 fuss.above().north(), fuss.above().south(), fuss.above().east(), fuss.above().west()
         };
+        boolean schildMoeglich = m.shield.get() && glowAnzahl(p) >= 2;
         for (BlockPos q : kandidaten) {
             BlockState st = mc.level.getBlockState(q);
             if (!st.isAir() && !st.canBeReplaced()) continue;
@@ -642,6 +732,10 @@ public final class CombatCheats {
             // Nicht in einen Spieler hinein (auch nicht in einen selbst)
             if (p.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(q))) continue;
             if (ziel.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(q))) continue;
+            // Mein Schaden mit dem Schild, der dort hinkaeme -- sonst lohnt der Anker nicht
+            BlockPos schild = schildMoeglich ? schildPlatz(mc, p, q, ziel) : null;
+            float selbst = selbstschaden(p, q, schild);
+            if (selbst > m.maxSelfDamage.get() || (m.antiSuicide.get() && selbst >= Sprengung.leben(p) - 1.0f)) continue;
             return q;
         }
         return null;
