@@ -23,10 +23,12 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -35,12 +37,18 @@ import net.minecraft.world.phys.Vec3;
  *   SUCHEN        erst Aufgaben rund um die Farm (einlagern, liegengebliebene
  *                 Setzlinge nachpflanzen, Holz/Setzlinge einsammeln), dann den
  *                 naechsten Baum finden (Stamm auf Erde + natuerliches Laub)
- *   HINGEHEN      mit Weg an den Stamm laufen
- *   FAELLEN       Stammbloecke in Reichweite abbauen, von unten nach oben; danach
- *                 in die Stammspalte treten, fuer hohe Baeume hochbauen
+ *   HINGEHEN      mit Weg direkt neben den Stamm laufen (Laub im Weg wird
+ *                 weggeschlagen -- auch unter tief haengende Kronen)
+ *   FAELLEN       die untersten zwei Stammbloecke abbauen, in die Stammspalte
+ *                 treten und von dort den Rest (fuer hohe Baeume hochbauen).
+ *                 Abgebaut wird NUR, was zu sehen ist; verdeckt Laub den Stamm,
+ *                 kommt erst das Laub weg -- nie durch Blaetter oder Bloecke
+ *                 hindurch. Aus der Spalte fallen die Stammbloecke dem Bot direkt
+ *                 vor die Fuesse.
  *   ABSTEIGEN     den eigenen Turm wieder abbauen
  *   PFLANZEN      einen Schritt zur Seite, Setzling setzen (fehlt einer: merken)
- *   SAMMELN       Holz und Setzlinge am Boden einsammeln
+ *   SAMMELN       Holz und Setzlinge einsammeln; liegt etwas oben auf Laub,
+ *                 wird das Laub darunter weggeschlagen, damit es herunterfaellt
  *   NACHPFLANZEN  gemerkte Stelle bepflanzen, sobald ein Setzling da ist
  */
 public final class TreeFarmer {
@@ -64,6 +72,12 @@ public final class TreeFarmer {
     private static Set<BlockPos> stamm = new HashSet<>();
     private static Item setzling = null;
     private static BlockPos abbau = null;
+    /** Wohin beim Abbauen geschaut wird (die sichtbare Stelle). */
+    private static Vec3 abbauPunkt = null;
+    /** Laubbloecke, die fuer diesen Baum schon weggeschlagen wurden (Obergrenze gegen Kahlschlag). */
+    private static int laubGeschlagen = 0;
+    /** Kam der Bot nicht direkt neben den Stamm? Dann nur in Reichweite gehen. */
+    private static boolean nurReichweite = false;
     private static int standY = Integer.MIN_VALUE;
     private static boolean keinTurmGemeldet = false;
     private static boolean turmGemeldet = false;
@@ -117,6 +131,7 @@ public final class TreeFarmer {
         phase = p;
         phaseSeit = tick;
         abbau = null;
+        abbauPunkt = null;
         MOTOR.fortschrittZuruecksetzen();
         MOTOR.vergiss();
     }
@@ -158,6 +173,7 @@ public final class TreeFarmer {
         }
         if (!warAn) { baeume = 0; stammBloecke = 0; startZeit = System.currentTimeMillis(); OFFEN.clear(); startPos = p.blockPosition().immutable(); }
         warAn = true;
+        MOTOR.freischneiden = true;             // Laub auf dem Weg darf weg (nur natuerliches)
         if (!p.isAlive()) { MOTOR.anhalten(mc); return; }
         GESPERRT.values().removeIf(bis -> bis < tick);
         try {
@@ -254,7 +270,7 @@ public final class TreeFarmer {
         }
 
         // 4. Liegengebliebenes Holz / Setzlinge einsammeln (Laub zerfaellt langsam)
-        if (m.collect.get() && BotMotor.freiePlaetze(p) > 0 && naechsterDrop(mc, p, new AABB(mitte(p, m)).inflate(r, 4, r)) != null) {
+        if (m.collect.get() && BotMotor.freiePlaetze(p) > 0 && naechsterDrop(mc, p, new AABB(mitte(p, m)).inflate(r, 10, r)) != null) {
             basis = null;
             nichtsLiegtSeit = -1;
             wechsel(Phase.SAMMELN);
@@ -286,6 +302,8 @@ public final class TreeFarmer {
         standY = Integer.MIN_VALUE;
         keinTurmGemeldet = false;
         turmGemeldet = false;
+        laubGeschlagen = 0;
+        nurReichweite = false;
         wechsel(Phase.HINGEHEN);
     }
 
@@ -336,17 +354,70 @@ public final class TreeFarmer {
         status = "Walking to a tree";
         double reichweite = p.blockInteractionRange() - 0.5;
         Vec3 c = Vec3.atCenterOf(basis);
-        if (p.getEyePosition().distanceToSqr(c) <= reichweite * reichweite && p.onGround()) {
+        // Da: direkt neben dem Stamm -- oder (wenn das nicht geht) der Stamm ist von hier zu sehen
+        boolean daneben = neben(p, basis);
+        boolean sichtbar = nurReichweite && p.getEyePosition().distanceToSqr(c) <= reichweite * reichweite
+                && schritt(mc, p, basis, false) != null;
+        if ((daneben || sichtbar) && p.onGround()) {
             MOTOR.anhalten(mc);
             wechsel(Phase.FAELLEN);
             return;
         }
-        BotMotor.Lauf l = MOTOR.laufe(mc, p, BotWeg.inReichweite(c.x, c.y, c.z, reichweite - 0.3, 1.62), basis, tick);
+        BotWeg.Ziel ziel = nurReichweite ? BotWeg.inReichweite(c.x, c.y, c.z, reichweite - 0.3, 1.62)
+                : BotWeg.nahBei(c.x, basis.getY() + 0.5, c.z, 1.5);
+        BotMotor.Lauf l = MOTOR.laufe(mc, p, ziel, nurReichweite ? (Object) basis.above(100) : basis, tick);
+        if (l == BotMotor.Lauf.UNERREICHBAR && !nurReichweite) {
+            dbg("cannot get next to " + basis.toShortString() + " -- trying from a distance");
+            nurReichweite = true;
+            return;
+        }
         if (l == BotMotor.Lauf.UNERREICHBAR || tick - phaseSeit > 20 * 60) {
             GESPERRT.put(basis, tick + 2400);
             MOTOR.anhalten(mc);
             wechsel(Phase.SUCHEN);
         }
+    }
+
+    /** Steht der Spieler direkt neben (oder in) der Stammspalte, etwa auf Stammhoehe? */
+    private static boolean neben(LocalPlayer p, BlockPos b) {
+        double dx = p.getX() - (b.getX() + 0.5), dz = p.getZ() - (b.getZ() + 0.5);
+        return dx * dx + dz * dz <= 1.6 * 1.6 && Math.abs(p.getY() - b.getY()) <= 1.1;
+    }
+
+    /** Was als naechstes abgebaut wird, um an einen Block zu kommen, und wohin man dabei schaut. */
+    private record Schritt(BlockPos pos, Vec3 punkt) {}
+
+    /**
+     * Freie Sicht auf "ziel"? Dann Schritt(ziel, sichtbare Stelle). Verdeckt
+     * natuerliches Laub (oder ein anderer Stammblock dieses Baums) in Reichweite
+     * die Sicht und darf Laub weg ("laub"), ist das der Schritt. Sonst (Erde,
+     * Stein, ein Bauwerk dazwischen, zu weit) null -- abgebaut wird nie durch
+     * etwas hindurch.
+     */
+    private static Schritt schritt(Minecraft mc, LocalPlayer p, BlockPos ziel, boolean laub) {
+        Vec3 auge = p.getEyePosition();
+        double r = p.blockInteractionRange() - 0.3;
+        double r2 = r * r;
+        Vec3 mitte = Vec3.atCenterOf(ziel);
+        // Blockmitte und die Mitten der Seiten, die zum Spieler zeigen (knapp innen)
+        java.util.List<Vec3> punkte = new java.util.ArrayList<>(4);
+        punkte.add(mitte);
+        if (auge.x < ziel.getX()) punkte.add(mitte.add(-0.45, 0, 0)); else if (auge.x > ziel.getX() + 1) punkte.add(mitte.add(0.45, 0, 0));
+        if (auge.y < ziel.getY()) punkte.add(mitte.add(0, -0.45, 0)); else if (auge.y > ziel.getY() + 1) punkte.add(mitte.add(0, 0.45, 0));
+        if (auge.z < ziel.getZ()) punkte.add(mitte.add(0, 0, -0.45)); else if (auge.z > ziel.getZ() + 1) punkte.add(mitte.add(0, 0, 0.45));
+        for (Vec3 pt : punkte) {
+            if (auge.distanceToSqr(pt) > r2) continue;
+            BlockHitResult hr = mc.level.clip(new ClipContext(auge, pt, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, p));
+            if (hr.getType() == HitResult.Type.BLOCK && hr.getBlockPos().equals(ziel)) return new Schritt(ziel, pt);
+        }
+        if (!laub || auge.distanceToSqr(mitte) > (r + 1.5) * (r + 1.5)) return null;
+        BlockHitResult hr = mc.level.clip(new ClipContext(auge, mitte, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, p));
+        if (hr.getType() != HitResult.Type.BLOCK || hr.getBlockPos().equals(ziel)) return null;
+        BlockPos vor = hr.getBlockPos().immutable();
+        BlockState st = mc.level.getBlockState(vor);
+        boolean weg = BotMotor.natuerlichesLaub(st) || (st.is(BlockTags.LOGS) && stamm.contains(vor));
+        if (!weg || auge.distanceToSqr(hr.getLocation()) > r2) return null;
+        return new Schritt(vor, hr.getLocation());
     }
 
     private static void faellen(Minecraft mc, LocalPlayer p, TreeFarmerModule m) {
@@ -357,35 +428,67 @@ public final class TreeFarmer {
 
         if (abbau != null) {
             MOTOR.anhalten(mc);
-            if (m.useAxe.get()) axt(p);
-            if (MOTOR.abbauen(mc, p, abbau, tick)) { if (mc.level.getBlockState(abbau).isAir()) stammBloecke++; abbau = null; }
+            boolean holz = mc.level.getBlockState(abbau).is(BlockTags.LOGS);
+            if (holz && m.useAxe.get()) axt(p);
+            if (MOTOR.abbauen(mc, p, abbau, tick, abbauPunkt)) {
+                if (holz && mc.level.getBlockState(abbau).isAir()) stammBloecke++;
+                abbau = null;
+            }
             return;
         }
-        double reichweite = p.blockInteractionRange() - 0.3;
-        Vec3 auge = p.getEyePosition();
-        BlockPos ziel = null;
-        for (BlockPos b : stamm) {
-            if (auge.distanceToSqr(Vec3.atCenterOf(b)) > reichweite * reichweite) continue;
-            if (ziel == null || b.getY() < ziel.getY()
-                    || (b.getY() == ziel.getY() && auge.distanceToSqr(Vec3.atCenterOf(b)) < auge.distanceToSqr(Vec3.atCenterOf(ziel)))) ziel = b;
-        }
-        if (ziel != null) {
-            MOTOR.anhalten(mc);
-            if (m.useAxe.get()) axt(p);
-            abbau = ziel;
-            if (MOTOR.abbauen(mc, p, abbau, tick)) { if (mc.level.getBlockState(abbau).isAir()) stammBloecke++; abbau = null; }
-            return;
-        }
-        // Nichts in Reichweite: in die Stammspalte treten, dann hochbauen.
         boolean inSpalte = Math.abs(p.getX() - (basis.getX() + 0.5)) < 0.3 && Math.abs(p.getZ() - (basis.getZ() + 0.5)) < 0.3;
-        if (!inSpalte) {
-            if (!mc.level.getBlockState(basis).isAir() || !mc.level.getBlockState(basis.above()).isAir()) {
+        // Offen = die untersten zwei Stammbloecke sind weg, man kann in die Spalte treten
+        boolean offen = !stamm.contains(basis) && !stamm.contains(basis.above());
+        // Laub wegschlagen: fuer die untersten zwei Bloecke und aus der Spalte heraus --
+        // von draussen sonst nicht (dafuer geht der Bot lieber in die Spalte).
+        boolean laubOk = laubGeschlagen < 64;
+        Schritt best = null;
+        BlockPos bestZiel = null;
+        Vec3 auge = p.getEyePosition();
+        for (BlockPos b : stamm) {
+            boolean unten = b.equals(basis) || b.equals(basis.above());
+            if (!offen && !unten) continue;
+            if (bestZiel != null && (b.getY() > bestZiel.getY()
+                    || (b.getY() == bestZiel.getY() && auge.distanceToSqr(Vec3.atCenterOf(b)) >= auge.distanceToSqr(Vec3.atCenterOf(bestZiel))))) continue;
+            Schritt s = schritt(mc, p, b, laubOk && (unten || inSpalte));
+            if (s == null) continue;
+            best = s;
+            bestZiel = b;
+        }
+        if (best != null) {
+            MOTOR.anhalten(mc);
+            abbau = best.pos();
+            abbauPunkt = best.punkt();
+            boolean holz = mc.level.getBlockState(abbau).is(BlockTags.LOGS);
+            if (!holz) { laubGeschlagen++; dbg("leaves in the way at " + abbau.toShortString() + " (for log " + bestZiel.toShortString() + ")"); }
+            if (holz && m.useAxe.get()) axt(p);
+            if (MOTOR.abbauen(mc, p, abbau, tick, abbauPunkt)) {
+                if (holz && mc.level.getBlockState(abbau).isAir()) stammBloecke++;
+                abbau = null;
+            }
+            return;
+        }
+        if (!offen) {
+            // Die untersten Bloecke sind von hier nicht zu sehen/erreichen: naeher heran
+            if (tick - phaseSeit > 20 * 30) { GESPERRT.put(basis, tick + 2400); melde(p, "Can't reach the trunk at " + basis.toShortString() + " -- skipping that tree."); wechsel(Phase.ABSTEIGEN); return; }
+            Vec3 c = Vec3.atCenterOf(basis);
+            if (MOTOR.laufe(mc, p, BotWeg.nahBei(c.x, basis.getY() + 0.5, c.z, 1.5), basis.below(100), tick) == BotMotor.Lauf.UNERREICHBAR) {
+                GESPERRT.put(basis, tick + 2400);
                 wechsel(Phase.ABSTEIGEN);
+            }
+            return;
+        }
+        // Nichts mehr zu sehen: in die Stammspalte treten (Laub auf dem Weg wird weggeschlagen), dann hochbauen.
+        if (!inSpalte) {
+            boolean imFeld = p.blockPosition().getX() == basis.getX() && p.blockPosition().getZ() == basis.getZ();
+            if (imFeld) {
+                double d = MOTOR.gehe(mc, p, Vec3.atBottomCenterOf(basis), false);
+                if (d < 0.25) MOTOR.anhalten(mc);
+                if (MOTOR.steckt(p, tick)) wechsel(Phase.ABSTEIGEN);
                 return;
             }
-            double d = MOTOR.gehe(mc, p, Vec3.atBottomCenterOf(basis), false);
-            if (d < 0.25) MOTOR.anhalten(mc);
-            if (MOTOR.steckt(p, tick)) wechsel(Phase.ABSTEIGEN);
+            BotMotor.Lauf l = MOTOR.laufe(mc, p, BotWeg.feld(basis.getX(), basis.getY(), basis.getZ()), basis.below(200), tick);
+            if (l == BotMotor.Lauf.UNERREICHBAR) { dbg("cannot step into the trunk column " + basis.toShortString()); wechsel(Phase.ABSTEIGEN); }
             return;
         }
         MOTOR.anhalten(mc);
@@ -410,7 +513,7 @@ public final class TreeFarmer {
             BlockState ks = mc.level.getBlockState(kopf);
             if (!ks.isAir() && !ks.canBeReplaced()) {
                 MOTOR.springen(mc, false);
-                werkzeug(p, ks);
+                if (!(ks.getBlock() instanceof LeavesBlock)) werkzeug(p, ks);   // Schere auf Laub: keine Setzlinge
                 MOTOR.abbauen(mc, p, kopf, tick);
                 return;
             }
@@ -711,12 +814,18 @@ public final class TreeFarmer {
             }
             if (naechste != null) { pflanzZiel = naechste; wechsel(Phase.NACHPFLANZEN); return; }
         }
-        if (!m.collect.get() || tick - phaseSeit > 20 * 30 || BotMotor.freiePlaetze(p) == 0) {
+        if (!m.collect.get() || tick - phaseSeit > 20 * 45 || BotMotor.freiePlaetze(p) == 0) {
             MOTOR.anhalten(mc);
             wechsel(Phase.SUCHEN);
             return;
         }
-        AABB bereich = basis != null ? new AABB(basis).inflate(8, 5, 8) : new AABB(mitte(p, m)).inflate(m.range.get(), 4, m.range.get());
+        // Laub unter einem Gegenstand wird gerade weggeschlagen
+        if (abbau != null) {
+            MOTOR.anhalten(mc);
+            if (MOTOR.abbauen(mc, p, abbau, tick, abbauPunkt)) abbau = null;
+            return;
+        }
+        AABB bereich = basis != null ? new AABB(basis).inflate(8, 12, 8) : new AABB(mitte(p, m)).inflate(m.range.get(), 10, m.range.get());
         ItemEntity naechstes = sammelZiel != null && sammelZiel.isAlive() && !GESPERRT.containsKey(sammelZiel.blockPosition())
                 ? sammelZiel : naechsterDrop(mc, p, bereich);
         sammelZiel = naechstes;
@@ -729,10 +838,46 @@ public final class TreeFarmer {
         }
         nichtsLiegtSeit = -1;
         BlockPos b = naechstes.blockPosition();
+        // Liegt der Gegenstand oben auf Laub (zu hoch zum Aufheben)? Das Laub darunter
+        // wegschlagen, dann faellt er herunter.
+        BlockPos auf = BlockPos.containing(naechstes.getX(), naechstes.getY() - 0.05, naechstes.getZ());
+        if (BotMotor.natuerlichesLaub(mc.level.getBlockState(auf)) && hochImLaub(mc, auf)) {
+            status = "Knocking down wood stuck in the leaves";
+            Schritt s = schritt(mc, p, auf, true);
+            if (s != null && p.onGround()) {
+                MOTOR.anhalten(mc);
+                abbau = s.pos();
+                abbauPunkt = s.punkt();
+                dbg("item on leaves at " + auf.toShortString() + " -> breaking " + abbau.toShortString());
+                if (MOTOR.abbauen(mc, p, abbau, tick, abbauPunkt)) abbau = null;
+                return;
+            }
+            Vec3 c = Vec3.atCenterOf(auf);
+            if (MOTOR.laufe(mc, p, BotWeg.inReichweite(c.x, c.y, c.z, p.blockInteractionRange() - 0.8, 1.62), auf, tick) == BotMotor.Lauf.UNERREICHBAR) {
+                GESPERRT.put(b, tick + 1200);
+                sammelZiel = null;
+            }
+            return;
+        }
         if (MOTOR.laufe(mc, p, BotWeg.nahBei(naechstes.getX(), naechstes.getY(), naechstes.getZ(), 1.05), naechstes.getUUID(), tick) == BotMotor.Lauf.UNERREICHBAR) {
+            dbg("item unreachable at " + b.toShortString());
             GESPERRT.put(b, tick + 1200);
             sammelZiel = null;
         }
+    }
+
+    /**
+     * Liegt ein Gegenstand auf diesem Laubblock so hoch, dass man ihn vom Boden
+     * aus nicht aufheben kann? (Mehr als ein Block Laub bzw. Luft darunter.)
+     */
+    private static boolean hochImLaub(Minecraft mc, BlockPos laub) {
+        int frei = 0;
+        for (int dy = 1; dy <= 12; dy++) {
+            BlockState st = mc.level.getBlockState(laub.below(dy));
+            if (!st.isAir() && !BotMotor.natuerlichesLaub(st) && !st.canBeReplaced()) break;   // Boden
+            frei++;
+        }
+        return frei >= 1;
     }
 
     private static ItemEntity naechsterDrop(Minecraft mc, LocalPlayer p, AABB bereich) {
