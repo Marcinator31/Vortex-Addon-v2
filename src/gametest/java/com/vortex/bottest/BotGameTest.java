@@ -76,6 +76,8 @@ public class BotGameTest implements FabricClientGameTest {
             if (nur.isEmpty() || nur.contains("tree")) abschnitt(ctx, "Tree Farmer (Collect Drops off)", () -> treeOhneSammeln(ctx, srv));
             if (nur.isEmpty() || nur.contains("defen")) abschnitt(ctx, "Defence", () -> defenceTest(ctx, srv));
             if (nur.isEmpty() || nur.contains("elytra")) abschnitt(ctx, "Elytra Autopilot", () -> elytraTest(ctx, srv));
+            if (nur.isEmpty() || nur.contains("elytra")) abschnitt(ctx, "Elytra Autopilot: wall in front", () -> elytraWandTest(ctx, srv));
+            if (nur.isEmpty() || nur.contains("elytra")) abschnitt(ctx, "Elytra Autopilot: boxed in", () -> elytraKastenTest(ctx, srv));
         } finally {
             schreibe();
         }
@@ -404,6 +406,84 @@ public class BotGameTest implements FabricClientGameTest {
 
     // ------------------------------------------------------------------
     // ELYTRA: fast kaputte Elytra an, Ersatz im Inventar, 300 Bloecke weit
+
+    private static int raketenIm(MinecraftServer s) {
+        int n = 0;
+        var inv = spieler(s).getInventory();
+        for (int i = 0; i < inv.getContainerSize(); i++) if (inv.getItem(i).is(Items.FIREWORK_ROCKET)) n += inv.getItem(i).getCount();
+        return n;
+    }
+
+    private void elytraStart(ClientGameTestContext ctx, TestServerContext srv, int zx, int zz) {
+        srv.runCommand("clear @a");
+        srv.runCommand("effect clear @a");
+        srv.runCommand("effect give @a minecraft:instant_health 1 10 true");
+        srv.runCommand("item replace entity @a armor.chest with minecraft:elytra");
+        srv.runCommand("give @a minecraft:firework_rocket 64");
+        ctx.waitTicks(40);
+        ctx.runOnClient(mc -> {
+            var m = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.ElytraAutopilotModule.class);
+            m.cruiseY.set(64);
+            m.land.set(true);
+            m.rockets.set(true);
+            m.minDurability.set(20);
+            mc.getConnection().sendCommand("autopilot " + zx + " " + zz);
+        });
+    }
+
+    /**
+     * Wand direkt vor dem Spieler, Ziel dahinter. Bis 2.36 zuendete der Pilot
+     * eine Rakete nach der anderen in die Wand (Aufprallschaden bis zum Tod).
+     */
+    private void elytraWandTest(ClientGameTestContext ctx, TestServerContext srv) {
+        srv.runCommand("tp @a 1000.5 -60 0.5 -90 0");
+        ctx.waitTicks(40);
+        flaeche(srv, 985, -15, 1110, 15);
+        srv.runCommand("fill 1002 -60 -15 1002 -25 15 minecraft:stone");
+        srv.runCommand("tp @a 1000.5 -60 0.5 -90 0");
+        elytraStart(ctx, srv, 1090, 0);
+        float minLeben = 20;
+        boolean an = true;
+        for (int t = 0; t < 2400; t += 10) {
+            ctx.waitTicks(10);
+            minLeben = Math.min(minLeben, srv.computeOnServer(s -> spieler(s).getHealth()));
+            if (t == 60) ctx.takeScreenshot("elytra-wall-start");
+            if (t % 200 == 0) notiz("t=" + t + "  status: " + botStatus(ctx, com.vortex.client.module.modules.ElytraAutopilotModule.class));
+            an = ctx.computeOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.ElytraAutopilotModule.class).isEnabled());
+            if (!an) break;
+            if (minLeben <= 0) break;
+        }
+        ctx.takeScreenshot("elytra-wall-end");
+        int raketen = 64 - srv.computeOnServer(BotGameTest::raketenIm);
+        double x = srv.computeOnServer(s -> spieler(s).getX());
+        boolean lebt = srv.computeOnServer(s -> spieler(s).isAlive());
+        notiz("end status: " + botStatus(ctx, com.vortex.client.module.modules.ElytraAutopilotModule.class));
+        ctx.runOnClient(mc -> mc.getConnection().sendCommand("autopilot stop"));
+        if (!lebt) srv.runCommand("kill @e[type=item]");
+        pruefe("survived the wall", lebt && minLeben >= 14, "lowest health " + minLeben);
+        pruefe("no rocket spam", raketen <= 20, raketen + " rockets used");
+        pruefe("got past the wall", x > 1003, "player x " + Math.round(x));
+    }
+
+    /** Eingemauert (kein Weg hinaus): keine einzige Rakete, kein Schaden. */
+    private void elytraKastenTest(ClientGameTestContext ctx, TestServerContext srv) {
+        srv.runCommand("tp @a 1200.5 -60 0.5");
+        ctx.waitTicks(40);
+        flaeche(srv, 1190, -10, 1210, 10);
+        srv.runCommand("fill 1197 -61 -3 1203 -55 3 minecraft:stone hollow");
+        srv.runCommand("tp @a 1200.5 -60 0.5");
+        elytraStart(ctx, srv, 1300, 0);
+        float minLeben = 20;
+        for (int t = 0; t < 400; t += 10) {
+            ctx.waitTicks(10);
+            minLeben = Math.min(minLeben, srv.computeOnServer(s -> spieler(s).getHealth()));
+        }
+        int raketen = 64 - srv.computeOnServer(BotGameTest::raketenIm);
+        notiz("end status: " + botStatus(ctx, com.vortex.client.module.modules.ElytraAutopilotModule.class));
+        ctx.runOnClient(mc -> mc.getConnection().sendCommand("autopilot stop"));
+        pruefe("no rockets while boxed in", raketen == 0, raketen + " rockets used");
+        pruefe("no damage while boxed in", minLeben >= 19, "lowest health " + minLeben);
+    }
 
     private void elytraTest(ClientGameTestContext ctx, TestServerContext srv) {
         srv.runCommand("tp @a 400.5 -60 0.5");
