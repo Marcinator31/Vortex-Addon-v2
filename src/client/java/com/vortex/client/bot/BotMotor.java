@@ -38,6 +38,12 @@ final class BotMotor {
     private BlockPos abbauPos = null;
     private long abbauSeit = 0;
 
+    /**
+     * Darf {@link #laufe} natuerliches Laub wegschlagen, das im Weg ist (Tree
+     * Farmer)? Die Wegsuche plant dann auch durch Laub hindurch.
+     */
+    boolean freischneiden = false;
+
     // Feststecken
     private Vec3 fortschrittPos = null;
     private long fortschrittSeit = 0;
@@ -103,18 +109,24 @@ final class BotMotor {
     }
 
     /**
-     * Baut pos ab (einen Tick lang). Blick muss nicht exakt stimmen -- der
-     * Server prueft beim Abbauen nur den Abstand.
+     * Baut pos ab (einen Tick lang) und schaut dabei auf die Blockmitte.
+     * Ob der Block zu sehen ist, prueft der Aufrufer (Tree Farmer: nie durch
+     * Laub oder Waende hindurch).
      *
      * @return true, sobald der Block weg ist oder aufgegeben wurde
      */
     boolean abbauen(Minecraft mc, LocalPlayer p, BlockPos pos, long tick) {
+        return abbauen(mc, p, pos, tick, null);
+    }
+
+    /** Wie oben, schaut aber auf "punkt" (die sichtbare Stelle des Blocks). */
+    boolean abbauen(Minecraft mc, LocalPlayer p, BlockPos pos, long tick, Vec3 punkt) {
         if (mc.level.getBlockState(pos).isAir()) {
             if (pos.equals(abbauPos)) abbauPos = null;
             return true;
         }
         Vec3 mitte = Vec3.atCenterOf(pos);
-        blicke(p, mitte);
+        blicke(p, punkt != null ? punkt : mitte);
         Direction seite = Direction.getApproximateNearest(p.getEyePosition().subtract(mitte));
         if (!pos.equals(abbauPos)) {
             abbauPos = pos.immutable();
@@ -245,7 +257,7 @@ final class BotMotor {
             if (dx * dx + dz * dz > 9 || Math.abs(f[1] - fy) > 3) neu = true;   // vom Weg abgekommen
         }
         if (neu) {
-            pfad = BotWeg.suche(new McWelt(mc.level), fx, fy, fz, ziel, 6000, 48);
+            pfad = BotWeg.suche(new McWelt(mc.level, freischneiden), fx, fy, fz, ziel, 6000, 48, freischneiden);
             pfadIndex = 1;
             pfadZeit = tick;
             fortschrittPos = null;
@@ -267,6 +279,18 @@ final class BotMotor {
             return Lauf.UNTERWEGS;                  // naechster Tick: DA oder neuer Teilweg
         }
         int[] f = pfad.felder.get(pfadIndex);
+        // Laub auf dem Weg (nur mit "freischneiden" geplant): erst wegschlagen
+        if (freischneiden) {
+            BlockPos laub = laubImWeg(mc.level, fx, fy, fz, f);
+            if (laub != null) {
+                mc.options.keyUp.setDown(false);
+                mc.options.keyJump.setDown(false);
+                tastenGesetzt = true;
+                fortschrittPos = null;               // Abbauen ist kein Feststecken
+                abbauen(mc, p, laub, tick);
+                return Lauf.UNTERWEGS;
+            }
+        }
         double dx = f[0] + 0.5 - p.getX(), dz = f[2] + 0.5 - p.getZ();
         double flach = Math.sqrt(dx * dx + dz * dz);
         float yaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
@@ -298,12 +322,37 @@ final class BotMotor {
         return Lauf.UNTERWEGS;
     }
 
+    /**
+     * Naechster Laubblock, der vor dem Schritt auf Feld f weg muss: erst ueber
+     * dem eigenen Kopf (Stufe hoch), dann Kopf-, dann Fusshoehe -- in dieser
+     * Reihenfolge ist jeder davon zu sehen. null = frei.
+     */
+    static BlockPos laubImWeg(Level l, int fx, int fy, int fz, int[] f) {
+        BlockPos[] reihe = f[1] > fy
+                ? new BlockPos[]{new BlockPos(fx, fy + 2, fz), new BlockPos(f[0], f[1] + 1, f[2]), new BlockPos(f[0], f[1], f[2])}
+                : new BlockPos[]{new BlockPos(f[0], f[1] + 1, f[2]), new BlockPos(f[0], f[1], f[2])};
+        for (BlockPos b : reihe) if (natuerlichesLaub(l.getBlockState(b))) return b;
+        return null;
+    }
+
+    /** Laub eines Baums (nicht von Hand gesetzt -- Hecken bleiben stehen). */
+    static boolean natuerlichesLaub(BlockState s) {
+        return s.getBlock() instanceof net.minecraft.world.level.block.LeavesBlock
+                && !s.getValue(net.minecraft.world.level.block.LeavesBlock.PERSISTENT);
+    }
+
     /** Die Welt fuer die Wegsuche, aus den geladenen Bloecken. */
     static final class McWelt implements BotWeg.Welt {
         private final Level l;
+        private final boolean laub;
         private final BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
 
-        McWelt(Level l) { this.l = l; }
+        McWelt(Level l) { this(l, false); }
+        McWelt(Level l, boolean laub) { this.l = l; this.laub = laub; }
+
+        @Override public boolean weich(int x, int y, int z) {
+            return laub && l.hasChunk(x >> 4, z >> 4) && natuerlichesLaub(st(x, y, z));
+        }
 
         private BlockState st(int x, int y, int z) {
             m.set(x, y, z);

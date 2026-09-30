@@ -10,7 +10,8 @@ on:
         description: 'Nur diese Tests (crop, tree, defence, elytra; leer = alle)'
         default: ''
   push:
-    branches: [ "main" ]
+    # bot-test/...: Aenderungen erst im Spiel pruefen, bevor sie nach main (und in die Beta) gehen
+    branches: [ "main", "bot-test/**" ]
     paths:
       - "src/client/java/com/vortex/client/bot/**"
       - "src/client/java/com/vortex/client/module/modules/CropFarmerModule.java"

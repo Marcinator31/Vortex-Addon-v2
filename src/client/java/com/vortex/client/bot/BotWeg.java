@@ -17,6 +17,9 @@ import java.util.PriorityQueue;
  *   - flaches Wasser (ein Block tief, fester Boden) nur, wenn es sein muss
  *   - NIE: Lava, Feuer, Kaktus, Beerenbusch, Magma, Spinnennetz, Pulverschnee
  *   - NIE auf Ackerboden herunterspringen (das zertritt ihn)
+ *   - optional (Tree Farmer): durch natuerliches Laub, das unterwegs
+ *     weggeschlagen wird -- sonst kommt man unter tief haengende Kronen und
+ *     an Stamm und Holz darunter nie heran
  *
  * Diese Klasse kennt Minecraft nicht -- die Welt kommt ueber die Schnittstelle
  * {@link Welt}. So laesst sich die Suche ohne Spiel pruefen, und sie ist in
@@ -42,6 +45,8 @@ final class BotWeg {
         boolean gefahr(int x, int y, int z);
         boolean wasser(int x, int y, int z);
         boolean acker(int x, int y, int z);
+        /** Darf weggeschlagen werden, um durchzukommen (natuerliches Laub)? Nur mit "freischneiden". */
+        default boolean weich(int x, int y, int z) { return false; }
     }
 
     /** Wo der Weg hin soll. */
@@ -83,6 +88,17 @@ final class BotWeg {
      * @return Pfad, oder null, wenn es sicher keinen gibt
      */
     static Pfad suche(Welt w, int sx, int sy, int sz, Ziel ziel, int maxKnoten, int radius) {
+        return suche(w, sx, sy, sz, ziel, maxKnoten, radius, false);
+    }
+
+    /** Wie viel ein weggeschlagener Block "kostet" (etwa so viel wie 3 Schritte Umweg). */
+    static final double LAUB_KOSTEN = 3.0;
+
+    /**
+     * @param freischneiden Laub ({@link Welt#weich}) an Fuss/Kopf darf auf geraden
+     *                      Schritten weggeschlagen werden (BotMotor erledigt das beim Laufen)
+     */
+    static Pfad suche(Welt w, int sx, int sy, int sz, Ziel ziel, int maxKnoten, int radius, boolean freischneiden) {
         Gecacht welt = new Gecacht(w);
         HashMap<Long, Knoten> alle = new HashMap<>();
         PriorityQueue<Knoten> offen = new PriorityQueue<>();
@@ -113,6 +129,11 @@ final class BotWeg {
                     continue;
                 }
                 if (schraeg) continue;           // hoch/runter nur gerade
+                // gleiche Hoehe, aber Laub an Fuss oder Kopf: wegschlagen
+                if (freischneiden && stehenFrei(welt, nx, k.y, nz)) {
+                    pruefe(welt, alle, offen, k, nx, k.y, nz, 1.0 + LAUB_KOSTEN * weiche(welt, nx, k.y, nz), ziel);
+                    continue;
+                }
                 // eine Stufe hoch: ueber dem Kopf muss Platz zum Springen sein.
                 // Aus dem Wasser NICHT auf Ackerboden: beim Herausschwimmen faellt man
                 // hoeher als bei einer normalen Stufe und zertritt den Acker.
@@ -121,6 +142,16 @@ final class BotWeg {
                         && !(welt.wasser(k.x, k.y, k.z) && welt.acker(nx, k.y, nz))) {
                     pruefe(welt, alle, offen, k, nx, k.y + 1, nz, 2.0, ziel);
                     continue;
+                }
+                // Stufe hoch mit Laub ueber dem eigenen Kopf oder am Ziel
+                if (freischneiden && !welt.wasser(k.x, k.y, k.z)
+                        && (welt.art(k.x, k.y + 2, k.z) == FREI && !welt.gefahr(k.x, k.y + 2, k.z) || welt.weich(k.x, k.y + 2, k.z))
+                        && (stehen(welt, nx, k.y + 1, nz) || stehenFrei(welt, nx, k.y + 1, nz))) {
+                    int laub = (welt.weich(k.x, k.y + 2, k.z) ? 1 : 0) + weiche(welt, nx, k.y + 1, nz);
+                    if (laub > 0) {
+                        pruefe(welt, alle, offen, k, nx, k.y + 1, nz, 2.0 + LAUB_KOSTEN * laub, ziel);
+                        continue;
+                    }
                 }
                 // herunter: Spalte frei, dann sicher landen
                 if (!durch(welt, nx, k.y, nz)) continue;
@@ -173,6 +204,22 @@ final class BotWeg {
         return w.art(x, y - 1, z) == FEST && !w.gefahr(x, y - 1, z);
     }
 
+    /**
+     * Stehen koennen, NACHDEM Laub an Fuss und/oder Kopf weggeschlagen ist
+     * (mindestens einer der beiden ist Laub; der Boden darunter bleibt).
+     */
+    static boolean stehenFrei(Welt w, int x, int y, int z) {
+        boolean fussW = w.weich(x, y, z), kopfW = w.weich(x, y + 1, z);
+        if (!fussW && !kopfW) return false;
+        if (!fussW && (w.art(x, y, z) != FREI || w.gefahr(x, y, z))) return false;
+        if (!kopfW && (w.art(x, y + 1, z) != FREI || w.gefahr(x, y + 1, z))) return false;
+        return w.art(x, y - 1, z) == FEST && !w.gefahr(x, y - 1, z);        // auf Laub stehen ist in Ordnung
+    }
+
+    private static int weiche(Welt w, int x, int y, int z) {
+        return (w.weich(x, y, z) ? 1 : 0) + (w.weich(x, y + 1, z) ? 1 : 0);
+    }
+
     /** Kann ein Spieler durch diesen Block (Fuss- und Kopfhoehe) hindurch? */
     static boolean durch(Welt w, int x, int y, int z) {
         int fuss = w.art(x, y, z);
@@ -201,7 +248,8 @@ final class BotWeg {
             long s = schluessel(x, y, z);
             Integer v = daten.get(s);
             if (v == null) {
-                v = w.art(x, y, z) | (w.gefahr(x, y, z) ? 4 : 0) | (w.wasser(x, y, z) ? 8 : 0) | (w.acker(x, y, z) ? 16 : 0);
+                v = w.art(x, y, z) | (w.gefahr(x, y, z) ? 4 : 0) | (w.wasser(x, y, z) ? 8 : 0) | (w.acker(x, y, z) ? 16 : 0)
+                        | (w.weich(x, y, z) ? 32 : 0);
                 daten.put(s, v);
             }
             return v;
@@ -210,6 +258,7 @@ final class BotWeg {
         @Override public boolean gefahr(int x, int y, int z) { return (info(x, y, z) & 4) != 0; }
         @Override public boolean wasser(int x, int y, int z) { return (info(x, y, z) & 8) != 0; }
         @Override public boolean acker(int x, int y, int z) { return (info(x, y, z) & 16) != 0; }
+        @Override public boolean weich(int x, int y, int z) { return (info(x, y, z) & 32) != 0; }
     }
 
     // ------------------------------------------------------------------

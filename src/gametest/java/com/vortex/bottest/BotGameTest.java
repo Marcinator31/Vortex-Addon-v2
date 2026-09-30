@@ -35,8 +35,11 @@ import net.minecraft.world.phys.AABB;
  *            (der Bot muss aussen herum), daneben eine Truhe. Inventar fast
  *            voll -> er muss einlagern. Geprueft: geerntet, nachgepflanzt,
  *            kein Acker zertreten, Truhe gefuellt, Spieler gesund.
- *   TREE     drei Eichen. Geprueft: alle Staemme weg, Setzlinge gepflanzt,
- *            Bot nicht auf einem Turm haengen geblieben.
+ *   TREE     zwei Eichen, eine Birke, eine Fichte und ein Baum mit tief
+ *            haengender Krone (ein Block Luft darunter). Geprueft: alle Staemme
+ *            weg, Setzlinge gepflanzt, fast alles Holz im Inventar, Bot nicht
+ *            auf einem Turm haengen geblieben. Danach noch ein tiefer Baum mit
+ *            "Collect Drops" AUS: das Holz muss trotzdem beim Bot landen.
  *   DEFENCE  Nacht, ein Zombie. Geprueft: Zombie tot, Spieler lebt.
  *
  * Ergebnis: bot-test-results.txt im Spielordner, dazu Screenshots.
@@ -70,6 +73,7 @@ public class BotGameTest implements FabricClientGameTest {
             String nur = System.getProperty("vortex.bottest.only", "").toLowerCase();
             if (nur.isEmpty() || nur.contains("crop")) abschnitt(ctx, "Crop Farmer", () -> cropTest(ctx, srv));
             if (nur.isEmpty() || nur.contains("tree")) abschnitt(ctx, "Tree Farmer", () -> treeTest(ctx, srv));
+            if (nur.isEmpty() || nur.contains("tree")) abschnitt(ctx, "Tree Farmer (Collect Drops off)", () -> treeOhneSammeln(ctx, srv));
             if (nur.isEmpty() || nur.contains("defen")) abschnitt(ctx, "Defence", () -> defenceTest(ctx, srv));
             if (nur.isEmpty() || nur.contains("elytra")) abschnitt(ctx, "Elytra Autopilot", () -> elytraTest(ctx, srv));
         } finally {
@@ -224,6 +228,8 @@ public class BotGameTest implements FabricClientGameTest {
         srv.runCommand("place feature minecraft:oak 104 -60 6");
         srv.runCommand("place feature minecraft:oak 111 -60 12");
         srv.runCommand("place feature minecraft:birch 99 -60 15");
+        srv.runCommand("place feature minecraft:spruce 92 -60 5");
+        tieferBaum(srv, 114, -6);
         srv.runCommand("tp @a 100.5 -60 0.5");
         srv.runCommand("clear @a");
         srv.runCommand("give @a minecraft:iron_axe 1");
@@ -301,8 +307,59 @@ public class BotGameTest implements FabricClientGameTest {
         });
         pruefe("all trees chopped", stamm == 0, stamm + " logs left of " + stammVorher);
         pruefe("saplings replanted", setzlinge >= 3, setzlinge + " saplings in the ground (3 trees)");
-        pruefe("wood collected", holz >= stammVorher / 2, holz + " logs in the inventory");
+        notiz("low-crown tree trunk left: " + zaehle(srv, 114, -60, -6, 114, -52, -6, st -> st.is(BlockTags.LOGS)));
+        pruefe("wood collected", holz >= stammVorher * 9 / 10, holz + " logs in the inventory of " + stammVorher);
         pruefe("not stuck on a tower", y < -58.5, "player y " + y);
+    }
+
+    /**
+     * Baum, wie ihn der Tree Farmer bis 2.35 nicht schaffte: Krone 5x5 ab einem
+     * Block ueber dem Boden (darunter kommt man nicht durch), Stamm 6 hoch.
+     */
+    private static void tieferBaum(TestServerContext srv, int x, int z) {
+        String laub = "minecraft:oak_leaves[persistent=false,distance=1]";
+        srv.runCommand("fill " + (x - 2) + " -59 " + (z - 2) + " " + (x + 2) + " -57 " + (z + 2) + " " + laub);
+        srv.runCommand("fill " + (x - 1) + " -56 " + (z - 1) + " " + (x + 1) + " -54 " + (z + 1) + " " + laub);
+        srv.runCommand("fill " + x + " -60 " + z + " " + x + " -55 " + z + " minecraft:oak_log");
+    }
+
+    private void treeOhneSammeln(ClientGameTestContext ctx, TestServerContext srv) {
+        srv.runCommand("tp @a 150.5 -60 0.5");
+        ctx.waitTicks(40);
+        flaeche(srv, 140, -8, 162, 14);
+        tieferBaum(srv, 152, 6);
+        srv.runCommand("tp @a 150.5 -60 0.5");
+        srv.runCommand("clear @a");
+        srv.runCommand("give @a minecraft:iron_axe 1");
+        srv.runCommand("give @a minecraft:bread 16");
+        srv.runCommand("give @a minecraft:dirt 32");
+        ctx.waitTicks(40);
+        int vorher = zaehle(srv, 142, -60, -6, 160, -48, 12, st -> st.is(BlockTags.LOGS));
+        ctx.runOnClient(mc -> {
+            TreeFarmerModule m = ModuleManager.INSTANCE.get(TreeFarmerModule.class);
+            m.range.set(12);
+            m.collect.set(false);
+            m.replant.set(false);
+            m.stayNearStart.set(true);
+            m.setEnabled(true);
+        });
+        int rest = vorher;
+        for (int t = 0; t < 2400 && rest > 0; t += 100) {
+            ctx.waitTicks(100);
+            rest = zaehle(srv, 142, -60, -6, 160, -48, 12, st -> st.is(BlockTags.LOGS));
+        }
+        ctx.waitTicks(100);
+        ctx.takeScreenshot("tree-nocollect-end");
+        notiz("end status: " + botStatus(ctx, TreeFarmerModule.class));
+        int holz = srv.computeOnServer(s -> {
+            int n = 0;
+            var inv = spieler(s).getInventory();
+            for (int i = 0; i < 36; i++) if (inv.getItem(i).is(net.minecraft.tags.ItemTags.LOGS)) n += inv.getItem(i).getCount();
+            return n;
+        });
+        ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(TreeFarmerModule.class).collect.set(true));
+        pruefe("low-crown tree chopped (Collect Drops off)", rest == 0, rest + " logs left of " + vorher);
+        pruefe("its wood landed in the inventory anyway", holz >= vorher - 1, holz + " of " + vorher + " logs in the inventory");
     }
 
     // ------------------------------------------------------------------
