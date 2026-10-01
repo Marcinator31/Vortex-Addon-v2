@@ -9,8 +9,8 @@ import org.lwjgl.glfw.GLFW;
 /**
  * Freecam: loest die Kamera vom Spieler. Mit der eingestellten Taste schaltet
  * man die freie Kamera an/aus und fliegt dann mit den Bewegungstasten +
- * Springen/Schleichen herum, das Mausrad regelt das Tempo. Der Spieler bleibt
- * dabei stehen und meldet sich weiter ganz normal beim Server.
+ * Springen/Schleichen herum, das Mausrad regelt das Tempo. Der Spieler bekommt
+ * keine Eingaben mehr, Schwung und Fall laufen aber normal aus (seit 4.15).
  *
  * Die eigentliche Logik steckt in der Freecam-Klasse + CameraMixin. Dieses
  * Modul haelt nur die Tasten-Einstellung (in der GUI aenderbar).
