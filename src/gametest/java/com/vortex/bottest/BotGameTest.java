@@ -72,6 +72,7 @@ public class BotGameTest implements FabricClientGameTest {
             // -Dvortex.bottest.only=elytra,crop ... : nur diese Abschnitte (schnelleres Nachpruefen)
             String nur = System.getProperty("vortex.bottest.only", "").toLowerCase();
             if (nur.contains("esp")) abschnitt(ctx, "Block ESP look", () -> espTest(ctx, srv));
+            if (nur.contains("freecam")) abschnitt(ctx, "Freecam view", () -> freecamTest(ctx, srv));
             if (nur.isEmpty() || nur.contains("crop")) abschnitt(ctx, "Crop Farmer", () -> cropTest(ctx, srv));
             if (nur.isEmpty() || nur.contains("tree")) abschnitt(ctx, "Tree Farmer", () -> treeTest(ctx, srv));
             if (nur.isEmpty() || nur.contains("tree")) abschnitt(ctx, "Tree Farmer (Collect Drops off)", () -> treeOhneSammeln(ctx, srv));
@@ -232,6 +233,79 @@ public class BotGameTest implements FabricClientGameTest {
             ModuleManager.INSTANCE.get(com.vortex.client.module.modules.SpawnerEspModule.class).setEnabled(false);
         });
         pruefe("ESP drew without errors", n == 0, n + " errors");
+    }
+
+    // ------------------------------------------------------------------
+    // FREECAM (nur mit -PbotOnly=freecam): Sicht unter der Erde, F5
+
+    private static void freecamPos(double x, double y, double z) {
+        try {
+            Class<?> f = Class.forName("com.vortex.client.freecam.Freecam");
+            for (String n : new String[]{"x", "y", "z"}) {
+                var fld = f.getDeclaredField(n);
+                fld.setAccessible(true);
+                fld.setDouble(null, n.equals("x") ? x : n.equals("y") ? y : z);
+            }
+            var p = f.getDeclaredField("pitch"); p.setAccessible(true); p.setFloat(null, 35f);
+        } catch (Exception e) { throw new RuntimeException(e); }
+    }
+
+    private static void modul(ClientGameTestContext ctx, String name, boolean an) {
+        ctx.runOnClient(mc -> {
+            for (var m : ModuleManager.INSTANCE.getModules()) if (m.getName().equals(name)) m.setEnabled(an);
+        });
+    }
+
+    private int sichtbar(ClientGameTestContext ctx) {
+        ctx.waitTicks(30);
+        return ctx.computeOnClient(mc -> mc.levelRenderer.visibleSections().size());
+    }
+
+    private void freecamTest(ClientGameTestContext ctx, TestServerContext srv) {
+        srv.runCommand("time set noon");
+        srv.runCommand("gamemode creative @a");
+        srv.runCommand("tp @a 3000.5 -20 0.5");
+        ctx.waitTicks(40);
+        // 64x64 Stein bis y=-24, darin drei Hoehlengaenge
+        for (int x = 2968; x < 3032; x += 16)
+            for (int z = -32; z < 32; z += 16)
+                srv.runCommand("fill " + x + " -60 " + z + " " + (x + 15) + " -25 " + (z + 15) + " minecraft:stone");
+        srv.runCommand("fill 2975 -50 -2 3025 -48 2 minecraft:air");
+        srv.runCommand("fill 2998 -40 -25 3002 -38 25 minecraft:air");
+        srv.runCommand("fill 2980 -56 -20 3020 -54 -16 minecraft:air");
+        srv.runCommand("fill 2980 -24 -32 3031 -24 31 minecraft:grass_block");
+        srv.runCommand("tp @a 3000.5 -23 0.5 0 35");
+        ctx.waitTicks(100);
+        int oben = sichtbar(ctx);
+        // Freecam im Stein (zwischen den Gaengen), Blick schraeg nach unten
+        modul(ctx, "Freecam", true);
+        ctx.waitTicks(5);
+        freecamPos(3000.5, -44.5, -8.5);
+        int frei = sichtbar(ctx);
+        ctx.takeScreenshot("freecam-in-stone");
+        // Zum Vergleich: dasselbe mit F5 + Ghost View (Wall Vision)
+        modul(ctx, "Ghost View", true);
+        ctx.runOnClient(mc -> mc.options.setCameraType(net.minecraft.client.CameraType.THIRD_PERSON_BACK));
+        freecamPos(3000.5, -44.5, -8.5);
+        int ghost = sichtbar(ctx);
+        ctx.takeScreenshot("freecam-f5-ghost-view");
+        // F5 in der Freecam: Kamera steht hinter dem Freecam-Punkt (im Freien messen)
+        modul(ctx, "Ghost View", false);
+        freecamPos(3000.5, -10.5, 0.5);
+        ctx.waitTicks(10);
+        double abstand = ctx.computeOnClient(mc -> mc.gameRenderer.mainCamera().position()
+                .distanceTo(new net.minecraft.world.phys.Vec3(3000.5, -10.5, 0.5)));
+        ctx.takeScreenshot("freecam-f5-outside");
+        ctx.runOnClient(mc -> mc.options.setCameraType(net.minecraft.client.CameraType.FIRST_PERSON));
+        ctx.waitTicks(10);
+        double abstandEgo = ctx.computeOnClient(mc -> mc.gameRenderer.mainCamera().position()
+                .distanceTo(new net.minecraft.world.phys.Vec3(3000.5, -10.5, 0.5)));
+        modul(ctx, "Freecam", false);
+        srv.runCommand("gamemode survival @a");
+        notiz("visible sections: above ground " + oben + ", freecam in stone " + frei + ", F5 + Ghost View " + ghost);
+        notiz("camera distance from freecam point: F5 " + Math.round(abstand * 100) / 100.0 + ", first person " + Math.round(abstandEgo * 100) / 100.0);
+        pruefe("freecam in stone sees as much as Ghost View", frei >= ghost * 0.9, frei + " vs " + ghost + " sections");
+        pruefe("F5 stays F5 in freecam", abstand > 3.0 && abstandEgo < 0.1, "F5 " + abstand + ", first person " + abstandEgo);
     }
 
     // ------------------------------------------------------------------

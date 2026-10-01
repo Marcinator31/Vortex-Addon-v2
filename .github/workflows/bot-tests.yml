@@ -7,7 +7,10 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: 'Nur diese Tests (crop, tree, defence, elytra; leer = alle)'
+        description: 'Nur diese Tests (crop, tree, defence, elytra, esp, freecam; leer = alle)'
+        default: ''
+      client_ref:
+        description: 'Client von diesem Branch von Vortex-Client bauen statt das neueste Release (leer = Release)'
         default: ''
   push:
     # bot-test/...: Aenderungen erst im Spiel pruefen, bevor sie nach main (und in die Beta) gehen
@@ -43,7 +46,24 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-bottest-
             ${{ runner.os }}-gradle-
+      - name: Client von einem Branch auschecken
+        if: ${{ github.event.inputs.client_ref != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: Marcinator31/Vortex-Client
+          ref: ${{ github.event.inputs.client_ref }}
+          path: client-src
+      - name: Client vom Branch bauen
+        if: ${{ github.event.inputs.client_ref != '' }}
+        run: |
+          cd client-src && chmod +x gradlew && ./gradlew build --no-daemon -q
+          mkdir -p ../libs
+          JAR=$(ls build/libs/*.jar | grep -v -- '-sources' | head -n 1)
+          cp "$JAR" ../libs/vortexclient.jar
+          echo "Client: $(basename "$JAR") von ${{ github.event.inputs.client_ref }}" | tee -a "$GITHUB_STEP_SUMMARY"
+          cd .. && rm -rf client-src
       - name: Client-Jar holen (26.2, neuestes Client-Release)
+        if: ${{ github.event.inputs.client_ref == '' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

@@ -13,15 +13,20 @@ import org.spongepowered.asm.mixin.injection.At;
  * genau diese Abfrage wird hier fuer die Dauer von No Clip auf "ja"
  * gestellt. Dieselbe Stelle wie Meteor fuer die Freecam in 26.2.
  */
-//#if 26
+//#if 26.2
 @Mixin(Camera.class)
 //#else
+//$ // 26.1 und 1.21.11: die Zuschauer-Abfrage steht im LevelRenderer (bis 2.38
+//$ // zielte 26.1 auf Camera -- dort gibt es sie nicht, Wall Vision tat nichts).
 //$ @Mixin(net.minecraft.client.renderer.LevelRenderer.class)
 //#endif
 public abstract class NoClipCameraMixin {
 
-    //#if 26
+    //#if 26.2
     @ModifyExpressionValue(method = "extractRenderState",
+    //#elif 26.1
+    //$ // 26.1: LevelRenderer.update reicht isSpectator() an cullTerrain weiter.
+    //$ @ModifyExpressionValue(method = "update",
     //#else
     //$ // 1.21.11: renderLevel fragt isSpectator() fuer das Ausblenden von Waenden.
     //$ @ModifyExpressionValue(method = "renderLevel",
