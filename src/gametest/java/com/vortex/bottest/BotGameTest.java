@@ -191,6 +191,37 @@ public class BotGameTest implements FabricClientGameTest {
         srv.runCommand("tp @a 2012.5 -54 -3.5 45 25");                                 // schraeg von oben
         ctx.waitTicks(40);
         ctx.takeScreenshot("esp-from-above");
+        // FPS je Variante (gemittelt), Blick wieder auf die Wand
+        srv.runCommand("tp @a 2000.5 -60 0.5 0 12");
+        ctx.waitTicks(40);
+        String[][] varianten = {{"Outline", "false"}, {"Outline", "true"}, {"Outline + Fill", "false"}, {"Outline + Fill", "true"}, {"aus", "false"}};
+        for (String[] v : varianten) {
+            ctx.runOnClient(mc -> {
+                boolean aus = v[0].equals("aus");
+                for (Class<? extends com.vortex.client.module.Module> c : java.util.List.of(
+                        com.vortex.client.module.modules.BlockEspModule.class,
+                        com.vortex.client.module.modules.ContainerEspModule.class,
+                        com.vortex.client.module.modules.SpawnerEspModule.class)) {
+                    var mod = ModuleManager.INSTANCE.get(c);
+                    mod.setEnabled(!aus);
+                    for (var st : mod.getSettings()) {
+                        if (st.getName().equals("Style") && st instanceof com.vortex.client.core.setting.ModeSetting ms && !aus) ms.set(v[0]);
+                        if (st.getName().equals("Glow") && st instanceof com.vortex.client.core.setting.BooleanSetting bs) bs.set(Boolean.parseBoolean(v[1]));
+                    }
+                }
+            });
+            ctx.waitTicks(60);
+            int summe = 0;
+            for (int i = 0; i < 6; i++) { ctx.waitTicks(20); summe += ctx.computeOnClient(mc -> mc.getFps()); }
+            notiz("fps " + v[0] + (v[0].equals("aus") ? "" : " glow=" + v[1]) + ": " + (summe / 6));
+        }
+        ctx.runOnClient(mc -> {
+            for (Class<? extends com.vortex.client.module.Module> c : java.util.List.of(
+                    com.vortex.client.module.modules.BlockEspModule.class,
+                    com.vortex.client.module.modules.ContainerEspModule.class,
+                    com.vortex.client.module.modules.SpawnerEspModule.class)) ModuleManager.INSTANCE.get(c).setEnabled(true);
+        });
+        ctx.waitTicks(40);
         notiz("profiler: " + ctx.computeOnClient(mc -> com.vortex.client.core.Profiler.summary()).replace('\n', '|'));
         String fehler = ctx.computeOnClient(mc -> com.vortex.client.core.Errors.summary());
         notiz("errors: " + fehler.replace('\n', '|'));
