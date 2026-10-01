@@ -30,34 +30,21 @@ import net.minecraft.world.level.chunk.LevelChunk;
  *
  * Container und Spawner teilen sich Scan und Renderer; pro Treffer merken wir
  * uns Position und Typ, damit wir mit der jeweils eingestellten Farbe zeichnen.
+ *
+ * Seit 2.38: Aussehen und Zeichnen ueber {@link BlockHighlight} -- eine
+ * Doppeltruhe oder eine Reihe Faesser ist eine Form, mit Fuellung, Glow und
+ * Ein-/Ausblenden; alles in wenigen Zeichenauftraegen statt einem je Kasten.
  */
 public final class BlockEntityEsp {
 
-    private static final class Hit {
-        final AABB box;
-        final Vec3 center;
-        final boolean spawner; // true = Spawner, false = Container
-        Hit(AABB box, Vec3 center, boolean spawner) {
-            this.box = box; this.center = center; this.spawner = spawner;
-        }
-    }
-
-    private static final AtomicReference<List<Hit>> RESULT =
-            new AtomicReference<>(new ArrayList<>());
-    private static final int CHUNK_RADIUS = 8;
+    /** Fertige Geometrie: [0] Container, [1] Spawner. */
+    private static final AtomicReference<BlockHighlight.Mesh[]> RESULT =
+            new AtomicReference<>(new BlockHighlight.Mesh[]{BlockHighlight.LEER, BlockHighlight.LEER});
+    private static final BlockHighlight.Kanal CONTAINER = new BlockHighlight.Kanal();
+    private static final BlockHighlight.Kanal SPAWNER = new BlockHighlight.Kanal();
     private static final int MAX_RESULTS = 3000;
-
-    /**
-     * Obergrenzen fuers ZEICHNEN (nicht fuers Suchen).
-     *
-     * Jeder gezeichnete Kasten erzeugt ein Hilfsobjekt und mehrere Linienzuege auf
-     * der Grafikkarte. Bei mehreren tausend Kaesten pro Bild sind das
-     * hunderttausende Objekte pro Sekunde -- das fuehrt zu Rucklern und kann dem
-     * Spiel den Speicher/Grafiktreiber sprengen (harter Absturz ohne Crash-Report).
-     * Deshalb: nur Nahes zeichnen und die Anzahl pro Bild deckeln.
-     */
     private static final double MAX_DRAW_DIST = 96.0;
-    private static final int MAX_DRAW_PER_FRAME = 400;
+    private static final int MAX_TRACER = 400;
 
     private static volatile boolean running = false;
     private static Thread worker;
@@ -70,10 +57,10 @@ public final class BlockEntityEsp {
             SpawnerEspModule spawn = (SpawnerEspModule) find(SpawnerEspModule.class);
             boolean contOn = cont != null && cont.isEnabled();
             boolean spawnOn = spawn != null && spawn.isEnabled();
-            if (!contOn && !spawnOn) return;
+            if (!contOn && !spawnOn) { CONTAINER.leeren(); SPAWNER.leeren(); return; }
 
             Minecraft client = Minecraft.getInstance();
-            if (client.level == null || client.player == null) return;
+            if (client.level == null || client.player == null) { CONTAINER.leeren(); SPAWNER.leeren(); return; }
 
             ensureWorker();
 
@@ -84,39 +71,24 @@ public final class BlockEntityEsp {
             try {
                 float tickDelta = client.getDeltaTracker().getGameTimeDeltaPartialTick(false);
                 Vec3 cam = EspRender.cameraOffset(client, tickDelta);
-
-                int contColor = contOn ? cont.getColor() : 0;
-                if ((contColor >>> 24) == 0) contColor |= 0xFF000000;
-                int spawnColor = spawnOn ? spawn.getColor() : 0;
-                if ((spawnColor >>> 24) == 0) spawnColor |= 0xFF000000;
-
                 Vec3 start = EspRender.tracerStart(client, cam, tickDelta);
+                BlockHighlight.Mesh[] meshes = RESULT.get();
 
-                List<Hit> hits = RESULT.get();
-                double maxDistSq = MAX_DRAW_DIST * MAX_DRAW_DIST;
-                int drawn = 0;
-                for (int i = 0; i < hits.size(); i++) {
-                    if (drawn >= MAX_DRAW_PER_FRAME) break;
-                    Hit h = hits.get(i);
-                    // Je nach Typ pruefen, ob das Modul an ist + Farbe waehlen.
-                    if (h.spawner && !spawnOn) continue;
-                    if (!h.spawner && !contOn) continue;
-                    // Zu weit weg -> gar nicht erst zeichnen (spart Objekte + GPU).
-                    if (h.center.distanceToSqr(cam) > maxDistSq) continue;
-                    drawn++;
-                    int color = h.spawner ? spawnColor : contColor;
-                    EspRender.submitBox(collector, matrices, h.box, cam, color, 2.0f);
-
-                    boolean tracer = h.spawner ? spawn.tracerEnabled() : cont.tracerEnabled();
-                    if (tracer) {
-                        final Vec3 tracerStart = start;
-                        final Vec3 tracerTarget = h.center;
-                        final Vec3 tracerCam = cam;
-                        final int tracerColor = color;
-                        EspRender.submitLines(collector, matrices,
-                                (matrix, lines) -> EspRender.drawTracer(matrix, lines,
-                                        tracerStart, tracerTarget, tracerCam, tracerColor, 2.0f));
-                    }
+                if (contOn) {
+                    BlockHighlight.Stil stil = BlockHighlight.stil(cont.getColor(), cont.style, cont.fillOpacity, cont.glow, 2.0f, MAX_DRAW_DIST);
+                    CONTAINER.setze(meshes[0]);
+                    CONTAINER.zeichne(collector, matrices, cam, stil);
+                    if (cont.tracerEnabled()) tracer(collector, matrices, CONTAINER, cam, start, stil);
+                } else {
+                    CONTAINER.leeren();
+                }
+                if (spawnOn) {
+                    BlockHighlight.Stil stil = BlockHighlight.stil(spawn.getColor(), spawn.style, spawn.fillOpacity, spawn.glow, 2.0f, MAX_DRAW_DIST);
+                    SPAWNER.setze(meshes[1]);
+                    SPAWNER.zeichne(collector, matrices, cam, stil);
+                    if (spawn.tracerEnabled()) tracer(collector, matrices, SPAWNER, cam, start, stil);
+                } else {
+                    SPAWNER.leeren();
                 }
             } catch (Throwable pvpErr) {
                 com.vortex.client.core.Errors.report("ContainerEsp", pvpErr);
@@ -124,6 +96,22 @@ public final class BlockEntityEsp {
                     } finally {
                 com.vortex.client.core.Profiler.record("ContainerEsp",
                         System.nanoTime() - pvpT0);
+            }
+        });
+    }
+
+    /** Tracer zu allen sichtbaren Bloecken des Kanals, in EINEM Auftrag, mit Ein-/Ausblenden. */
+    private static void tracer(SubmitNodeCollector collector, PoseStack matrices, BlockHighlight.Kanal kanal,
+                               Vec3 cam, Vec3 start, BlockHighlight.Stil stil) {
+        final List<double[]> ziele = new ArrayList<>();
+        kanal.fuerJedenBlock(cam, stil, (x, y, z, a) -> { if (ziele.size() < MAX_TRACER) ziele.add(new double[]{x, y, z, a}); });
+        if (ziele.isEmpty()) return;
+        final int farbe = stil.farbe;
+        EspRender.submitLines(collector, matrices, (matrix, lines) -> {
+            for (double[] z : ziele) {
+                int a = Math.round(((farbe >>> 24) & 0xFF) * (float) z[3]);
+                EspRender.drawTracer(matrix, lines, start, new Vec3(z[0], z[1], z[2]), cam,
+                        (Math.max(a, 1) << 24) | (farbe & 0xFFFFFF), 2.0f);
             }
         });
     }
@@ -154,43 +142,38 @@ public final class BlockEntityEsp {
                 boolean contOn = cont != null && cont.isEnabled();
                 boolean spawnOn = spawn != null && spawn.isEnabled();
                 if (!contOn && !spawnOn) {
-                    if (!RESULT.get().isEmpty()) RESULT.set(new ArrayList<>());
+                    RESULT.set(new BlockHighlight.Mesh[]{BlockHighlight.LEER, BlockHighlight.LEER});
                     lastVersion = -1;
                     continue;
                 }
 
                 WorldScan.Snapshot snap = WorldScan.get();
                 if (snap.entries.isEmpty()) {
-                    if (!RESULT.get().isEmpty()) RESULT.set(new ArrayList<>());
+                    BlockHighlight.Mesh[] alt = RESULT.get();
+                    if (!alt[0].leer() || !alt[1].leer()) RESULT.set(new BlockHighlight.Mesh[]{BlockHighlight.LEER, BlockHighlight.LEER});
                     continue;
                 }
                 // Nur neu aufbauen, wenn frische Daten vorliegen.
                 if (snap.version == lastVersion) continue;
                 lastVersion = snap.version;
 
-                List<Hit> found = new ArrayList<>();
+                it.unimi.dsi.fastutil.longs.LongArrayList kisten = new it.unimi.dsi.fastutil.longs.LongArrayList();
+                it.unimi.dsi.fastutil.longs.LongArrayList spawner = new it.unimi.dsi.fastutil.longs.LongArrayList();
                 for (WorldScan.Be be : snap.entries) {
                     if (be.spawner && spawnOn) {
-                        found.add(makeHit(be.pos, true));
+                        spawner.add(be.pos.asLong());
                     } else if (be.inventory && !be.spawner && contOn) {
-                        found.add(makeHit(be.pos, false));
+                        kisten.add(be.pos.asLong());
                     }
-                    if (found.size() >= MAX_RESULTS) break;
+                    if (kisten.size() + spawner.size() >= MAX_RESULTS) break;
                 }
-                RESULT.set(found);
+                RESULT.set(new BlockHighlight.Mesh[]{BlockHighlight.baue(kisten), BlockHighlight.baue(spawner)});
             } catch (InterruptedException ie) {
                 return;
             } catch (Throwable t) {
                 // Durchlauf ueberspringen.
             }
         }
-    }
-
-    private static Hit makeHit(BlockPos p, boolean spawner) {
-        AABB box = new AABB(p.getX(), p.getY(), p.getZ(),
-                p.getX() + 1.0, p.getY() + 1.0, p.getZ() + 1.0);
-        Vec3 center = new Vec3(p.getX() + 0.5, p.getY() + 0.5, p.getZ() + 0.5);
-        return new Hit(box, center, spawner);
     }
 
     private static Module find(Class<? extends Module> type) {

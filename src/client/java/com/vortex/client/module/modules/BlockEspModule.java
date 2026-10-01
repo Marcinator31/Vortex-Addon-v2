@@ -2,6 +2,7 @@ package com.vortex.client.module.modules;
 
 import com.vortex.client.core.setting.BooleanSetting;
 import com.vortex.client.core.setting.ColorSetting;
+import com.vortex.client.core.setting.ModeSetting;
 import com.vortex.client.core.setting.NumberSetting;
 import com.vortex.client.module.Module;
 import java.util.HashSet;
@@ -24,6 +25,11 @@ public class BlockEspModule extends Module implements com.vortex.client.module.E
     public final ColorSetting color = new ColorSetting("Color", 0xFF00FFFF);
     public final NumberSetting range = new NumberSetting("Range", 64, 16, 512, 16);
     public final NumberSetting lineWidth = new NumberSetting("Line Width", 2.0, 0.5, 5.0, 0.5);
+    /** Aussehen: Umriss + halbtransparente Fuellung, nur Umriss oder nur Fuellung. */
+    public final ModeSetting style = new ModeSetting("Style", 0, "Outline + Fill", "Outline", "Fill");
+    public final NumberSetting fillOpacity = new NumberSetting("Fill Opacity", 20, 5, 80, 5);
+    /** Weicher Schein unter den Linien. */
+    public final BooleanSetting glow = new BooleanSetting("Glow", true);
     // Tracer: Linien von der Sicht zu den Bloecken.
     /**
      * Hoehenbereich der Suche. Sehr nuetzlich beim gezielten Suchen: fuer Diamanten
@@ -56,6 +62,9 @@ public class BlockEspModule extends Module implements com.vortex.client.module.E
         addSetting(color);
         addSetting(range);
         addSetting(lineWidth);
+        addSetting(style);
+        addSetting(fillOpacity);
+        addSetting(glow);
         addSetting(minY);
         addSetting(maxY);
         addSetting(onlyExposed);
