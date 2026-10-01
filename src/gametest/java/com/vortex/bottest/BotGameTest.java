@@ -71,6 +71,7 @@ public class BotGameTest implements FabricClientGameTest {
 
             // -Dvortex.bottest.only=elytra,crop ... : nur diese Abschnitte (schnelleres Nachpruefen)
             String nur = System.getProperty("vortex.bottest.only", "").toLowerCase();
+            if (nur.contains("esp")) abschnitt(ctx, "Block ESP look", () -> espTest(ctx, srv));
             if (nur.isEmpty() || nur.contains("crop")) abschnitt(ctx, "Crop Farmer", () -> cropTest(ctx, srv));
             if (nur.isEmpty() || nur.contains("tree")) abschnitt(ctx, "Tree Farmer", () -> treeTest(ctx, srv));
             if (nur.isEmpty() || nur.contains("tree")) abschnitt(ctx, "Tree Farmer (Collect Drops off)", () -> treeOhneSammeln(ctx, srv));
@@ -140,6 +141,66 @@ public class BotGameTest implements FabricClientGameTest {
             var m = ModuleManager.INSTANCE.get(c.asSubclass(com.vortex.client.module.Module.class));
             try { return String.valueOf(m.getClass().getMethod("getStatus").invoke(m)); } catch (Exception e) { return "?"; }
         });
+    }
+
+    // ------------------------------------------------------------------
+    // ESP-Aussehen (nur mit -PbotOnly=esp): Screenshots zum Anschauen
+
+    private void espTest(ClientGameTestContext ctx, TestServerContext srv) {
+        srv.runCommand("time set noon");
+        srv.runCommand("tp @a 2000.5 -60 0.5 0 12");
+        ctx.waitTicks(40);
+        flaeche(srv, 1985, -10, 2030, 24);
+        srv.runCommand("fill 1990 -60 4 2010 -53 4 minecraft:stone");                  // Wand: alles dahinter
+        srv.runCommand("fill 1999 -59 10 2001 -58 11 minecraft:diamond_ore");          // Ader (3x2x2)
+        srv.runCommand("setblock 2002 -59 10 minecraft:diamond_ore");                  // ...mit Ausleger
+        srv.runCommand("setblock 2001 -57 11 minecraft:diamond_ore");
+        srv.runCommand("setblock 1995 -60 12 minecraft:diamond_ore");                  // einzeln
+        srv.runCommand("setblock 2006 -56 9 minecraft:diamond_ore");                   // einzeln, schwebend
+        srv.runCommand("setblock 1996 -60 8 minecraft:chest[facing=north,type=right]");
+        srv.runCommand("setblock 1997 -60 8 minecraft:chest[facing=north,type=left]");
+        srv.runCommand("fill 2004 -60 14 2007 -60 14 minecraft:barrel");
+        srv.runCommand("setblock 1993 -60 9 minecraft:spawner");
+        srv.runCommand("tp @a 2000.5 -60 0.5 0 12");
+        ctx.waitTicks(40);
+        ctx.runOnClient(mc -> {
+            com.vortex.client.core.Errors.clear();
+            com.vortex.client.core.Profiler.setEnabled(true);
+            com.vortex.client.core.Profiler.reset();
+            var b = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.BlockEspModule.class);
+            if (!b.isBlockEnabled("minecraft:diamond_ore")) b.toggleBlock("minecraft:diamond_ore");
+            b.setEnabled(true);
+            ModuleManager.INSTANCE.get(com.vortex.client.module.modules.ContainerEspModule.class).setEnabled(true);
+            ModuleManager.INSTANCE.get(com.vortex.client.module.modules.SpawnerEspModule.class).setEnabled(true);
+        });
+        ctx.waitTicks(4);
+        ctx.takeScreenshot("esp-fading-in");
+        ctx.waitTicks(60);
+        ctx.takeScreenshot("esp-default");
+        // Andere Stile (nur Block-ESP aendert sich), wenn es sie gibt
+        ctx.runOnClient(mc -> {
+            var b = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.BlockEspModule.class);
+            for (var st : b.getSettings()) if (st.getName().equals("Style") && st instanceof com.vortex.client.core.setting.ModeSetting ms) ms.set("Outline");
+        });
+        ctx.waitTicks(10);
+        ctx.takeScreenshot("esp-outline-only");
+        ctx.runOnClient(mc -> {
+            var b = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.BlockEspModule.class);
+            for (var st : b.getSettings()) if (st.getName().equals("Style") && st instanceof com.vortex.client.core.setting.ModeSetting ms) ms.set("Outline + Fill");
+        });
+        srv.runCommand("tp @a 2012.5 -54 -3.5 45 25");                                 // schraeg von oben
+        ctx.waitTicks(40);
+        ctx.takeScreenshot("esp-from-above");
+        notiz("profiler: " + ctx.computeOnClient(mc -> com.vortex.client.core.Profiler.summary()).replace('\n', '|'));
+        String fehler = ctx.computeOnClient(mc -> com.vortex.client.core.Errors.summary());
+        notiz("errors: " + fehler.replace('\n', '|'));
+        int n = ctx.computeOnClient(mc -> com.vortex.client.core.Errors.count("BlockEsp") + com.vortex.client.core.Errors.count("ContainerEsp"));
+        ctx.runOnClient(mc -> {
+            ModuleManager.INSTANCE.get(com.vortex.client.module.modules.BlockEspModule.class).setEnabled(false);
+            ModuleManager.INSTANCE.get(com.vortex.client.module.modules.ContainerEspModule.class).setEnabled(false);
+            ModuleManager.INSTANCE.get(com.vortex.client.module.modules.SpawnerEspModule.class).setEnabled(false);
+        });
+        pruefe("ESP drew without errors", n == 0, n + " errors");
     }
 
     // ------------------------------------------------------------------
