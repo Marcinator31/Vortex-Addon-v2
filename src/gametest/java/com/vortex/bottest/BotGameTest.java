@@ -61,6 +61,11 @@ public class BotGameTest implements FabricClientGameTest {
 
     @Override
     public void runTest(ClientGameTestContext ctx) {
+        if (System.getProperty("vortex.bottest.only", "").contains("chunkstudy")) {
+            try { abschnitt(ctx, "New Chunks study", () -> chunkStudie(ctx)); } finally { schreibe(); }
+            if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
+            return;
+        }
         try (TestSingleplayerContext sp = ctx.worldBuilder().create()) {
             TestServerContext srv = sp.getServer();
             srv.runCommand("gamemode survival @a");
@@ -73,6 +78,9 @@ public class BotGameTest implements FabricClientGameTest {
             String nur = System.getProperty("vortex.bottest.only", "").toLowerCase();
             if (nur.contains("esp")) abschnitt(ctx, "Block ESP look", () -> espTest(ctx, srv));
             if (nur.contains("freecam")) abschnitt(ctx, "Freecam view", () -> freecamTest(ctx, srv));
+            if (nur.contains("freecam")) abschnitt(ctx, "Freecam keeps momentum", () -> freecamSchwungTest(ctx, srv));
+            if (nur.isEmpty() || nur.contains("wtap")) abschnitt(ctx, "W-Tap", () -> wTapTest(ctx, srv));
+            if (nur.contains("potion")) abschnitt(ctx, "Potion HUD look", () -> potionTest(ctx, srv));
             if (nur.isEmpty() || nur.contains("crop")) abschnitt(ctx, "Crop Farmer", () -> cropTest(ctx, srv));
             if (nur.isEmpty() || nur.contains("tree")) abschnitt(ctx, "Tree Farmer", () -> treeTest(ctx, srv));
             if (nur.isEmpty() || nur.contains("tree")) abschnitt(ctx, "Tree Farmer (Collect Drops off)", () -> treeOhneSammeln(ctx, srv));
@@ -306,6 +314,227 @@ public class BotGameTest implements FabricClientGameTest {
         notiz("camera distance from freecam point: F5 " + Math.round(abstand * 100) / 100.0 + ", first person " + Math.round(abstandEgo * 100) / 100.0);
         pruefe("freecam in stone sees as much as Ghost View", frei >= ghost * 0.9, frei + " vs " + ghost + " sections");
         pruefe("F5 stays F5 in freecam", abstand > 3.0 && abstandEgo < 0.1, "F5 " + abstand + ", first person " + abstandEgo);
+    }
+
+    // ------------------------------------------------------------------
+    // NEW CHUNKS: Messung in einer normalen Welt (nur -PbotOnly=chunkstudy)
+    //
+    // Phase 1: Gebiet um x = 0..400 erzeugen, Welt schliessen (speichert).
+    // Phase 2: Welt neu oeffnen, von x = 0 bis 1600 fliegen. Was in Phase 1
+    // schon da war, ist ALT (von der Festplatte), alles andere NEU. Fuer jeden
+    // Chunk wird festgehalten, was die Verfahren sagen.
+
+    private static final java.util.Map<Long, String> STUDIE = new java.util.concurrent.ConcurrentHashMap<>();
+    private static volatile int studiePhase = 0;
+    private static boolean studieRegistriert = false;
+
+    private void chunkStudie(ClientGameTestContext ctx) {
+        java.util.Set<Long> phase1 = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        if (!studieRegistriert) {
+            studieRegistriert = true;
+            net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientChunkEvents.CHUNK_LOAD.register((level, chunk) -> {
+                long c = chunk.getPos().pack();
+                if (studiePhase == 1) { phase1.add(c); return; }
+                if (studiePhase != 2 || STUDIE.containsKey(c)) return;
+                var b = com.vortex.client.hud.ChunkPalette.pruefe(chunk);
+                STUDIE.put(c, (phase1.contains(c) ? "old" : "new") + "\t" + b.abschnitte() + "\t" + b.sortiert());
+            });
+        }
+        var bauer = ctx.worldBuilder().setUseConsistentSettings(false).adjustSettings(s -> s.setSeed("vortex-new-chunks"));
+        net.fabricmc.fabric.api.client.gametest.v1.world.TestWorldSave save;
+        studiePhase = 1;
+        try (TestSingleplayerContext sp = bauer.create()) {
+            TestServerContext srv = sp.getServer();
+            srv.runCommand("gamemode spectator @a");
+            for (int x = 0; x <= 400; x += 100) {
+                srv.runCommand("tp @a " + x + " 120 0");
+                sp.getConnection().waitForChunksDownload();
+                ctx.waitTicks(20);
+            }
+            save = sp.getWorldSave();
+            notiz("phase 1: " + phase1.size() + " chunks");
+        }
+        studiePhase = 2;
+        try (TestSingleplayerContext sp = save.open()) {
+            TestServerContext srv = sp.getServer();
+            ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.NewChunksModule.class).setEnabled(true));
+            for (int x = 0; x <= 1600; x += 64) {
+                srv.runCommand("tp @a " + x + " 120 0");
+                sp.getConnection().waitForChunksDownload();
+                ctx.waitTicks(10);
+                if (x == 800) ctx.takeScreenshot("newchunks-border");
+            }
+            ctx.waitTicks(60);
+            ctx.takeScreenshot("newchunks-end");
+            // Was sagt das Fluessigkeits-Verfahren (bis 2.39)?
+            java.util.Set<Long> neu = feld("NEU"), alt = feld("ALT");
+            java.util.List<String> zeilen = new ArrayList<>();
+            zeilen.add("cx\tcz\ttruth\tsections\tsorted\tliquid");
+            int[][] m = new int[2][4];      // [truth][liquid: none/new/old], palette: [.][3] richtig
+            int pal = 0, palRichtig = 0, palOhne = 0;
+            for (var e : STUDIE.entrySet()) {
+                long c = e.getKey();
+                String fl = neu.contains(c) ? "new" : alt.contains(c) ? "old" : "-";
+                zeilen.add(net.minecraft.world.level.ChunkPos.getX(c) + "\t" + net.minecraft.world.level.ChunkPos.getZ(c) + "\t" + e.getValue() + "\t" + fl);
+                String[] t = e.getValue().split("\t");
+                int wahr = t[0].equals("new") ? 1 : 0;
+                m[wahr][fl.equals("-") ? 0 : fl.equals("new") ? 1 : 2]++;
+                int ab = Integer.parseInt(t[1]), so = Integer.parseInt(t[2]);
+                if (ab < 2) { palOhne++; continue; }
+                pal++;
+                boolean sagtNeu = so < ab;
+                if (sagtNeu == (wahr == 1)) palRichtig++;
+            }
+            try {
+                Files.write(FabricLoader.getInstance().getGameDir().resolve("chunk-study.tsv"), zeilen, StandardCharsets.UTF_8);
+            } catch (Exception ex) { notiz("write failed: " + ex); }
+            notiz("chunks: old " + (m[0][0] + m[0][1] + m[0][2]) + ", new " + (m[1][0] + m[1][1] + m[1][2]));
+            notiz("liquid method, truly OLD: none " + m[0][0] + ", says new " + m[0][1] + ", says old " + m[0][2]);
+            notiz("liquid method, truly NEW: none " + m[1][0] + ", says new " + m[1][1] + ", says old " + m[1][2]);
+            notiz("palette method: " + palRichtig + " of " + pal + " correct, " + palOhne + " without information");
+            pruefe("palette method mostly right", pal > 0 && palRichtig >= pal * 0.95, palRichtig + "/" + pal);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static java.util.Set<Long> feld(String name) {
+        try {
+            var f = com.vortex.client.hud.NewChunks.class.getDeclaredField(name);
+            f.setAccessible(true);
+            return (java.util.Set<Long>) f.get(null);
+        } catch (Exception e) {
+            return java.util.Set.of();
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // W-TAP: 6 Sprint-Schlaege auf ein Schwein, wie weit fliegt es?
+
+    private double[] wTapDurchgang(ClientGameTestContext ctx, TestServerContext srv, String modus) {
+        srv.runCommand("tp @a 4000.5 -60 0.5 -90 0");
+        srv.runCommand("kill @e[type=pig]");
+        ctx.waitTicks(10);
+        ctx.runOnClient(mc -> {
+            var m = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.WTapModule.class);
+            m.setEnabled(!modus.equals("off"));
+            if (!modus.equals("off")) m.mode.set(modus);
+            mc.player.getInventory().setSelectedSlot(0);
+            mc.options.keyUp.setDown(true);
+            mc.options.keySprint.setDown(true);
+        });
+        ctx.waitTicks(15);
+        double[] weg = new double[6];
+        for (int i = 0; i < 6; i++) {
+            double px = srv.computeOnServer(s -> spieler(s).getX());
+            srv.runCommand("summon minecraft:pig " + (px + 2.6) + " -60 0.5 {NoGravity:0b,Silent:1b,attributes:[{id:\"minecraft:movement_speed\",base:0.0}]}");
+            ctx.waitTicks(2);
+            double x0 = srv.computeOnServer(s -> {
+                var l = s.overworld().getEntitiesOfClass(net.minecraft.world.entity.animal.pig.Pig.class, new AABB(3990, -62, -5, 4300, -50, 5));
+                return l.isEmpty() ? Double.NaN : l.get(0).getX();
+            });
+            boolean sprint = ctx.computeOnClient(mc -> {
+                var l = mc.level.getEntitiesOfClass(net.minecraft.world.entity.animal.pig.Pig.class, mc.player.getBoundingBox().inflate(5));
+                if (l.isEmpty()) return false;
+                mc.gameMode.attack(mc.player, l.get(0));
+                mc.player.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
+                return true;
+            });
+            ctx.waitTicks(8);
+            double x1 = srv.computeOnServer(s -> {
+                var l = s.overworld().getEntitiesOfClass(net.minecraft.world.entity.animal.pig.Pig.class, new AABB(3990, -62, -5, 4300, -50, 5));
+                return l.isEmpty() ? Double.NaN : l.get(0).getX();
+            });
+            weg[i] = sprint ? Math.round((x1 - x0) * 100) / 100.0 : -1;
+            srv.runCommand("kill @e[type=pig]");
+            ctx.waitTicks(6);
+        }
+        ctx.runOnClient(mc -> {
+            mc.options.keyUp.setDown(false);
+            mc.options.keySprint.setDown(false);
+            ModuleManager.INSTANCE.get(com.vortex.client.module.modules.WTapModule.class).setEnabled(false);
+        });
+        ctx.waitTicks(10);
+        notiz(modus + ": knockback per hit " + java.util.Arrays.toString(weg));
+        return weg;
+    }
+
+    private void wTapTest(ClientGameTestContext ctx, TestServerContext srv) {
+        srv.runCommand("tp @a 4000.5 -60 0.5");
+        ctx.waitTicks(20);
+        flaeche(srv, 3990, -6, 4200, 6);
+        srv.runCommand("difficulty easy");
+        srv.runCommand("clear @a");
+        srv.runCommand("item replace entity @a hotbar.0 with minecraft:iron_sword");
+        srv.runCommand("effect give @a minecraft:saturation 120 5 true");
+        double[] aus = wTapDurchgang(ctx, srv, "off");
+        double[] packet = wTapDurchgang(ctx, srv, "Packet");
+        double[] legit = wTapDurchgang(ctx, srv, "Legit");
+        srv.runCommand("difficulty peaceful");
+        double stark = aus[0];
+        int ausStark = 0, packetStark = 0, legitStark = 0;
+        for (int i = 1; i < 6; i++) {
+            if (aus[i] >= stark * 0.8) ausStark++;
+            if (packet[i] >= stark * 0.8) packetStark++;
+            if (legit[i] >= stark * 0.8) legitStark++;
+        }
+        notiz("hits 2-6 with full sprint knockback: off " + ausStark + "/5, Packet " + packetStark + "/5, Legit " + legitStark + "/5");
+        pruefe("W-Tap Packet: every hit with sprint knockback", packetStark == 5, packetStark + "/5");
+        pruefe("W-Tap Legit: every hit with sprint knockback", legitStark == 5, legitStark + "/5");
+    }
+
+    // ------------------------------------------------------------------
+    // FREECAM: Sprint-Sprung, dann Freecam -- der Sprung muss weitergehen
+
+    private void freecamSchwungTest(ClientGameTestContext ctx, TestServerContext srv) {
+        srv.runCommand("gamemode survival @a");
+        srv.runCommand("tp @a 5000.5 -60 0.5 -90 0");
+        ctx.waitTicks(20);
+        flaeche(srv, 4990, -6, 5060, 6);
+        srv.runCommand("tp @a 5000.5 -60 0.5 -90 0");
+        ctx.waitTicks(10);
+        ctx.runOnClient(mc -> { mc.options.keyUp.setDown(true); mc.options.keySprint.setDown(true); });
+        ctx.waitTicks(15);
+        ctx.runOnClient(mc -> mc.options.keyJump.setDown(true));
+        ctx.waitTicks(2);
+        double xStart = srv.computeOnServer(s -> spieler(s).getX());
+        modul(ctx, "Freecam", true);
+        ctx.waitTicks(1);
+        ctx.runOnClient(mc -> { mc.options.keyJump.setDown(false); });
+        ctx.waitTicks(12);
+        double xEnde = srv.computeOnServer(s -> spieler(s).getX());
+        modul(ctx, "Freecam", false);
+        ctx.runOnClient(mc -> { mc.options.keyUp.setDown(false); mc.options.keySprint.setDown(false); });
+        double weiter = Math.round((xEnde - xStart) * 100) / 100.0;
+        notiz("distance travelled after opening freecam mid-jump: " + weiter + " blocks");
+        pruefe("freecam does not stop a running jump", weiter > 1.0, weiter + " blocks");
+    }
+
+    // ------------------------------------------------------------------
+    // POTION HUD (nur -PbotOnly=potion): Screenshots
+
+    private void potionTest(ClientGameTestContext ctx, TestServerContext srv) {
+        srv.runCommand("tp @a 6000.5 -60 0.5 0 -10");
+        ctx.waitTicks(20);
+        flaeche(srv, 5990, -6, 6010, 20);
+        srv.runCommand("effect clear @a");
+        modul(ctx, "Potion Effects", true);
+        srv.runCommand("effect give @a minecraft:speed 90 1");
+        srv.runCommand("effect give @a minecraft:night_vision infinite 0");
+        srv.runCommand("effect give @a minecraft:strength 8 1");
+        ctx.waitTicks(3);
+        ctx.takeScreenshot("potion-sliding-in");
+        ctx.waitTicks(20);
+        srv.runCommand("effect give @a minecraft:poison 3 0");
+        srv.runCommand("effect give @a minecraft:fire_resistance 300 0");
+        ctx.waitTicks(25);
+        ctx.takeScreenshot("potion-list");
+        ctx.waitTicks(40);
+        ctx.takeScreenshot("potion-poison-gone");
+        ctx.waitTicks(4);
+        ctx.takeScreenshot("potion-after");
+        String fehler = ctx.computeOnClient(mc -> com.vortex.client.core.Errors.summary());
+        srv.runCommand("effect clear @a");
+        pruefe("potion HUD drew without errors", !fehler.contains("PotionHud"), fehler.replace('\n', '|'));
     }
 
     // ------------------------------------------------------------------
