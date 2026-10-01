@@ -56,7 +56,7 @@ public final class BlockHighlight {
     private static RenderType fuellung;
 
     /** Erst beim ersten Zeichnen anlegen (wie EspRenderLayer). */
-    private static RenderType fuellung() {
+    static RenderType fuellung() {
         if (fuellung == null) {
             RenderPipeline pipeline = RenderPipelines.register(
                     RenderPipeline.builder(RenderPipelines.DEBUG_FILLED_SNIPPET)

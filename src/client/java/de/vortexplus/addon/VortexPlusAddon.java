@@ -158,7 +158,7 @@ public class VortexPlusAddon implements ClientModInitializer {
         register(new com.vortex.client.module.modules.MiddleClickPearlModule(),
                 "Middle click throws an ender pearl from anywhere in your inventory, then you hold your previous item again. Middle click on a player still adds a friend.");
         register(new com.vortex.client.module.modules.NewChunksModule(),
-                "Marks chunks that were just generated (red) and chunks that were loaded before (green), from how water and lava flow. Chunks without water or lava cannot be told apart.");
+                "Marks chunks that were just generated (red) and chunks that existed before (green). Reads the block palette the server sends with every chunk -- works everywhere, not only near water. Servers with anti-xray can hide it.");
         register(new com.vortex.client.module.modules.XrayModule(),
                 "Hides every block that is not on your list, so ores and spawners show through the ground. Select blocks to change the list (empty = all ores, debris, spawners). Servers with anti-xray show fake ores.");
         register(new com.vortex.client.module.modules.BlinkModule(),
