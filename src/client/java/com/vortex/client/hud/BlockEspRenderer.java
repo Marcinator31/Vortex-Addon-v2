@@ -10,10 +10,8 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
-import java.util.ArrayList;
-import java.util.List;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
 import java.util.concurrent.atomic.AtomicReference;
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.renderer.SubmitNodeCollector;
@@ -34,12 +32,23 @@ import net.minecraft.client.renderer.SubmitNodeCollector;
  * Welt-Lesen aus einem Fremd-Thread ist nicht offiziell unterstuetzt, in der
  * Praxis fuer reines Lesen aber tragbar; alle Zugriffe sind in try/catch
  * gekapselt, damit ein seltener Nebenlaeufigkeitsfehler nichts kaputt macht.
+ *
+ * Seit 2.38: Aussehen und Zeichnen ueber {@link BlockHighlight} (zusammen-
+ * haengende Bloecke als eine Form, Fuellung, Glow, Ein-/Ausblenden). Der Worker
+ * liefert fertige Geometrie. Und kein Flackern mehr: bis 2.37 begann jeder
+ * Scan mit einer leeren Liste und zeigte sie Ring fuer Ring -- ferne Bloecke
+ * verschwanden dabei alle 60 ms kurz. Jetzt bleiben sie stehen, bis der Scan
+ * ihren Ring erreicht.
  */
 public final class BlockEspRenderer {
 
     // Vom Worker befuelltes, vom Render-Thread gelesenes Ergebnis.
-    private static final AtomicReference<List<AABB>> RESULT =
-            new AtomicReference<>(new ArrayList<>());
+    private static final AtomicReference<BlockHighlight.Mesh> RESULT =
+            new AtomicReference<>(BlockHighlight.LEER);
+    /** Letztes vollstaendiges Scan-Ergebnis (nur der Worker liest/schreibt es). */
+    private static LongArrayList letzterScan = new LongArrayList();
+    /** Was gerade angezeigt wird (nur Render-Thread). */
+    private static final BlockHighlight.Kanal KANAL = new BlockHighlight.Kanal();
 
     // Maximale Anzahl Outlines (schuetzt sowohl Scan als auch Zeichnen).
     private static final int MAX_RESULTS = 4000;
@@ -51,7 +60,8 @@ public final class BlockEspRenderer {
      * (harter Absturz ohne Crash-Report). Daher: nur Nahes, und gedeckelt.
      */
     private static final double MAX_DRAW_DIST = 96.0;
-    private static final int MAX_DRAW_PER_FRAME = 500;
+    /** Tracer: hoechstens so viele (die naechsten zuerst kommen aus dem Ring-Scan). */
+    private static final int MAX_TRACER = 500;
 
     private static volatile boolean running = false;
     private static Thread worker;
@@ -62,11 +72,12 @@ public final class BlockEspRenderer {
             try {
             BlockEspModule mod = (BlockEspModule) find(BlockEspModule.class);
             if (mod == null || !mod.isEnabled() || !mod.hasAnyBlock()) {
+                KANAL.leeren();
                 return;
             }
 
             Minecraft client = Minecraft.getInstance();
-            if (client.level == null || client.player == null) return;
+            if (client.level == null || client.player == null) { KANAL.leeren(); return; }
 
             PoseStack matrices = context.poseStack();
             SubmitNodeCollector collector = context.submitNodeCollector();
@@ -77,60 +88,39 @@ public final class BlockEspRenderer {
 
             try {
                 float tickDelta = client.getDeltaTracker().getGameTimeDeltaPartialTick(false);
-                // Via the shared helper, which uses the real render camera and
-                // handles freecam. Computing this locally from the player's
-                // eyes shifted everything as soon as the view changed.
+                // Echte Render-Kamera (auch mit Freecam).
                 Vec3 cam = EspRender.cameraOffset(client, tickDelta);
-                if (com.vortex.client.freecam.Freecam.isActive()) {
-                    cam = com.vortex.client.freecam.Freecam.getPos();
-                }
 
-                int color = mod.getEspColor();
-                if ((color >>> 24) == 0) color = 0xFF000000 | color;
-                float lineWidth = mod.lineWidth.getFloat();
-
-                // Nur die fertige Liste zeichnen -- KEINE Suche hier.
-                List<AABB> boxes = RESULT.get();
                 double drawDist = mod.drawDistance.get();
                 if (drawDist <= 0) drawDist = MAX_DRAW_DIST;
-                double maxDistSq = drawDist * drawDist;
-                int drawn = 0;
-                for (int i = 0; i < boxes.size(); i++) {
-                    if (drawn >= MAX_DRAW_PER_FRAME) break;
-                    AABB box = boxes.get(i);
-                    // Entfernte Bloecke ueberspringen (spart Objekte + GPU-Last).
-                    double ddx = box.minX + 0.5 - cam.x;
-                    double ddy = box.minY + 0.5 - cam.y;
-                    double ddz = box.minZ + 0.5 - cam.z;
-                    if (ddx*ddx + ddy*ddy + ddz*ddz > maxDistSq) continue;
-                    drawn++;
-                    EspRender.submitBox(collector, matrices, box, cam, color, lineWidth);
-                }
+                BlockHighlight.Stil stil = BlockHighlight.stil(mod.getEspColor(), mod.style, mod.fillOpacity,
+                        mod.glow, mod.lineWidth.getFloat(), drawDist);
 
-                // Optional: Tracer-Linien von der Sicht zu den Bloecken.
-                if (mod.tracersEnabled() && !boxes.isEmpty()) {
+                // Nur die fertige Geometrie zeichnen -- KEINE Suche hier.
+                KANAL.setze(RESULT.get());
+                KANAL.zeichne(collector, matrices, cam, stil);
+
+                // Optional: Tracer von der Sicht zu den Bloecken -- alle in EINEM Auftrag,
+                // mit derselben Ein-/Ausblendung wie die Bloecke.
+                if (mod.tracersEnabled()) {
                     int tColor = mod.getTracerColor();
                     if ((tColor >>> 24) == 0) tColor = 0xFF000000 | tColor;
-
-                    // Startpunkt: knapp vor der Kamera in Blickrichtung, damit die
-                    // Linie wie aus dem Fadenkreuz wirkt. Wir nehmen die Kamera-
-                    // Blickrichtung aus yaw/pitch der echten Kamera.
-                    Vec3 start = pvpclient$tracerStart(client, cam, tickDelta);
-
-                    final Vec3 tracerCam = cam;
-                    final Vec3 tracerStart = start;
-                    final int tracerColor = tColor;
-                    final float tracerWidth = mod.lineWidth.getFloat();
-                    int tracerDrawn = 0;
-                    for (int i = 0; i < boxes.size(); i++) {
-                        if (tracerDrawn >= MAX_DRAW_PER_FRAME) break;
-                        AABB box = boxes.get(i);
-                        Vec3 target = new Vec3(box.minX + 0.5, box.minY + 0.5, box.minZ + 0.5);
-                        if (target.distanceToSqr(tracerCam) > maxDistSq) continue;
-                        tracerDrawn++;
-                        EspRender.submitLines(collector, matrices,
-                                (matrix, lines) -> EspRender.drawTracer(matrix, lines,
-                                        tracerStart, target, tracerCam, tracerColor, tracerWidth));
+                    final Vec3 start = pvpclient$tracerStart(client, cam, tickDelta);
+                    final java.util.List<double[]> ziele = new java.util.ArrayList<>();
+                    KANAL.fuerJedenBlock(cam, stil, (x, y, z, a) -> {
+                        if (ziele.size() < MAX_TRACER) ziele.add(new double[]{x, y, z, a});
+                    });
+                    if (!ziele.isEmpty()) {
+                        final Vec3 tracerCam = cam;
+                        final int tracerColor = tColor;
+                        final float tracerWidth = mod.lineWidth.getFloat();
+                        EspRender.submitLines(collector, matrices, (matrix, lines) -> {
+                            for (double[] z : ziele) {
+                                int a = Math.round(((tracerColor >>> 24) & 0xFF) * (float) z[3]);
+                                EspRender.drawTracer(matrix, lines, start, new Vec3(z[0], z[1], z[2]), tracerCam,
+                                        (Math.max(a, 1) << 24) | (tracerColor & 0xFFFFFF), tracerWidth);
+                            }
+                        });
                     }
                 }
             } catch (Throwable pvpErr) {
@@ -166,12 +156,14 @@ public final class BlockEspRenderer {
                 BlockEspModule mod = (BlockEspModule) find(BlockEspModule.class);
                 if (client == null || mod == null || !mod.isEnabled()
                         || !mod.hasAnyBlock()) {
-                    if (!RESULT.get().isEmpty()) RESULT.set(new ArrayList<>());
+                    if (!RESULT.get().leer()) RESULT.set(BlockHighlight.LEER);
+                    letzterScan = new LongArrayList();
                     continue;
                 }
                 ClientLevel world = client.level;
                 if (world == null || client.player == null) {
-                    if (!RESULT.get().isEmpty()) RESULT.set(new ArrayList<>());
+                    if (!RESULT.get().leer()) RESULT.set(BlockHighlight.LEER);
+                    letzterScan = new LongArrayList();
                     continue;
                 }
 
@@ -180,8 +172,10 @@ public final class BlockEspRenderer {
                 int cz = (int) Math.floor(client.player.getZ());
                 int range = mod.range.getInt();
 
-                List<AABB> found = scan(world, mod, cx, cy, cz, range);
-                RESULT.set(found); // atomar uebergeben
+                LongArrayList found = scan(world, mod, cx, cy, cz, range);
+                if (found == null) continue;                 // abgebrochen
+                letzterScan = found;
+                RESULT.set(BlockHighlight.baue(found)); // atomar uebergeben
             } catch (InterruptedException ie) {
                 return;
             } catch (Throwable t) {
@@ -196,9 +190,10 @@ public final class BlockEspRenderer {
      * sofort, ferne kommen Ring fuer Ring nach -- statt erst nach einem
      * kompletten (bei grosser Reichweite sekundenlangen) Scan alles auf einmal.
      */
-    private static List<AABB> scan(ClientLevel world, BlockEspModule mod,
+    private static LongArrayList scan(ClientLevel world, BlockEspModule mod,
                                   int cx, int cy, int cz, int range) {
-        List<AABB> out = new ArrayList<>();
+        LongArrayList out = new LongArrayList();
+        final LongArrayList vorher = letzterScan;
 
         int worldMin = world.getMinY();
         int worldMax = world.getMaxY();
@@ -279,7 +274,7 @@ public final class BlockEspRenderer {
                         // frei liegen. Die Pruefung passiert erst NACH dem Filter,
                         // laeuft also nur fuer die wenigen Treffer.
                         if (onlyExposed && !isExposed(world, x, y, z)) continue;
-                        out.add(new AABB(x, y, z, x + 1.0, y + 1.0, z + 1.0));
+                        out.add(BlockPos.asLong(x, y, z));
                         if (out.size() >= MAX_RESULTS) return out;
                     }
                 }
@@ -289,12 +284,21 @@ public final class BlockEspRenderer {
             // JEDEM Ring (das waere bei grosser Reichweite viel Kopierarbeit),
             // sondern alle paar Ringe -- das reicht fuers Gefuehl von "instant".
             if ((r & 7) == 0) {
-                RESULT.set(new ArrayList<>(out));
+                // Zwischenstand: das Neue bis Ring r, dahinter das Ergebnis des
+                // letzten Scans -- so verschwindet nichts, was noch nicht neu
+                // geprueft wurde (bis 2.37 flackerten ferne Bloecke hier).
+                LongArrayList zeigen = new LongArrayList(out);
+                for (int i = 0; i < vorher.size(); i++) {
+                    long p = vorher.getLong(i);
+                    int ring = Math.max(Math.abs(BlockPos.getX(p) - cx), Math.abs(BlockPos.getZ(p) - cz));
+                    if (ring > r) zeigen.add(p);
+                }
+                RESULT.set(BlockHighlight.baue(zeigen));
                 // Gegen Freezes: Locks zwischendurch freigeben. getBlockState
                 // greift live auf Chunk-Daten zu; ohne Pause haelt ein grosser
                 // Scan (hohe Reichweite) die Locks zu lange und das Spiel
                 // ruckelt periodisch.
-                try { Thread.sleep(3); } catch (InterruptedException ie) { return out; }
+                try { Thread.sleep(3); } catch (InterruptedException ie) { return null; }
             }
         }
         return out;

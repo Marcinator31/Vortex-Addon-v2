@@ -39,16 +39,21 @@ public final class TunnelDetector {
     private static final int Y_DEPTH = 24;       // wie viele Y-Ebenen unter Max Y (reduziert)
     private static final int MAX_RESULTS = 200;
 
+    /** Anzeige (Render-Thread): Gaenge als zusammenhaengende Form (seit 2.38). */
+    private static final BlockHighlight.Kanal KANAL = new BlockHighlight.Kanal();
+    private static List<AABB> zuletztGebaut = null;
+    private static BlockHighlight.Mesh mesh = BlockHighlight.LEER;
+
     private static volatile boolean running = false;
     private static Thread worker;
 
     public static void register() {
         LevelRenderEvents.AFTER_TRANSLUCENT_FEATURES.register(context -> {
             TunnelDetectorModule mod = (TunnelDetectorModule) find(TunnelDetectorModule.class);
-            if (mod == null || !mod.isEnabled()) return;
+            if (mod == null || !mod.isEnabled()) { KANAL.leeren(); return; }
 
             Minecraft client = Minecraft.getInstance();
-            if (client.level == null || client.player == null) return;
+            if (client.level == null || client.player == null) { KANAL.leeren(); return; }
 
             ensureWorker();
 
@@ -61,13 +66,23 @@ public final class TunnelDetector {
                 float tickDelta = client.getDeltaTracker().getGameTimeDeltaPartialTick(false);
                 Vec3 cam = EspRender.cameraOffset(client, tickDelta);
 
-                int color = mod.getColor();
-                if ((color >>> 24) == 0) color |= 0xFF000000;
-
                 List<AABB> boxes = RESULT.get();
-                for (int i = 0; i < boxes.size(); i++) {
-                    EspRender.submitBox(collector, matrices, boxes.get(i), cam, color, 2.0f);
+                if (boxes != zuletztGebaut) {
+                    // Gaenge (Laenge x 2 hoch) in Bloecke zerlegen -> eine Form, auch an Kreuzungen
+                    it.unimi.dsi.fastutil.longs.LongArrayList zellen = new it.unimi.dsi.fastutil.longs.LongArrayList();
+                    for (AABB b : boxes) {
+                        for (int x = (int) Math.floor(b.minX); x < (int) Math.ceil(b.maxX); x++)
+                            for (int y = (int) Math.floor(b.minY); y < (int) Math.ceil(b.maxY); y++)
+                                for (int z = (int) Math.floor(b.minZ); z < (int) Math.ceil(b.maxZ); z++)
+                                    zellen.add(net.minecraft.core.BlockPos.asLong(x, y, z));
+                    }
+                    mesh = BlockHighlight.baue(zellen);
+                    zuletztGebaut = boxes;
                 }
+                KANAL.setze(mesh);
+                BlockHighlight.Stil stil = BlockHighlight.stil(mod.getColor(), null, null, null, 2.0f, 128);
+                stil.fuellDeckkraft = 0.15f;
+                KANAL.zeichne(collector, matrices, cam, stil);
             } catch (Throwable pvpErr) {
                 com.vortex.client.core.Errors.report("TunnelDetector", pvpErr);
             } finally {
