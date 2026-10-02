@@ -93,6 +93,7 @@ jobs:
           R=$(find build/run -name bot-test-results.txt | head -n 1)
           if [ -n "$R" ]; then cp "$R" "$OUT/"; { echo '```'; cat "$R"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; else echo "keine Ergebnisdatei" >> "$GITHUB_STEP_SUMMARY"; fi
           for d in $(find build/run -type d -name screenshots); do cp -r "$d" "$OUT/"; done
+          for f in $(find build/run -maxdepth 2 -name 'chunk-study*.tsv'); do cp "$f" "$OUT/"; done
           L=$(find build/run -path '*logs/latest.log' | head -n 1); [ -n "$L" ] && cp "$L" "$OUT/latest.log"
           [ -f test.log ] && tail -c 400000 test.log > "$OUT/gradle.log"
           (cd "$RUNNER_TEMP" && zip -qr bot-tests.zip bot-tests)

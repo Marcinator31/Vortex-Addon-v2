@@ -7,12 +7,12 @@ import com.vortex.client.module.Module;
 
 /**
  * New Chunks: zeigt, welche Chunks gerade zum ersten Mal erzeugt wurden (rot)
- * und welche schon einmal geladen waren (gruen).
+ * und welche es schon vorher gab (gruen).
  *
- * Woran man es sieht: in einem frischen Chunk beginnt Wasser/Lava erst zu
- * fliessen, wenn er erzeugt wird -- der Server schickt dann Block-Updates fuer
- * fliessende Fluessigkeit. Ein alter Chunk hat schon fertig geflossene
- * Fluessigkeit. Ohne Wasser oder Lava im Chunk laesst sich nichts sagen.
+ * Seit 2.40 ueber die Blockpalette, die der Server mit jedem Chunk schickt
+ * (siehe ChunkPalette) -- im Test 1 Fehler bei 437 alten Chunks, alle neuen
+ * weit draussen erkannt. Bis 2.39 ging es ueber fliessendes Wasser: das traf
+ * nur Chunks mit Wasser oder Lava und hielt dabei viele neue fuer alt.
  */
 public class NewChunksModule extends Module {
 
@@ -22,6 +22,8 @@ public class NewChunksModule extends Module {
     public final ColorSetting oldColor = new ColorSetting("Old Color", 0xFF30FF60);
     public final BooleanSetting followPlayer = new BooleanSetting("Draw At My Height", true);
     public final NumberSetting renderY = new NumberSetting("Draw Height", 63, -64, 320, 1);
+    /** Wie kraeftig die Flaechen gefuellt sind (0 = nur Umriss). */
+    public final NumberSetting fillOpacity = new NumberSetting("Fill Opacity", 25, 0, 80, 5);
 
     public NewChunksModule() {
         super("New Chunks", Category.CHEATS);
@@ -31,5 +33,6 @@ public class NewChunksModule extends Module {
         addSetting(oldColor);
         addSetting(followPlayer);
         addSetting(renderY);
+        addSetting(fillOpacity);
     }
 }

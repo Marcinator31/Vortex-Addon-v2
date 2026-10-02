@@ -101,8 +101,9 @@ public final class ExtraCheats {
     // W-Tap
     // ======================================================================
 
-    private static long sprintAb = -1;          // Legit: ab diesem Tick wieder sprinten
-    private static boolean erzwungen = false;   // Packet: Sprint fuer diesen Schlag selbst gesetzt
+    private static long sprintAb = -1;          // ab diesem Tick wieder sprinten (falls es nicht von selbst passiert)
+    private static long sperreBis = -1;         // Legit: bis dahin nicht sprinten
+    private static boolean starkerSprintSchlag = false; // setzt dieser Schlag beim Server das Sprinten zurueck?
 
     /**
      * Darf der Spieler gerade sprinten? (wie LocalPlayer.canStartSprinting,
@@ -116,52 +117,69 @@ public final class ExtraCheats {
                 && !p.isPassenger() && !p.isFallFlying() && !p.isInWater() && !p.horizontalCollision;
     }
 
-    /**
-     * Vom MaceKillMixin, direkt vor dem Angriffspaket.
+    /*
+     * WARUM W-TAP BIS 2.39 NICHTS BRACHTE:
+     * Nach einem Sprint-Schlag setzt der SERVER Sprinten auf aus
+     * (Player.causeExtraKnockback). Der Client nicht: bei ihm liefert der
+     * Schlag hurtOrSimulate = false, der Rueckstoss-Teil laeuft gar nicht. Der
+     * Client sprintet also weiter, meldet nichts Neues -- und der Server bleibt
+     * auf "nicht sprinten": ab dem zweiten Schlag kein Extra-Rueckstoss
+     * (gemessen im Bot-Test: 2,75 Bloecke beim ersten Schlag, danach 1,57).
+     * Die alte Fassung half nur, wenn der Client NICHT sprintete.
      *
-     * WARUM ES VORHER NICHTS TAT: Nach einem Sprint-Schlag setzt Minecraft
-     * Sprinten auf AUS -- beim Server und beim Client (Player.causeExtraKnockback).
-     * Die alte Fassung machte nur etwas, wenn der Client noch sprintete; genau
-     * dann sprintet aber auch der Server schon. Beim zweiten Schlag (dem, um
-     * den es geht) sprintete der Client nicht mehr -> es passierte nichts.
-     *
-     * Jetzt: sprintet der Client gerade NICHT, darf er aber (vorwaerts, genug
-     * Hunger ...), melden wir "sprintet" direkt vor dem Schlag. Der Server gibt
-     * den vollen Sprint-Rueckstoss (Player.attack: isSprinting und Aufladung
-     * > 0,9) und setzt Sprinten danach selbst wieder aus -- Client und Server
-     * bleiben gleich, weil der Client dieselbe Rechnung macht.
+     *   Packet: nach dem Schlag merkt sich der Client, dass der Server nicht
+     *           mehr sprintet -> er meldet im naechsten Tick "sprintet" neu.
+     *           Ein einziges Paket, kein Tempoverlust.
+     *   Legit:  nach dem Schlag "Release Ticks" lang nicht sprinten (STOP),
+     *           dann wieder (START) -- genau das, was ein echter W-Tap schickt.
      */
+
+    /** Vom MaceKillMixin, direkt vor dem Angriffspaket. */
     public static void wTapVorher(Player spieler, Entity ziel) {
-        erzwungen = false;
+        starkerSprintSchlag = false;
         WTapModule m = an(WTapModule.class);
-        if (m == null || m.mode.getIndex() != 0) return;
+        if (m == null || !(spieler instanceof LocalPlayer p) || p != Minecraft.getInstance().player) return;
         if (!(ziel instanceof LivingEntity)) return;            // Kristalle usw.: kein Rueckstoss
-        if (!(spieler instanceof LocalPlayer p) || p != Minecraft.getInstance().player) return;
         if (m.onlyPlayers.get() && !(ziel instanceof Player)) return;
-        if (p.isSprinting() || !kannSprinten(p)) return;
-        var net = Minecraft.getInstance().getConnection();
-        if (net == null) return;
-        net.send(new ServerboundPlayerCommandPacket(p, ServerboundPlayerCommandPacket.Action.START_SPRINTING));
-        p.setSprinting(true);
-        erzwungen = true;
+        // Packet: steht man (noch) nicht im Sprint, darf aber -> fuer diesen Schlag melden
+        if (m.mode.getIndex() == 0 && !p.isSprinting() && kannSprinten(p)) {
+            var net = Minecraft.getInstance().getConnection();
+            if (net == null) return;
+            net.send(new ServerboundPlayerCommandPacket(p, ServerboundPlayerCommandPacket.Action.START_SPRINTING));
+            p.setSprinting(true);
+            ((com.vortex.client.mixin.client.LocalPlayerSprintAccessor) p).vortex$setWasSprinting(true);
+        }
+        // Server-Regel (Player.attack): sprintet + Schlag mind. 90 % aufgeladen
+        // -> Extra-Rueckstoss, danach Sprinten AUS.
+        starkerSprintSchlag = p.isSprinting() && p.getAttackStrengthScale(0.5f) > 0.9f;
     }
 
     /** Vom MaceKillMixin, nach dem Schlag. */
     public static void wTapNachher(Player spieler, Entity ziel) {
-        boolean warErzwungen = erzwungen;
-        erzwungen = false;
         WTapModule m = an(WTapModule.class);
-        if (m == null) return;
+        if (m == null || !(spieler instanceof LocalPlayer p) || p != Minecraft.getInstance().player) return;
         if (!(ziel instanceof LivingEntity)) return;
-        if (!(spieler instanceof LocalPlayer p) || p != Minecraft.getInstance().player) return;
         if (m.onlyPlayers.get() && !(ziel instanceof Player)) return;
+        // Nur nach einem Schlag, der beim Server das Sprinten zuruecksetzt.
+        boolean stark = starkerSprintSchlag;
+        starkerSprintSchlag = false;
+        if (!stark) return;
         if (m.mode.getIndex() == 1) {
-            // Legit: wie ein echter W-Tap -- ein paar Ticks ohne Sprint, dann weiter.
-            sprintAb = tick + m.releaseTicks.getInt();
-        } else if (warErzwungen && !p.isSprinting()) {
-            // Packet: Sprint fuer den naechsten Schlag gleich wieder an (sieht fluessig aus).
+            sperreBis = tick + m.releaseTicks.getInt();
+            sprintAb = sperreBis;
+        } else {
+            // Der Server sprintet nicht mehr: als "nicht gemeldet" merken -- im
+            // naechsten Tick schickt LocalPlayer dann von selbst START.
+            ((com.vortex.client.mixin.client.LocalPlayerSprintAccessor) p).vortex$setWasSprinting(false);
             sprintAb = tick + 1;
         }
+    }
+
+    /** Vom WTapSprintMixin, Ende von aiStep (vor dem Melden an den Server). */
+    public static void wTapNachAiStep(LocalPlayer p) {
+        if (sperreBis < 0) return;
+        if (tick >= sperreBis || an(WTapModule.class) == null || p != Minecraft.getInstance().player) { sperreBis = -1; return; }
+        if (p.isSprinting()) p.setSprinting(false);
     }
 
     /** Jeden Tick: nach der Pause wieder sprinten, wenn es geht. */

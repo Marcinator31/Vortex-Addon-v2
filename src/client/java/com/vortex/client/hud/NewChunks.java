@@ -1,52 +1,51 @@
 package com.vortex.client.hud;
 
 import com.mojang.blaze3d.vertex.PoseStack;
-import com.vortex.client.core.PacketHooks;
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.vortex.client.module.ModuleManager;
 import com.vortex.client.module.modules.NewChunksModule;
-import java.util.ArrayList;
-import java.util.List;
+import it.unimi.dsi.fastutil.longs.Long2ByteOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientChunkEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.SubmitNodeCollector;
-import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
-import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
-import net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
-import net.minecraft.world.level.chunk.LevelChunkSection;
-import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.Vec3;
+import org.joml.Matrix4f;
 
 /**
- * New Chunks (siehe NewChunksModule). Gleiches Verfahren wie Meteor Client:
+ * New Chunks (siehe NewChunksModule).
  *
- *   NEU: Der Server meldet fliessende Fluessigkeit neben einer Quelle -- die
- *        beginnt gerade erst zu fliessen, der Chunk ist also frisch.
- *   ALT: Beim Laden steckt schon fliessende Fluessigkeit im Chunk -- sie ist
- *        frueher geflossen, der Chunk war schon einmal geladen.
+ * ERKENNUNG (seit 2.40): ueber die Blockpalette jedes geladenen Chunks
+ * ({@link ChunkPalette}). Gemessen im echten Spiel (Bot-Test "chunkstudy":
+ * Gebiet erzeugen, Welt speichern und neu oeffnen, dann ins Unbekannte
+ * fliegen):
+ *   - Palette: 1 Fehler bei 437 alten Chunks, ALLE neuen weit draussen erkannt
+ *   - bisher (fliessendes Wasser): von 983 neuen Chunks nur 15 als neu, 194
+ *     sogar als ALT markiert -- daher "nur jeder zweite Chunk"
+ * Regel: mindestens 2 Abschnitte mit unsortierter Palette = neu. Ein
+ * einzelner unsortierter Abschnitt kommt auch in alten Chunks vor (der Server
+ * hat dort seit dem Laden etwas veraendert: Schnee, Wasser, Laub ...).
  *
- * Pakete kommen auf dem Netzwerk-Thread an; sie werden nur vorgemerkt und im
- * naechsten Tick auf dem Spiel-Thread ausgewertet.
+ * ANZEIGE: flache, halbtransparente Flaechen auf der eingestellten Hoehe;
+ * zusammenhaengende Chunks einer Art bekommen EINEN Umriss (nur Aussenkanten),
+ * neue Markierungen blenden weich ein, am Rand der Sichtweite blendet es aus.
  */
 public final class NewChunks {
 
     private NewChunks() {}
 
+    /** Fuer Tests und den Bot-Test: als neu / alt erkannte Chunks. */
     private static final Set<Long> NEU = ConcurrentHashMap.newKeySet();
     private static final Set<Long> ALT = ConcurrentHashMap.newKeySet();
-    private record Update(BlockPos pos, BlockState state) {}
-    private static final ConcurrentLinkedQueue<Update> WARTET = new ConcurrentLinkedQueue<>();
+    /** Seit wann markiert (Einblenden), nur Render-Thread. */
+    private static final Long2LongOpenHashMap SEIT = new Long2LongOpenHashMap();
     private static Object letzteWelt = null;
-
-    private static final Direction[] SUCHE = {Direction.EAST, Direction.NORTH, Direction.WEST, Direction.SOUTH, Direction.UP};
 
     private static boolean an() {
         NewChunksModule m = ModuleManager.INSTANCE.get(NewChunksModule.class);
@@ -54,110 +53,144 @@ public final class NewChunks {
     }
 
     public static void register() {
-        PacketHooks.onReceive(p -> {
-            if (!an()) return false;
-            if (p instanceof ClientboundBlockUpdatePacket b) {
-                if (fliesst(b.getBlockState().getFluidState())) WARTET.add(new Update(b.getPos(), b.getBlockState()));
-            } else if (p instanceof ClientboundSectionBlocksUpdatePacket s) {
-                s.runUpdates((pos, st) -> {
-                    if (fliesst(st.getFluidState())) WARTET.add(new Update(pos.immutable(), st));
-                });
-            }
-            return false;
-        });
         ClientChunkEvents.CHUNK_LOAD.register((level, chunk) -> {
             try {
-                if (an()) pruefeGeladen(chunk);
+                if (an()) pruefe(chunk);
             } catch (Throwable e) {
                 com.vortex.client.core.Errors.report("NewChunks.load", e);
             }
         });
-        ClientTickEvents.END_CLIENT_TICK.register(NewChunks::tick);
+        ClientTickEvents.END_CLIENT_TICK.register(mc -> {
+            if (mc.level != letzteWelt) {
+                letzteWelt = mc.level;
+                NEU.clear();
+                ALT.clear();
+            }
+        });
         LevelRenderEvents.AFTER_TRANSLUCENT_FEATURES.register(context -> {
             try { zeichnen(context.poseStack(), context.submitNodeCollector()); }
             catch (Throwable e) { com.vortex.client.core.Errors.report("NewChunks.render", e); }
         });
     }
 
-    private static boolean fliesst(FluidState f) {
-        return !f.isEmpty() && !f.isSource();
-    }
-
-    private static void tick(Minecraft mc) {
-        if (mc.level == null || !an()) {
-            WARTET.clear();
-            if (mc.level == null) { NEU.clear(); ALT.clear(); letzteWelt = null; }
-            return;
-        }
-        if (mc.level != letzteWelt) {
-            letzteWelt = mc.level;
-            NEU.clear();
-            ALT.clear();
-        }
-        Update u;
-        int n = 0;
-        while ((u = WARTET.poll()) != null && n++ < 4000) {
-            long c = ChunkPos.containing(u.pos()).pack();
-            if (ALT.contains(c) || NEU.contains(c)) continue;
-            for (Direction d : SUCHE) {
-                if (mc.level.getBlockState(u.pos().relative(d)).getFluidState().isSource()) {
-                    NEU.add(c);
-                    break;
-                }
-            }
-        }
-    }
-
-    private static void pruefeGeladen(LevelChunk chunk) {
+    private static void pruefe(LevelChunk chunk) {
         long c = chunk.getPos().pack();
+        // Das erste Urteil bleibt: kommt man spaeter zurueck, ist ein neuer Chunk
+        // inzwischen gespeichert und saehe "alt" aus -- er bleibt rot.
         if (NEU.contains(c) || ALT.contains(c)) return;
-        for (LevelChunkSection sec : chunk.getSections()) {
-            if (sec == null || sec.hasOnlyAir()) continue;
-            if (!sec.maybeHas(st -> !st.getFluidState().isEmpty())) continue;
-            for (int y = 0; y < 16; y++) {
-                for (int z = 0; z < 16; z++) {
-                    for (int x = 0; x < 16; x++) {
-                        if (fliesst(sec.getFluidState(x, y, z))) {
-                            ALT.add(c);
-                            return;
-                        }
-                    }
-                }
-            }
-        }
+        ChunkPalette.Befund b = ChunkPalette.pruefe(chunk);
+        if (b.abschnitte() < 2) return;                       // keine Aussage (Leere, nur eine Blockart)
+        if (b.abschnitte() - b.sortiert() >= 2) NEU.add(c);
+        else ALT.add(c);
     }
+
+    // ------------------------------------------------------------------
 
     private static void zeichnen(PoseStack ms, SubmitNodeCollector col) {
         NewChunksModule m = ModuleManager.INSTANCE.get(NewChunksModule.class);
-        if (m == null || !m.isEnabled() || ms == null || col == null) return;
+        if (m == null || !m.isEnabled() || ms == null || col == null) { SEIT.clear(); return; }
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
-        List<long[]> liste = new ArrayList<>();
-        int r = mc.options.renderDistance().get() + 2;
-        int pcx = mc.player.getBlockX() >> 4, pcz = mc.player.getBlockZ() >> 4;
-        if (m.showNew.get()) for (long c : NEU) sammle(liste, c, 1, pcx, pcz, r);
-        if (m.showOld.get()) for (long c : ALT) sammle(liste, c, 0, pcx, pcz, r);
-        if (liste.isEmpty()) return;
+        boolean zeigNeu = m.showNew.get(), zeigAlt = m.showOld.get();
+        if (!zeigNeu && !zeigAlt) return;
+
         float td = mc.getDeltaTracker().getGameTimeDeltaPartialTick(false);
         Vec3 cam = EspRender.cameraOffset(mc, td);
-        double y = m.followPlayer.get() ? Math.floor(mc.player.getY()) + 0.02 : m.renderY.get();
-        int neu = deckend(m.newColor.get()), alt = deckend(m.oldColor.get());
-        EspRender.submitLines(col, ms, (mat, lines) -> {
-            for (long[] e : liste) {
-                int f = e[2] == 1 ? neu : alt;
-                double x0 = (e[0] << 4) + 0.5, z0 = (e[1] << 4) + 0.5, x1 = x0 + 15, z1 = z0 + 15;
-                EspRender.drawTracer(mat, lines, new Vec3(x0, y, z0), new Vec3(x1, y, z0), cam, f, 2f);
-                EspRender.drawTracer(mat, lines, new Vec3(x1, y, z0), new Vec3(x1, y, z1), cam, f, 2f);
-                EspRender.drawTracer(mat, lines, new Vec3(x1, y, z1), new Vec3(x0, y, z1), cam, f, 2f);
-                EspRender.drawTracer(mat, lines, new Vec3(x0, y, z1), new Vec3(x0, y, z0), cam, f, 2f);
+        int r = mc.options.renderDistance().get() + 1;
+        int pcx = mc.player.getBlockX() >> 4, pcz = mc.player.getBlockZ() >> 4;
+        double sicht = r * 16.0;
+
+        // Art je Chunk im Bereich: 1 = neu, 2 = alt
+        Long2ByteOpenHashMap art = new Long2ByteOpenHashMap();
+        if (zeigNeu) for (long c : NEU) if (imBereich(c, pcx, pcz, r)) art.put(c, (byte) 1);
+        if (zeigAlt) for (long c : ALT) if (imBereich(c, pcx, pcz, r)) art.put(c, (byte) 2);
+        if (art.isEmpty()) return;
+
+        long jetzt = System.currentTimeMillis();
+        SEIT.keySet().removeIf(c -> !art.containsKey(c));
+        for (long c : art.keySet()) if (!SEIT.containsKey(c)) SEIT.put(c, jetzt);
+
+        // Hoehe: weich der Spielerhoehe folgen (kein Springen bei jeder Stufe)
+        double zielY = m.followPlayer.get() ? net.minecraft.util.Mth.lerp(td, mc.player.yo, mc.player.getY()) + 0.05 : m.renderY.get() + 0.05;
+        if (Double.isNaN(hoehe) || Math.abs(hoehe - zielY) > 24) hoehe = zielY;
+        hoehe += (zielY - hoehe) * 0.15;
+        final float y = (float) (hoehe - cam.y);
+
+        int neuF = deckend(m.newColor.get()), altF = deckend(m.oldColor.get());
+        float fuell = (float) (m.fillOpacity.get() / 100.0);
+
+        // Deckkraft je Chunk: Einblenden x Sichtweite
+        final long[] chunks = art.keySet().toLongArray();
+        final float[] alpha = new float[chunks.length];
+        final int[] farbe = new int[chunks.length];
+        for (int i = 0; i < chunks.length; i++) {
+            long c = chunks[i];
+            double mx = ChunkPos.getX(c) * 16 + 8 - cam.x, mz = ChunkPos.getZ(c) * 16 + 8 - cam.z;
+            double d = Math.sqrt(mx * mx + mz * mz);
+            float weit = (float) Math.max(0, Math.min(1, (sicht - d) / (sicht * 0.3)));
+            float ein = glatt((jetzt - SEIT.get(c)) / 400f);
+            alpha[i] = weit * ein;
+            farbe[i] = art.get(c) == 1 ? neuF : altF;
+        }
+
+        if (fuell > 0.001f) {
+            col.submitCustomGeometry(ms, BlockHighlight.fuellung(), (pose, v) -> {
+                Matrix4f mat = pose.pose();
+                for (int i = 0; i < chunks.length; i++) {
+                    float a = alpha[i] * fuell;
+                    if (a < 0.003f) continue;
+                    float x0 = (float) (ChunkPos.getX(chunks[i]) * 16 - cam.x), z0 = (float) (ChunkPos.getZ(chunks[i]) * 16 - cam.z);
+                    int f = farbe[i];
+                    float rr = ((f >> 16) & 0xFF) / 255f, gg = ((f >> 8) & 0xFF) / 255f, bb = (f & 0xFF) / 255f;
+                    v.addVertex(mat, x0, y, z0).setColor(rr, gg, bb, a);
+                    v.addVertex(mat, x0, y, z0 + 16).setColor(rr, gg, bb, a);
+                    v.addVertex(mat, x0 + 16, y, z0 + 16).setColor(rr, gg, bb, a);
+                    v.addVertex(mat, x0 + 16, y, z0).setColor(rr, gg, bb, a);
+                }
+            });
+        }
+        // Umriss: nur Kanten zu einem Nachbarn anderer Art (oder ohne Markierung)
+        col.submitCustomGeometry(ms, EspRenderLayer.espLines(), (pose, v) -> {
+            Matrix4f mat = pose.pose();
+            for (int durchgang = 0; durchgang < 2; durchgang++) {
+                float w = durchgang == 0 ? 6f : 2f, faktor = durchgang == 0 ? 0.2f : 0.95f;
+                for (int i = 0; i < chunks.length; i++) {
+                    float a = alpha[i] * faktor;
+                    if (a < 0.003f) continue;
+                    long c = chunks[i];
+                    int cx = ChunkPos.getX(c), cz = ChunkPos.getZ(c);
+                    byte meine = art.get(c);
+                    float x0 = (float) (cx * 16 - cam.x), z0 = (float) (cz * 16 - cam.z), x1 = x0 + 16, z1 = z0 + 16;
+                    int f = farbe[i];
+                    float rr = ((f >> 16) & 0xFF) / 255f, gg = ((f >> 8) & 0xFF) / 255f, bb = (f & 0xFF) / 255f;
+                    if (art.get(ChunkPos.pack(cx, cz - 1)) != meine) linie(mat, v, x0, y, z0, x1, y, z0, rr, gg, bb, a, w);
+                    if (art.get(ChunkPos.pack(cx, cz + 1)) != meine) linie(mat, v, x0, y, z1, x1, y, z1, rr, gg, bb, a, w);
+                    if (art.get(ChunkPos.pack(cx - 1, cz)) != meine) linie(mat, v, x0, y, z0, x0, y, z1, rr, gg, bb, a, w);
+                    if (art.get(ChunkPos.pack(cx + 1, cz)) != meine) linie(mat, v, x1, y, z0, x1, y, z1, rr, gg, bb, a, w);
+                }
             }
         });
     }
 
-    private static void sammle(List<long[]> liste, long c, int art, int pcx, int pcz, int r) {
-        int cx = ChunkPos.getX(c), cz = ChunkPos.getZ(c);
-        if (Math.abs(cx - pcx) > r || Math.abs(cz - pcz) > r) return;
-        liste.add(new long[]{cx, cz, art});
+    private static double hoehe = Double.NaN;
+
+    private static boolean imBereich(long c, int pcx, int pcz, int r) {
+        return Math.abs(ChunkPos.getX(c) - pcx) <= r && Math.abs(ChunkPos.getZ(c) - pcz) <= r;
+    }
+
+    private static void linie(Matrix4f mat, VertexConsumer v, float x1, float y1, float z1, float x2, float y2, float z2,
+                              float r, float g, float b, float a, float w) {
+        float dx = x2 - x1, dz = z2 - z1;
+        float len = (float) Math.sqrt(dx * dx + dz * dz);
+        if (len < 1e-6f) return;
+        v.addVertex(mat, x1, y1, z1).setColor(r, g, b, a).setNormal(dx / len, 0, dz / len).setLineWidth(w);
+        v.addVertex(mat, x2, y2, z2).setColor(r, g, b, a).setNormal(dx / len, 0, dz / len).setLineWidth(w);
+    }
+
+    private static float glatt(float t) {
+        if (t <= 0f) return 0f;
+        if (t >= 1f) return 1f;
+        return t * t * (3f - 2f * t);
     }
 
     private static int deckend(int c) {
