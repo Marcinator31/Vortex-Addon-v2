@@ -29,6 +29,7 @@
 		"RightClickDelayAccessor",
 		"SafeWalkMixin",
 		"SpeedMineMixin",
+		"TotemPopMixin",
 		"XrayFaceMixin",
 		"XrayShapeMixin"
 	],

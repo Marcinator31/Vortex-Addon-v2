@@ -85,6 +85,8 @@ public class BotGameTest implements FabricClientGameTest {
             if (nur.contains("freecam")) abschnitt(ctx, "Freecam view", () -> freecamTest(ctx, srv));
             if (nur.contains("freecam")) abschnitt(ctx, "Freecam keeps momentum", () -> freecamSchwungTest(ctx, srv));
             if (nur.isEmpty() || nur.contains("wtap")) abschnitt(ctx, "W-Tap", () -> wTapTest(ctx, srv));
+            if (nur.contains("pvp")) abschnitt(ctx, "PvP: Surround vs crystal", () -> surroundTest(ctx, srv));
+            if (nur.contains("pvp")) abschnitt(ctx, "PvP: Auto Totem refill + main hand", () -> totemTest(ctx, srv));
             if (nur.contains("potion")) abschnitt(ctx, "Potion HUD look", () -> potionTest(ctx, srv));
             if (nur.isEmpty() || nur.contains("crop")) abschnitt(ctx, "Crop Farmer", () -> cropTest(ctx, srv));
             if (nur.isEmpty() || nur.contains("tree")) abschnitt(ctx, "Tree Farmer", () -> treeTest(ctx, srv));
@@ -628,6 +630,197 @@ public class BotGameTest implements FabricClientGameTest {
         ctx.waitTicks(10);
         String fehler = ctx.computeOnClient(mc -> com.vortex.client.core.Errors.summary());
         notiz("errors (end): " + fehler.replace('\n', '|'));
+    }
+
+    // ------------------------------------------------------------------
+    // PVP (2.41): Surround und Auto Totem, gemessen
+
+    private static void befehl(MinecraftServer s, String cmd) {
+        s.getCommands().performPrefixedCommand(s.createCommandSourceStack(), cmd);
+    }
+
+    /** Leben auf dem Server (die Wahrheit, nicht die Anzeige). */
+    private static float leben(TestServerContext srv) {
+        return srv.computeOnServer(s -> spieler(s).getHealth() + spieler(s).getAbsorptionAmount());
+    }
+
+    /** Kristall an (x, y, z) beschwoeren und zuenden; liefert den Schaden am Spieler. */
+    private float kristallSchaden(ClientGameTestContext ctx, TestServerContext srv, String wo) {
+        srv.runCommand("effect give @a minecraft:instant_health 1 10 true");
+        ctx.waitTicks(25);                              // Unverwundbarkeit abwarten
+        float vorher = leben(srv);
+        srv.runCommand("summon minecraft:end_crystal " + wo + " {ShowBottom:0b}");
+        ctx.waitTicks(2);
+        srv.runCommand("damage @e[type=minecraft:end_crystal,limit=1,sort=nearest] 1");
+        ctx.waitTicks(5);
+        return vorher - leben(srv);
+    }
+
+    private void pvpBuehne(ClientGameTestContext ctx, TestServerContext srv) {
+        srv.runCommand("difficulty normal");
+        srv.runCommand("gamemode survival @a");
+        srv.runCommand("fill -12 -61 -12 12 -61 12 minecraft:obsidian");
+        srv.runCommand("fill -12 -60 -12 12 -50 12 minecraft:air");
+        srv.runCommand("kill @e[type=minecraft:end_crystal]");
+        srv.runCommand("kill @e[type=minecraft:item]");
+        srv.runCommand("clear @a");
+        srv.runCommand("tp @a 0.5 -60 0.5 0 0");
+        ctx.waitTicks(20);
+    }
+
+    private void surroundTest(ClientGameTestContext ctx, TestServerContext srv) {
+        pvpBuehne(ctx, srv);
+        // Viel Leben, damit man den vollen Schaden messen kann (kein Totem dazwischen)
+        srv.runCommand("attribute @a minecraft:max_health base set 200");
+        float ohne = kristallSchaden(ctx, srv, "2.5 -60 0.5");
+        float ohneSchraeg = kristallSchaden(ctx, srv, "2.5 -60 2.5");
+        notiz(String.format("crystal 2 blocks east, no protection: %.1f damage; diagonal: %.1f", ohne, ohneSchraeg));
+
+        srv.runCommand("tp @a 0.5 -60 0.5 0 0");
+        srv.runCommand("give @a minecraft:obsidian 64");
+        ctx.waitTicks(10);
+        ctx.runOnClient(mc -> {
+            var m = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.SurroundModule.class);
+            m.setEnabled(true);
+        });
+        int ticks = 0;
+        boolean dicht = false;
+        for (; ticks < 40 && !dicht; ticks++) {
+            ctx.waitTick();
+            dicht = ctx.computeOnClient(mc -> com.vortex.client.cheat.Surround.dicht(mc));
+        }
+        int bloecke = srv.computeOnServer(s -> {
+            int n = 0;
+            var lvl = s.overworld();
+            for (int[] d : new int[][]{{1, 0}, {-1, 0}, {0, 1}, {0, -1}})
+                if (lvl.getBlockState(new net.minecraft.core.BlockPos(d[0], -60, d[1])).is(Blocks.OBSIDIAN)) n++;
+            return n;
+        });
+        pruefe("surround placed 4 obsidian around the feet", bloecke == 4, bloecke + " of 4 after " + ticks + " ticks");
+        ctx.takeScreenshot("pvp-surround");
+
+        float mit = kristallSchaden(ctx, srv, "2.5 -60 0.5");
+        float mitSchraeg = kristallSchaden(ctx, srv, "2.5 -60 2.5");
+        notiz(String.format("with surround: %.1f damage (east); diagonal: %.1f", mit, mitSchraeg));
+        pruefe("surround cuts damage from a crystal 2 blocks away", mit < ohne * 0.7f,
+                String.format("%.1f -> %.1f (%.0f%%)", ohne, mit, ohne > 0 ? 100f * mit / ohne : 0f));
+
+        // Ein Block wird abgebaut -> sofort wieder da?
+        srv.runCommand("setblock 1 -60 0 minecraft:air");
+        int zurueck = -1;
+        for (int t = 0; t < 20; t++) {
+            ctx.waitTick();
+            boolean da = srv.computeOnServer(s -> s.overworld().getBlockState(new net.minecraft.core.BlockPos(1, -60, 0)).is(Blocks.OBSIDIAN));
+            if (da) { zurueck = t + 1; break; }
+        }
+        pruefe("a broken surround block is put back", zurueck > 0, zurueck + " tick(s)");
+
+        ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.SurroundModule.class).setEnabled(false));
+        srv.runCommand("attribute @a minecraft:max_health base set 20");
+        srv.runCommand("fill -2 -60 -2 2 -60 2 minecraft:air");
+        ctx.waitTicks(5);
+    }
+
+    /** Ticks, bis der Server wieder ein Totem in der Off-Hand sieht (oder -1). */
+    private int popUndWarte(ClientGameTestContext ctx, TestServerContext srv) {
+        srv.runCommand("damage @a 100 minecraft:generic");
+        for (int t = 1; t <= 40; t++) {
+            ctx.waitTick();
+            boolean da = srv.computeOnServer(s -> spieler(s).getOffhandItem().is(net.minecraft.world.item.Items.TOTEM_OF_UNDYING));
+            if (da) return t;
+        }
+        return -1;
+    }
+
+    private void totemTest(ClientGameTestContext ctx, TestServerContext srv) {
+        pvpBuehne(ctx, srv);
+        srv.runCommand("attribute @a minecraft:max_health base set 20");
+        srv.runCommand("effect give @a minecraft:instant_health 1 10 true");
+        srv.runCommand("item replace entity @a weapon.offhand with minecraft:totem_of_undying");
+        srv.runCommand("item replace entity @a hotbar.0 with minecraft:diamond_sword");
+        srv.runCommand("item replace entity @a inventory.0 with minecraft:totem_of_undying 8");
+        ctx.waitTicks(10);
+        ctx.runOnClient(mc -> {
+            var m = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AutoTotemModule.class);
+            m.mode.set("Normal");
+            m.mainHand.set("Off");
+            m.instant.set(false);
+            m.delay.set(3);
+            m.jitter.set(0);
+            m.healthBelow.set(20);
+            m.onlyWithWeapon.set(false);
+            m.setEnabled(true);
+            mc.player.getInventory().setSelectedSlot(0);
+        });
+        ctx.waitTicks(10);
+
+        // 1) Nachlegen: normal (3 Ticks Verzoegerung) gegen sofort
+        int normal = popUndWarte(ctx, srv);
+        srv.runCommand("effect give @a minecraft:instant_health 1 10 true");
+        ctx.waitTicks(25);
+        ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AutoTotemModule.class).instant.set(true));
+        int sofort = popUndWarte(ctx, srv);
+        notiz("off hand refilled after a pop: normal " + normal + " tick(s), instant " + sofort + " tick(s) (server view, no ping)");
+        pruefe("instant refill is not slower than normal", sofort > 0 && (normal < 0 || sofort <= normal), normal + " -> " + sofort);
+
+        // 2) Zwei toedliche Treffer im SELBEN Tick -- nur ein zweites Totem
+        //    in der Hand rettet hier, Nachlegen kommt zu spaet.
+        srv.runCommand("effect give @a minecraft:instant_health 1 10 true");
+        ctx.waitTicks(25);
+        ctx.runOnClient(mc -> {
+            var m = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AutoTotemModule.class);
+            m.mainHand.set("Always");
+        });
+        int bisHand = -1;
+        for (int t = 1; t <= 20; t++) {
+            ctx.waitTick();
+            boolean da = srv.computeOnServer(s -> spieler(s).getMainHandItem().is(net.minecraft.world.item.Items.TOTEM_OF_UNDYING));
+            if (da) { bisHand = t; break; }
+        }
+        pruefe("main hand totem gets equipped", bisHand > 0, bisHand + " tick(s)");
+        ctx.waitTicks(5);
+        int vorher = srv.computeOnServer(s -> zaehleTotems(spieler(s)));
+        srv.runOnServer(s -> {
+            befehl(s, "damage @a 100 minecraft:generic");
+            befehl(s, "damage @a 300 minecraft:generic");
+        });
+        ctx.waitTicks(10);
+        boolean lebt = srv.computeOnServer(s -> spieler(s).isAlive());
+        int nachher = srv.computeOnServer(s -> zaehleTotems(spieler(s)));
+        pruefe("two lethal hits in the same tick: survived with main hand totem", lebt,
+                "totems " + vorher + " -> " + nachher);
+        ctx.takeScreenshot("pvp-totem");
+
+        // Gegenprobe: dasselbe OHNE Haupthand-Totem (erwartet: tot)
+        srv.runCommand("effect give @a minecraft:instant_health 1 10 true");
+        ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AutoTotemModule.class).mainHand.set("Off"));
+        ctx.waitTicks(30);
+        boolean ohneHandTotem = srv.computeOnServer(s -> !spieler(s).getMainHandItem().is(net.minecraft.world.item.Items.TOTEM_OF_UNDYING)
+                && spieler(s).getOffhandItem().is(net.minecraft.world.item.Items.TOTEM_OF_UNDYING));
+        srv.runOnServer(s -> {
+            befehl(s, "damage @a 100 minecraft:generic");
+            befehl(s, "damage @a 300 minecraft:generic");
+        });
+        ctx.waitTicks(10);
+        boolean lebtOhne = srv.computeOnServer(s -> spieler(s).isAlive());
+        notiz("control (only off hand totem" + (ohneHandTotem ? "" : ", setup not as planned") + "): " + (lebtOhne ? "survived" : "died"));
+        pruefe("control: without main hand totem the same double hit kills", !lebtOhne || !ohneHandTotem, lebtOhne ? "survived" : "died");
+
+        ctx.runOnClient(mc -> {
+            var m = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AutoTotemModule.class);
+            m.mainHand.set("Below Health");
+            m.setEnabled(false);
+        });
+        srv.runCommand("difficulty peaceful");
+    }
+
+    private static int zaehleTotems(ServerPlayer p) {
+        int n = 0;
+        for (int i = 0; i < p.getInventory().getContainerSize(); i++) {
+            var st = p.getInventory().getItem(i);
+            if (st.is(net.minecraft.world.item.Items.TOTEM_OF_UNDYING)) n += st.getCount();
+        }
+        return n;
     }
 
     // ------------------------------------------------------------------
