@@ -551,7 +551,7 @@ public class BotGameTest implements FabricClientGameTest {
         ctx.getInput().resizeWindow(1920, 1080);
         ctx.waitTicks(20);
         for (int skala : new int[]{3, 2}) {
-            ctx.runOnClient(mc -> { mc.options.guiScale().set(skala); mc.resizeDisplay(); });
+            ctx.runOnClient(mc -> { mc.options.guiScale().set(skala); mc.resizeGui(); });
             ctx.waitTicks(10);
             ctx.setScreen(() -> new net.minecraft.client.gui.screens.TitleScreen());
             ctx.waitTicks(40);
@@ -569,7 +569,7 @@ public class BotGameTest implements FabricClientGameTest {
             sp.getServer().runCommand("time set noon");
             ctx.waitTicks(40);
             for (int skala : new int[]{3, 2}) {
-                ctx.runOnClient(mc -> { mc.options.guiScale().set(skala); mc.resizeDisplay(); });
+                ctx.runOnClient(mc -> { mc.options.guiScale().set(skala); mc.resizeGui(); });
                 ctx.waitTicks(10);
                 ctx.setScreen(() -> new com.vortex.client.gui.HomeScreen());
                 ctx.waitTicks(40);
