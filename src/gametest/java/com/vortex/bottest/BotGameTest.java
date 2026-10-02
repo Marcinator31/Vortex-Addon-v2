@@ -61,6 +61,11 @@ public class BotGameTest implements FabricClientGameTest {
 
     @Override
     public void runTest(ClientGameTestContext ctx) {
+        if (System.getProperty("vortex.bottest.only", "").contains("gui")) {
+            try { abschnitt(ctx, "GUI screenshots", () -> guiBilder(ctx)); } finally { schreibe(); }
+            if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
+            return;
+        }
         if (System.getProperty("vortex.bottest.only", "").contains("chunkstudy")) {
             try { abschnitt(ctx, "New Chunks study", () -> chunkStudie(ctx)); } finally { schreibe(); }
             if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
@@ -537,6 +542,51 @@ public class BotGameTest implements FabricClientGameTest {
         String fehler = ctx.computeOnClient(mc -> com.vortex.client.core.Errors.summary());
         srv.runCommand("effect clear @a");
         pruefe("potion HUD drew without errors", !fehler.contains("PotionHud"), fehler.replace('\n', '|'));
+    }
+
+    // ------------------------------------------------------------------
+    // GUI (nur -PbotOnly=gui): Bildschirme in 1920x1080, GUI-Skala 2 und 3
+
+    private void guiBilder(ClientGameTestContext ctx) {
+        ctx.getInput().resizeWindow(1920, 1080);
+        ctx.waitTicks(20);
+        for (int skala : new int[]{3, 2}) {
+            ctx.runOnClient(mc -> { mc.options.guiScale().set(skala); mc.resizeDisplay(); });
+            ctx.waitTicks(10);
+            ctx.setScreen(() -> new net.minecraft.client.gui.screens.TitleScreen());
+            ctx.waitTicks(40);
+            ctx.takeScreenshot("title-s" + skala);
+            ctx.setScreen(() -> new net.minecraft.client.gui.screens.worldselection.SelectWorldScreen(new net.minecraft.client.gui.screens.TitleScreen()));
+            ctx.waitTicks(30);
+            ctx.takeScreenshot("singleplayer-s" + skala);
+            ctx.setScreen(() -> new net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen(new net.minecraft.client.gui.screens.TitleScreen()));
+            ctx.waitTicks(30);
+            ctx.takeScreenshot("multiplayer-s" + skala);
+            ctx.setScreen(() -> new net.minecraft.client.gui.screens.TitleScreen());
+            ctx.waitTicks(10);
+        }
+        try (TestSingleplayerContext sp = ctx.worldBuilder().create()) {
+            sp.getServer().runCommand("time set noon");
+            ctx.waitTicks(40);
+            for (int skala : new int[]{3, 2}) {
+                ctx.runOnClient(mc -> { mc.options.guiScale().set(skala); mc.resizeDisplay(); });
+                ctx.waitTicks(10);
+                ctx.setScreen(() -> new com.vortex.client.gui.HomeScreen());
+                ctx.waitTicks(40);
+                ctx.takeScreenshot("home-s" + skala);
+                ctx.setScreen(() -> new com.vortex.client.gui.ClickGui());
+                ctx.waitTicks(30);
+                ctx.takeScreenshot("clickgui-s" + skala);
+                ctx.setScreen(() -> new com.vortex.client.gui.PanelGui());
+                ctx.waitTicks(30);
+                ctx.takeScreenshot("panelgui-s" + skala);
+                ctx.setScreen(() -> null);
+                ctx.waitTicks(5);
+            }
+            String fehler = ctx.computeOnClient(mc -> com.vortex.client.core.Errors.summary());
+            notiz("errors: " + fehler.replace('\n', '|'));
+            pruefe("screens drew without errors", !fehler.contains("Screen") && !fehler.contains("Gui"), "");
+        }
     }
 
     // ------------------------------------------------------------------
