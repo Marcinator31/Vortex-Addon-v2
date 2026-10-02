@@ -103,7 +103,7 @@ public final class ExtraCheats {
 
     private static long sprintAb = -1;          // ab diesem Tick wieder sprinten (falls es nicht von selbst passiert)
     private static long sperreBis = -1;         // Legit: bis dahin nicht sprinten
-    private static boolean sprintVorher = false; // sprintete der Client direkt vor dem Schlag?
+    private static boolean starkerSprintSchlag = false; // setzt dieser Schlag beim Server das Sprinten zurueck?
 
     /**
      * Darf der Spieler gerade sprinten? (wie LocalPlayer.canStartSprinting,
@@ -119,13 +119,13 @@ public final class ExtraCheats {
 
     /*
      * WARUM W-TAP BIS 2.39 NICHTS BRACHTE:
-     * Nach einem Sprint-Schlag setzen Server UND Client Sprinten auf aus
-     * (Player.causeExtraKnockback). Haelt man Sprint gedrueckt, sprintet der
-     * Client noch im selben Tick wieder los -- meldet das aber NICHT, weil er
-     * zuletzt "sprintet" gemeldet hatte und sich aus seiner Sicht nichts
-     * geaendert hat. Der Server bleibt auf "nicht sprinten": ab dem zweiten
-     * Schlag kein Extra-Rueckstoss. Die alte Fassung half nur, wenn der Client
-     * NICHT sprintete -- das tat er aber (scheinbar) fast immer.
+     * Nach einem Sprint-Schlag setzt der SERVER Sprinten auf aus
+     * (Player.causeExtraKnockback). Der Client nicht: bei ihm liefert der
+     * Schlag hurtOrSimulate = false, der Rueckstoss-Teil laeuft gar nicht. Der
+     * Client sprintet also weiter, meldet nichts Neues -- und der Server bleibt
+     * auf "nicht sprinten": ab dem zweiten Schlag kein Extra-Rueckstoss
+     * (gemessen im Bot-Test: 2,75 Bloecke beim ersten Schlag, danach 1,57).
+     * Die alte Fassung half nur, wenn der Client NICHT sprintete.
      *
      *   Packet: nach dem Schlag merkt sich der Client, dass der Server nicht
      *           mehr sprintet -> er meldet im naechsten Tick "sprintet" neu.
@@ -136,10 +136,9 @@ public final class ExtraCheats {
 
     /** Vom MaceKillMixin, direkt vor dem Angriffspaket. */
     public static void wTapVorher(Player spieler, Entity ziel) {
-        sprintVorher = false;
+        starkerSprintSchlag = false;
         WTapModule m = an(WTapModule.class);
         if (m == null || !(spieler instanceof LocalPlayer p) || p != Minecraft.getInstance().player) return;
-        sprintVorher = p.isSprinting();
         if (!(ziel instanceof LivingEntity)) return;            // Kristalle usw.: kein Rueckstoss
         if (m.onlyPlayers.get() && !(ziel instanceof Player)) return;
         // Packet: steht man (noch) nicht im Sprint, darf aber -> fuer diesen Schlag melden
@@ -149,8 +148,10 @@ public final class ExtraCheats {
             net.send(new ServerboundPlayerCommandPacket(p, ServerboundPlayerCommandPacket.Action.START_SPRINTING));
             p.setSprinting(true);
             ((com.vortex.client.mixin.client.LocalPlayerSprintAccessor) p).vortex$setWasSprinting(true);
-            sprintVorher = true;
         }
+        // Server-Regel (Player.attack): sprintet + Schlag mind. 90 % aufgeladen
+        // -> Extra-Rueckstoss, danach Sprinten AUS.
+        starkerSprintSchlag = p.isSprinting() && p.getAttackStrengthScale(0.5f) > 0.9f;
     }
 
     /** Vom MaceKillMixin, nach dem Schlag. */
@@ -159,14 +160,16 @@ public final class ExtraCheats {
         if (m == null || !(spieler instanceof LocalPlayer p) || p != Minecraft.getInstance().player) return;
         if (!(ziel instanceof LivingEntity)) return;
         if (m.onlyPlayers.get() && !(ziel instanceof Player)) return;
-        // Hat der Schlag das Sprinten zurueckgesetzt? (Der Client rechnet wie der Server.)
-        if (!sprintVorher || p.isSprinting()) return;
+        // Nur nach einem Schlag, der beim Server das Sprinten zuruecksetzt.
+        boolean stark = starkerSprintSchlag;
+        starkerSprintSchlag = false;
+        if (!stark) return;
         if (m.mode.getIndex() == 1) {
             sperreBis = tick + m.releaseTicks.getInt();
             sprintAb = sperreBis;
         } else {
-            // Der Server sprintet nicht mehr: als "nicht gemeldet" merken, dann
-            // schickt LocalPlayer beim naechsten Sprinten von selbst START.
+            // Der Server sprintet nicht mehr: als "nicht gemeldet" merken -- im
+            // naechsten Tick schickt LocalPlayer dann von selbst START.
             ((com.vortex.client.mixin.client.LocalPlayerSprintAccessor) p).vortex$setWasSprinting(false);
             sprintAb = tick + 1;
         }
