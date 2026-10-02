@@ -53,6 +53,9 @@ public final class AutoTotem {
 
             LocalPlayer player = client.player;
 
+            // --- Totem in der Haupthand (2.41) ---------------------------------
+            haupthand(client, player, mod);
+
             // --- Modus Hover / Inventory Open (4.6.1) ------------------------
             int modus = mod.mode.getIndex();
             if (modus == 1) { hover(client, player, mod); return; }
@@ -183,6 +186,123 @@ public final class AutoTotem {
             return invIndex;           // Hauptinventar (gleiche Nummer)
         }
         return -1;
+    }
+
+    // ======================================================================
+    // Sofort nachlegen und Haupthand (2.41)
+    // ======================================================================
+
+    /** Hotbar-Platz vor dem Wechsel auf das Haupthand-Totem (-1 = nicht gewechselt). */
+    private static int vorherPlatz = -1;
+    private static long letzterPop = -100;
+
+    /**
+     * Ein Totem ist gerade geplatzt (vom Server gemeldet, Mixin auf
+     * handleEntityEvent). Laeuft im Haupt-Thread, sobald die Nachricht da ist.
+     *
+     * Minecraft nimmt beim toedlichen Treffer das Totem aus der HAUPThand,
+     * wenn dort eines ist, sonst das aus der Off-Hand. Der Client sieht in
+     * diesem Moment noch den alten Stand (der Server schickt das Inventar erst
+     * etwas spaeter); deshalb: Haupthand-Totem vorhanden -> das ist geplatzt,
+     * sonst die Off-Hand. Nachgelegt wird mit EINEM Tausch-Klick -- der
+     * funktioniert unabhaengig davon, was der Client gerade anzeigt.
+     */
+    public static void nachPop() {
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer p = mc.player;
+        if (p == null || mc.gameMode == null) return;
+        AutoTotemModule mod = ModuleManager.INSTANCE.get(AutoTotemModule.class);
+        if (mod == null || !mod.isEnabled() || !mod.instant.get()) return;
+        letzterPop = tickCounter;
+        int gewaehlt = p.getInventory().getSelectedSlot();
+        boolean haupt = p.getMainHandItem().is(Items.TOTEM_OF_UNDYING);
+        // Quelle: ein Totem, das NICHT in der Hand liegt
+        int quelle = -1;
+        for (int i = 0; i < Math.min(36, p.getInventory().getContainerSize()); i++) {
+            if (i == gewaehlt) continue;
+            if (p.getInventory().getItem(i).is(Items.TOTEM_OF_UNDYING)) { quelle = i; break; }
+        }
+        if (quelle < 0) return;
+        try {
+            int platz = inventoryIndexToScreenSlot(quelle);
+            if (haupt) {
+                if (quelle <= 8) {
+                    // anderes Hotbar-Totem: einfach dorthin wechseln
+                    p.getInventory().setSelectedSlot(quelle);
+                } else {
+                    client(mc).handleContainerInput(p.inventoryMenu.containerId, platz, gewaehlt, ContainerInput.SWAP, p);
+                }
+            } else {
+                client(mc).handleContainerInput(p.inventoryMenu.containerId, platz, OFFHAND_TASTE, ContainerInput.SWAP, p);
+            }
+            lastActionTick = tickCounter;
+        } catch (Throwable e) {
+            com.vortex.client.core.Errors.report("AutoTotem.instant", e);
+        }
+    }
+
+    private static net.minecraft.client.multiplayer.MultiPlayerGameMode client(Minecraft mc) {
+        return mc.gameMode;
+    }
+
+    /**
+     * Haupthand-Totem: unter der Lebensgrenze (oder immer) auf einen
+     * Hotbar-Platz mit Totem wechseln; liegt keins in der Hotbar, eins aus dem
+     * Inventar auf einen freien (sonst den letzten) Hotbar-Platz holen. Steigt
+     * das Leben wieder deutlich, zurueck auf den alten Platz.
+     */
+    private static void haupthand(Minecraft mc, LocalPlayer p, AutoTotemModule mod) {
+        int modus = mod.mainHand.getIndex();
+        if (modus == 0) { zurueck(p); return; }
+        if (mc.gui.screen() != null && !(mc.gui.screen() instanceof net.minecraft.client.gui.screens.ChatScreen)) return;
+        float leben = p.getHealth() + p.getAbsorptionAmount();
+        float grenze = mod.mainHandHealth.getInt();
+        boolean noetig = modus == 2 || leben < grenze;
+        boolean genug = modus != 2 && leben >= grenze + 4;
+        if (genug) { zurueck(p); return; }
+        if (!noetig && vorherPlatz < 0) return;
+        if (p.getMainHandItem().is(Items.TOTEM_OF_UNDYING)) return;
+        if (tickCounter - lastActionTick < 1) return;
+        int gewaehlt = p.getInventory().getSelectedSlot();
+        int hotbar = -1;
+        for (int i = 0; i < 9; i++) if (p.getInventory().getItem(i).is(Items.TOTEM_OF_UNDYING)) { hotbar = i; break; }
+        if (hotbar >= 0) {
+            if (vorherPlatz < 0) vorherPlatz = gewaehlt;
+            p.getInventory().setSelectedSlot(hotbar);
+            return;
+        }
+        // keins in der Hotbar: aus dem Inventar holen
+        int inv = -1;
+        for (int i = 9; i < Math.min(36, p.getInventory().getContainerSize()); i++) {
+            if (p.getInventory().getItem(i).is(Items.TOTEM_OF_UNDYING)) { inv = i; break; }
+        }
+        if (inv < 0) return;
+        // Off-Hand hat Vorrang: das letzte Totem nicht aus der Off-Hand-Reserve nehmen
+        if (!p.getOffhandItem().is(Items.TOTEM_OF_UNDYING) && zaehle(p) < 2) return;
+        int ziel = -1;
+        for (int i = 8; i >= 0; i--) if (p.getInventory().getItem(i).isEmpty()) { ziel = i; break; }
+        if (ziel < 0) ziel = gewaehlt == 8 ? 7 : 8;
+        try {
+            mc.gameMode.handleContainerInput(p.inventoryMenu.containerId, inventoryIndexToScreenSlot(inv), ziel, ContainerInput.SWAP, p);
+            lastActionTick = tickCounter;
+        } catch (Throwable e) {
+            com.vortex.client.core.Errors.report("AutoTotem.mainhand", e);
+        }
+    }
+
+    private static void zurueck(LocalPlayer p) {
+        if (vorherPlatz < 0) return;
+        if (p.getInventory().getSelectedSlot() != vorherPlatz) p.getInventory().setSelectedSlot(vorherPlatz);
+        vorherPlatz = -1;
+    }
+
+    private static int zaehle(LocalPlayer p) {
+        int n = 0;
+        for (int i = 0; i < Math.min(36, p.getInventory().getContainerSize()); i++) {
+            ItemStack st = p.getInventory().getItem(i);
+            if (st.is(Items.TOTEM_OF_UNDYING)) n += st.getCount();
+        }
+        return n;
     }
 
     // ======================================================================

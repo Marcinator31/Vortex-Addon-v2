@@ -62,9 +62,38 @@ public class AutoTotemModule extends Module {
     public final com.vortex.client.core.setting.ModeSetting mode =
             new com.vortex.client.core.setting.ModeSetting("Mode", 0, "Normal", "Hover", "Inventory Open");
 
+    /**
+     * Sofort nachlegen (seit 2.41): Sobald ein Totem platzt, kommt das naechste
+     * im selben Moment, in dem die Nachricht vom Server ankommt -- ohne auf die
+     * Verzoegerung oder den naechsten Tick zu warten. Ein einziger Tausch-Klick.
+     */
+    public final BooleanSetting instant = new BooleanSetting("Instant Refill", true);
+
+    /**
+     * Totem auch in der Haupthand (seit 2.41).
+     *
+     * Minecraft prueft beim toedlichen Treffer ZUERST die Haupthand, dann die
+     * Off-Hand. Mit einem Totem in beiden Haenden ueberlebst du zwei Treffer
+     * kurz hintereinander, ohne dass dafuer irgendetwas zum Server muss --
+     * genau dann, wenn das Nachlegen wegen Ping zu spaet kaeme.
+     *
+     *   Off           wie bisher
+     *   Below Health  nur, wenn dein Leben unter "Main Hand Below Health" faellt
+     *   Always        immer
+     *
+     * Die Haupthand wechselt dafuer auf einen Hotbar-Platz mit Totem und danach
+     * wieder zurueck. Crystal Aura mit "Switch: Silent" arbeitet weiter.
+     */
+    public final com.vortex.client.core.setting.ModeSetting mainHand =
+            new com.vortex.client.core.setting.ModeSetting("Main Hand Totem", 1, "Off", "Below Health", "Always");
+    public final NumberSetting mainHandHealth = new NumberSetting("Main Hand Below Health", 10, 1, 20, 1);
+
     public AutoTotemModule() {
         super("Auto Totem", Category.CHEATS);
         addSetting(mode);
+        addSetting(instant);
+        addSetting(mainHand);
+        addSetting(mainHandHealth);
         addSetting(delay);
         addSetting(jitter);
         addSetting(onlyWithWeapon);
