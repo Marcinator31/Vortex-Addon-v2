@@ -521,13 +521,21 @@ public final class CombatCheats {
             grund(p, "Respawn anchors do not explode in the Nether -- only in the Overworld and the End.");
             return;
         }
-        if (tick - ankerZuletzt < m.delay.getInt()) return;
+        int warte = m.delay.getInt();
+        if (tick - ankerZuletzt < Math.max(1, warte)) return;
+        // Delay 0: alle Schritte (setzen, Schild, laden, zuenden) in einem Tick
+        for (int schritt = 0; schritt < (warte == 0 ? 4 : 1); schritt++) {
+            if (!ankerSchritt(mc, p, m)) break;
+        }
+    }
 
+    /** Ein Schritt von Auto Anchor. @return true, wenn etwas getan wurde. */
+    private static boolean ankerSchritt(Minecraft mc, LocalPlayer p, AutoAnchorModule m) {
         int ankerPlatz = Inv.hotbar(p, st -> st.is(Items.RESPAWN_ANCHOR));
         int glowPlatz = Inv.hotbar(p, st -> st.is(Items.GLOWSTONE));
         if (glowPlatz < 0) {
             grund(p, "Put glowstone in your hotbar.");
-            return;
+            return false;
         }
 
         double reichweite = m.range.get();
@@ -535,7 +543,7 @@ public final class CombatCheats {
         if (ziel == null) {
             grund(p, "Waiting for an enemy player within " + (int) (reichweite + 4)
                     + " blocks (friends and mobs are ignored).");
-            return;
+            return false;
         }
 
         // 1. Liegt schon ein Anker beim Ziel? Dann Schild setzen, laden, zuenden.
@@ -550,21 +558,21 @@ public final class CombatCheats {
                 setzeSchild(mc, p, schild, anker, glowPlatz, m.swing.get());
                 ankerGrund = null;
                 ankerZuletzt = tick;
-                return;
+                return true;
             }
             // b) laden
             if (ladung == 0) {
                 klickeBlock(mc, p, anker, glowPlatz, m.swing.get());
                 ankerGrund = null;
                 ankerZuletzt = tick;
-                return;
+                return true;
             }
             // c) zuenden -- aber nur, wenn es mich (mit dem Schild, der jetzt steht) nicht umbringt
             float selbst = selbstschaden(p, anker, null);
             if (selbst > m.maxSelfDamage.get() || (m.antiSuicide.get() && selbst >= Sprengung.leben(p) - 1.0f)) {
                 grund(p, String.format(java.util.Locale.ROOT,
                         "Not detonating: it would deal %.1f damage to you (Max Self Damage / Anti Suicide). Step back or give me glowstone for a shield.", selbst));
-                return;
+                return false;
             }
             // Zuenden mit etwas, das KEIN Glowstone ist -- sonst laedt man nur weiter.
             int anderer = leererPlatz(p);
@@ -572,29 +580,29 @@ public final class CombatCheats {
                     && !s.is(Items.RESPAWN_ANCHOR) && !(s.getItem() instanceof net.minecraft.world.item.BlockItem));
             if (anderer < 0) {
                 grund(p, "Keep one hotbar slot empty (or holding a tool/weapon) to detonate the anchor.");
-                return;
+                return false;
             }
             if (p.getOffhandItem().is(Items.GLOWSTONE)) {
                 grund(p, "Glowstone in your offhand -- detonating would only charge the anchor.");
-                return;
+                return false;
             }
             klickeBlock(mc, p, anker, anderer, m.swing.get());
             ankerGrund = null;
             ankerZuletzt = tick;
-            return;
+            return true;
         }
 
         // 2. Sonst einen setzen: ueber dem Kopf oder neben dem Ziel -- nur wo der
         //    Schaden fuer mich (mit dem geplanten Schild) passt.
         if (ankerPlatz < 0) {
             grund(p, "Put respawn anchors in your hotbar.");
-            return;
+            return false;
         }
         BlockPos platz = setzPlatz(mc, p, ziel, m);
         if (platz == null) {
             grund(p, "No spot next to " + ziel.getName().getString()
                     + " within Range where the blast would not hurt you too much (Max Self Damage).");
-            return;
+            return false;
         }
         int vorher = p.getInventory().getSelectedSlot();
         p.getInventory().setSelectedSlot(ankerPlatz);
@@ -611,6 +619,7 @@ public final class CombatCheats {
         p.getInventory().setSelectedSlot(vorher);
         ankerGrund = null;
         ankerZuletzt = tick;
+        return true;
     }
 
     private static int leererPlatz(LocalPlayer p) {
@@ -719,11 +728,18 @@ public final class CombatCheats {
 
     private static BlockPos setzPlatz(Minecraft mc, LocalPlayer p, Entity ziel, AutoAnchorModule m) {
         BlockPos fuss = ziel.blockPosition();
-        BlockPos[] kandidaten = {
-                fuss.above(2),
+        // Ueber dem Kopf: der Platz direkt ueber dem Gegner (beim Springen
+        // eins hoeher, damit der Anker nicht in ihm steckt).
+        BlockPos kopf = BlockPos.containing(ziel.getX(), ziel.getBoundingBox().maxY + 0.01, ziel.getZ());
+        BlockPos[] seiten = {
                 fuss.north(), fuss.south(), fuss.east(), fuss.west(),
                 fuss.above().north(), fuss.above().south(), fuss.above().east(), fuss.above().west()
         };
+        java.util.List<BlockPos> liste = new java.util.ArrayList<>();
+        int art = m.placement.getIndex();
+        if (art != 2) liste.add(kopf);
+        if (art != 1) liste.addAll(java.util.Arrays.asList(seiten));
+        BlockPos[] kandidaten = liste.toArray(new BlockPos[0]);
         boolean schildMoeglich = m.shield.get() && glowAnzahl(p) >= 2;
         for (BlockPos q : kandidaten) {
             BlockState st = mc.level.getBlockState(q);

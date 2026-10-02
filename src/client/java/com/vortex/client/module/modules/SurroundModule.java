@@ -32,6 +32,12 @@ public class SurroundModule extends Module {
     public final BooleanSetting breakCrystals = new BooleanSetting("Break Crystals In The Way", true);
     public final BooleanSetting swing = new BooleanSetting("Swing", true);
 
+    /**
+     * Restock (seit 2.42): fehlt in der Hotbar Nachschub (unter 16 Stueck),
+     * wird er aus dem Inventar geholt -- siehe cheat/Nachschub.
+     */
+    public final BooleanSetting restock = new BooleanSetting("Restock", true);
+
     public SurroundModule() {
         super("Surround", Category.CHEATS);
         addSetting(blocks);
@@ -41,6 +47,7 @@ public class SurroundModule extends Module {
         addSetting(head);
         addSetting(breakCrystals);
         addSetting(swing);
+        addSetting(restock);
     }
 
     @Override

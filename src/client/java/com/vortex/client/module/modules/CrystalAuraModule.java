@@ -65,6 +65,12 @@ public class CrystalAuraModule extends Module {
     public final BooleanSetting render = new BooleanSetting("Render", true);
     public final ColorSetting color = new ColorSetting("Render Color", 0xFFB050FF);
 
+    /**
+     * Restock (seit 2.42): fehlt in der Hotbar Nachschub (unter 16 Stueck),
+     * wird er aus dem Inventar geholt -- siehe cheat/Nachschub.
+     */
+    public final BooleanSetting restock = new BooleanSetting("Restock", true);
+
     public CrystalAuraModule() {
         super("Crystal Aura", Category.CHEATS);
         addSetting(targetRange); addSetting(targets); addSetting(priority); addSetting(predict);
@@ -75,6 +81,7 @@ public class CrystalAuraModule extends Module {
         addSetting(pauseEating); addSetting(pauseMining);
         addSetting(facePlaceHealth); addSetting(facePlaceArmor); addSetting(facePlaceDamage);
         addSetting(switchMode); addSetting(rotate); addSetting(swing); addSetting(render); addSetting(color);
+        addSetting(restock);
     }
 
     @Override
