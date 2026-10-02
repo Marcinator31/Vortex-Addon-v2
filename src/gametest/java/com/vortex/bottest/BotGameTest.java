@@ -918,12 +918,19 @@ public class BotGameTest implements FabricClientGameTest {
         pruefe("auto anchor hurts the enemy", schaden > 10, String.format("enemy %.1f damage, me %.1f (netherite prot IV)", schaden, ichSchaden));
         ctx.takeScreenshot("anchor-auto");
 
-        // Delay 0: alles in einem Tick
+        // Delay 0: alles in einem Tick (vorher Vorrat auffuellen -- Delay 3 hat inzwischen weitergemacht)
+        ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AutoAnchorModule.class).setEnabled(false));
+        srv.runCommand("item replace entity @p inventory.0 with minecraft:respawn_anchor 32");
+        srv.runCommand("item replace entity @p inventory.1 with minecraft:glowstone 64");
         srv.runCommand("fill -4 -60 -4 6 -56 4 minecraft:air");
         gegnerSetzen(srv, 3.5, -60, 0.5);
         srv.runCommand("effect give @p minecraft:instant_health 1 10 true");
-        ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AutoAnchorModule.class).delay.set(0));
         ctx.waitTicks(25);
+        ctx.runOnClient(mc -> {
+            var m = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AutoAnchorModule.class);
+            m.delay.set(0);
+            m.setEnabled(true);
+        });
         vorher = gegnerLeben(srv);
         int bisTreffer = -1;
         for (int t = 1; t <= 40; t++) {
