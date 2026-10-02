@@ -844,6 +844,7 @@ public class BotGameTest implements FabricClientGameTest {
             sur.setEnabled(false);
             try {
                 // Ziel-Preset: aelter, kennt Anti Anchor noch gar nicht; Surround an
+                java.nio.file.Files.createDirectories(com.vortex.client.core.ConfigManager.dataDir());
                 java.nio.file.Files.writeString(com.vortex.client.core.ConfigManager.dataDir().resolve("preset" + (ziel + 1) + ".txt"),
                         "Surround\tEnabled\ttrue\n");
             } catch (Exception e) { return "write failed: " + e; }
@@ -974,6 +975,17 @@ public class BotGameTest implements FabricClientGameTest {
             if (gegnerLeben(srv) < vorher - 1) { bisTreffer = t; break; }
         }
         ctx.waitTicks(3);
+        notiz(ctx.computeOnClient(mc -> {
+            int g = 0, a = 0;
+            for (int i = 0; i < 9; i++) {
+                var st = mc.player.getInventory().getItem(i);
+                if (st.is(net.minecraft.world.item.Items.GLOWSTONE)) g += st.getCount();
+                if (st.is(net.minecraft.world.item.Items.RESPAWN_ANCHOR)) a += st.getCount();
+            }
+            var m = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AutoAnchorModule.class);
+            return "diag: enemies=" + mc.level.players().stream().filter(o -> o != mc.player).map(o -> o.getName().getString() + "@" + o.blockPosition().toShortString() + (o.isAlive() ? "" : "(dead)")).toList()
+                    + " module=" + m.isEnabled() + " hotbar glow=" + g + " anchors=" + a + " screen=" + mc.gui.screen() + " hp=" + mc.player.getHealth();
+        }));
         notiz(String.format("delay 1: first hit after %d tick(s), enemy %.1f damage", bisTreffer, vorher - gegnerLeben(srv)));
         pruefe("delay 1 does the whole combo fast", bisTreffer > 0 && bisTreffer <= 8, bisTreffer + " tick(s)");
         ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AutoAnchorModule.class).setEnabled(false));
