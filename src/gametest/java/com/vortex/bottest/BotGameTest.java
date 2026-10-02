@@ -657,6 +657,11 @@ public class BotGameTest implements FabricClientGameTest {
     }
 
     private void pvpBuehne(ClientGameTestContext ctx, TestServerContext srv) {
+        boolean lebt = srv.computeOnServer(s -> spieler(s).isAlive());
+        if (!lebt) {
+            ctx.runOnClient(mc -> mc.player.respawn());
+            ctx.waitTicks(40);
+        }
         srv.runCommand("difficulty normal");
         srv.runCommand("gamemode survival @a");
         srv.runCommand("fill -12 -61 -12 12 -61 12 minecraft:obsidian");
@@ -671,7 +676,7 @@ public class BotGameTest implements FabricClientGameTest {
     private void surroundTest(ClientGameTestContext ctx, TestServerContext srv) {
         pvpBuehne(ctx, srv);
         // Viel Leben, damit man den vollen Schaden messen kann (kein Totem dazwischen)
-        srv.runCommand("attribute @a minecraft:max_health base set 200");
+        srv.runCommand("attribute @p minecraft:max_health base set 200");
         float ohne = kristallSchaden(ctx, srv, "2.5 -60 0.5");
         float ohneSchraeg = kristallSchaden(ctx, srv, "2.5 -60 2.5");
         notiz(String.format("crystal 2 blocks east, no protection: %.1f damage; diagonal: %.1f", ohne, ohneSchraeg));
@@ -716,14 +721,14 @@ public class BotGameTest implements FabricClientGameTest {
         pruefe("a broken surround block is put back", zurueck > 0, zurueck + " tick(s)");
 
         ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.SurroundModule.class).setEnabled(false));
-        srv.runCommand("attribute @a minecraft:max_health base set 20");
+        srv.runCommand("attribute @p minecraft:max_health base set 20");
         srv.runCommand("fill -2 -60 -2 2 -60 2 minecraft:air");
         ctx.waitTicks(5);
     }
 
     /** Ticks, bis der Server wieder ein Totem in der Off-Hand sieht (oder -1). */
     private int popUndWarte(ClientGameTestContext ctx, TestServerContext srv) {
-        srv.runCommand("damage @a 100 minecraft:generic");
+        srv.runCommand("damage @p 100 minecraft:generic");
         for (int t = 1; t <= 40; t++) {
             ctx.waitTick();
             boolean da = srv.computeOnServer(s -> spieler(s).getOffhandItem().is(net.minecraft.world.item.Items.TOTEM_OF_UNDYING));
@@ -734,7 +739,7 @@ public class BotGameTest implements FabricClientGameTest {
 
     private void totemTest(ClientGameTestContext ctx, TestServerContext srv) {
         pvpBuehne(ctx, srv);
-        srv.runCommand("attribute @a minecraft:max_health base set 20");
+        srv.runCommand("attribute @p minecraft:max_health base set 20");
         srv.runCommand("effect give @a minecraft:instant_health 1 10 true");
         srv.runCommand("item replace entity @a weapon.offhand with minecraft:totem_of_undying");
         srv.runCommand("item replace entity @a hotbar.0 with minecraft:diamond_sword");
@@ -781,8 +786,8 @@ public class BotGameTest implements FabricClientGameTest {
         ctx.waitTicks(5);
         int vorher = srv.computeOnServer(s -> zaehleTotems(spieler(s)));
         srv.runOnServer(s -> {
-            befehl(s, "damage @a 100 minecraft:generic");
-            befehl(s, "damage @a 300 minecraft:generic");
+            befehl(s, "damage @p 100 minecraft:generic");
+            befehl(s, "damage @p 300 minecraft:generic");
         });
         ctx.waitTicks(10);
         boolean lebt = srv.computeOnServer(s -> spieler(s).isAlive());
@@ -798,8 +803,8 @@ public class BotGameTest implements FabricClientGameTest {
         boolean ohneHandTotem = srv.computeOnServer(s -> !spieler(s).getMainHandItem().is(net.minecraft.world.item.Items.TOTEM_OF_UNDYING)
                 && spieler(s).getOffhandItem().is(net.minecraft.world.item.Items.TOTEM_OF_UNDYING));
         srv.runOnServer(s -> {
-            befehl(s, "damage @a 100 minecraft:generic");
-            befehl(s, "damage @a 300 minecraft:generic");
+            befehl(s, "damage @p 100 minecraft:generic");
+            befehl(s, "damage @p 300 minecraft:generic");
         });
         ctx.waitTicks(10);
         boolean lebtOhne = srv.computeOnServer(s -> spieler(s).isAlive());
