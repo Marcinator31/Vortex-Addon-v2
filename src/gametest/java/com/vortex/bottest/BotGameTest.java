@@ -688,19 +688,17 @@ public class BotGameTest implements FabricClientGameTest {
             var m = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.SurroundModule.class);
             m.setEnabled(true);
         });
-        int ticks = 0;
-        boolean dicht = false;
-        for (; ticks < 40 && !dicht; ticks++) {
+        int ticks = 0, bloecke = 0;
+        for (; ticks < 40 && bloecke < 4; ticks++) {
             ctx.waitTick();
-            dicht = ctx.computeOnClient(mc -> com.vortex.client.cheat.Surround.dicht(mc));
+            bloecke = srv.computeOnServer(s -> {
+                int n = 0;
+                var lvl = s.overworld();
+                for (int[] d : new int[][]{{1, 0}, {-1, 0}, {0, 1}, {0, -1}})
+                    if (lvl.getBlockState(new net.minecraft.core.BlockPos(d[0], -60, d[1])).is(Blocks.OBSIDIAN)) n++;
+                return n;
+            });
         }
-        int bloecke = srv.computeOnServer(s -> {
-            int n = 0;
-            var lvl = s.overworld();
-            for (int[] d : new int[][]{{1, 0}, {-1, 0}, {0, 1}, {0, -1}})
-                if (lvl.getBlockState(new net.minecraft.core.BlockPos(d[0], -60, d[1])).is(Blocks.OBSIDIAN)) n++;
-            return n;
-        });
         pruefe("surround placed 4 obsidian around the feet", bloecke == 4, bloecke + " of 4 after " + ticks + " ticks");
         ctx.takeScreenshot("pvp-surround");
 
@@ -743,7 +741,8 @@ public class BotGameTest implements FabricClientGameTest {
         srv.runCommand("effect give @a minecraft:instant_health 1 10 true");
         srv.runCommand("item replace entity @a weapon.offhand with minecraft:totem_of_undying");
         srv.runCommand("item replace entity @a hotbar.0 with minecraft:diamond_sword");
-        srv.runCommand("item replace entity @a inventory.0 with minecraft:totem_of_undying 8");
+        // Totems stapeln nicht: je ein Platz
+        for (int i = 0; i < 8; i++) srv.runCommand("item replace entity @p inventory." + i + " with minecraft:totem_of_undying");
         ctx.waitTicks(10);
         ctx.runOnClient(mc -> {
             var m = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AutoTotemModule.class);
