@@ -89,6 +89,7 @@ public class BotGameTest implements FabricClientGameTest {
             if (nur.contains("pvp")) abschnitt(ctx, "PvP: Auto Totem refill + main hand", () -> totemTest(ctx, srv));
             if (nur.contains("anchor")) abschnitt(ctx, "Anchor: Auto Anchor above the head + restock", () -> autoAnkerTest(ctx, srv));
             if (nur.contains("anchor")) abschnitt(ctx, "Anchor: Anti Anchor counter", () -> antiAnkerTest(ctx, srv));
+            if (nur.contains("preset")) abschnitt(ctx, "Preset switch keeps modules off", () -> presetTest(ctx));
             if (nur.contains("potion")) abschnitt(ctx, "Potion HUD look", () -> potionTest(ctx, srv));
             if (nur.isEmpty() || nur.contains("crop")) abschnitt(ctx, "Crop Farmer", () -> cropTest(ctx, srv));
             if (nur.isEmpty() || nur.contains("tree")) abschnitt(ctx, "Tree Farmer", () -> treeTest(ctx, srv));
@@ -830,6 +831,36 @@ public class BotGameTest implements FabricClientGameTest {
     }
 
     // ------------------------------------------------------------------
+    // PRESET (Client 4.18.2): Module, die im Ziel-Preset fehlen, sind danach aus
+
+    private void presetTest(ClientGameTestContext ctx) {
+        String ergebnis = ctx.computeOnClient(mc -> {
+            var cm = com.vortex.client.core.ConfigManager.class;
+            int vorher = com.vortex.client.core.ConfigManager.getActivePreset();
+            int ziel = (vorher + 1) % com.vortex.client.core.ConfigManager.PRESET_COUNT;
+            var anti = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AntiAnchorModule.class);
+            var sur = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.SurroundModule.class);
+            anti.setEnabled(true);
+            sur.setEnabled(false);
+            try {
+                // Ziel-Preset: aelter, kennt Anti Anchor noch gar nicht; Surround an
+                java.nio.file.Files.writeString(com.vortex.client.core.ConfigManager.dataDir().resolve("preset" + (ziel + 1) + ".txt"),
+                        "Surround\tEnabled\ttrue\n");
+            } catch (Exception e) { return "write failed: " + e; }
+            com.vortex.client.core.ConfigManager.switchTo(ziel);
+            String r = "anti=" + anti.isEnabled() + " surround=" + sur.isEnabled();
+            com.vortex.client.core.ConfigManager.switchTo(vorher);
+            r += " | back: anti=" + anti.isEnabled() + " surround=" + sur.isEnabled();
+            anti.setEnabled(false);
+            sur.setEnabled(false);
+            return r;
+        });
+        notiz(ergebnis);
+        pruefe("after switching: module missing in the preset is off, saved one is on", ergebnis.startsWith("anti=false surround=true"), ergebnis);
+        pruefe("switching back restores the old preset", ergebnis.contains("back: anti=true surround=false"), ergebnis);
+    }
+
+    // ------------------------------------------------------------------
     // ANKER (2.42): Auto Anchor ueber dem Kopf, Restock, Anti Anchor
 
     private net.fabricmc.fabric.api.entity.FakePlayer gegner;
@@ -850,6 +881,11 @@ public class BotGameTest implements FabricClientGameTest {
     private void gegnerSetzen(TestServerContext srv, double x, double y, double z) {
         srv.runOnServer(s -> {
             var lvl = s.overworld();
+            if (gegner != null && (gegner.isRemoved() || !gegner.isAlive())) {
+                // Im letzten Durchgang gestorben -- ein neuer Gegner
+                lvl.removePlayerImmediately(gegner, net.minecraft.world.entity.Entity.RemovalReason.KILLED);
+                gegner = null;
+            }
             if (gegner == null) {
                 gegner = new Gegner(lvl, new com.mojang.authlib.GameProfile(java.util.UUID.randomUUID(), "Gegner"));
                 s.getPlayerList().broadcastAll(net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket
