@@ -81,6 +81,7 @@ public class BotGameTest implements FabricClientGameTest {
             if (nur.contains("freecam")) abschnitt(ctx, "Freecam keeps momentum", () -> freecamSchwungTest(ctx, srv));
             if (nur.isEmpty() || nur.contains("wtap")) abschnitt(ctx, "W-Tap", () -> wTapTest(ctx, srv));
             if (nur.contains("potion")) abschnitt(ctx, "Potion HUD look", () -> potionTest(ctx, srv));
+            if (nur.contains("radar")) abschnitt(ctx, "Radar look", () -> radarTest(ctx, srv));
             if (nur.isEmpty() || nur.contains("crop")) abschnitt(ctx, "Crop Farmer", () -> cropTest(ctx, srv));
             if (nur.isEmpty() || nur.contains("tree")) abschnitt(ctx, "Tree Farmer", () -> treeTest(ctx, srv));
             if (nur.isEmpty() || nur.contains("tree")) abschnitt(ctx, "Tree Farmer (Collect Drops off)", () -> treeOhneSammeln(ctx, srv));
@@ -537,6 +538,53 @@ public class BotGameTest implements FabricClientGameTest {
         String fehler = ctx.computeOnClient(mc -> com.vortex.client.core.Errors.summary());
         srv.runCommand("effect clear @a");
         pruefe("potion HUD drew without errors", !fehler.contains("PotionHud"), fehler.replace('\n', '|'));
+    }
+
+    // ------------------------------------------------------------------
+    // RADAR (nur -PbotOnly=radar): Screenshots
+
+    private void radarTest(ClientGameTestContext ctx, TestServerContext srv) {
+        srv.runCommand("tp @a 7000.5 -60 0.5 30 10");
+        ctx.waitTicks(20);
+        flaeche(srv, 6960, -40, 7040, 40);
+        srv.runCommand("difficulty easy");
+        srv.runCommand("gamemode creative @a");
+        String still = "{NoAI:1b,PersistenceRequired:1b,Silent:1b}";
+        srv.runCommand("summon minecraft:zombie 7010 -60 -15 " + still);
+        srv.runCommand("summon minecraft:skeleton 6985 -60 20 " + still);
+        srv.runCommand("summon minecraft:creeper 7020 -60 25 " + still);
+        srv.runCommand("summon minecraft:pig 6990 -60 -8 " + still);
+        srv.runCommand("summon minecraft:cow 6995 -60 -25 " + still);
+        srv.runCommand("summon minecraft:sheep 7025 -60 5 " + still);
+        srv.runCommand("fill 7005 -60 10 7005 -50 10 minecraft:stone");
+        srv.runCommand("summon minecraft:zombie 7005 -49 10 " + still);       // oben auf einem Turm
+        srv.runCommand("summon minecraft:item 7003 -60 -3 {Item:{id:\"minecraft:diamond\",count:1},PickupDelay:32767,Age:-32768}");
+        ctx.waitTicks(10);
+        ctx.runOnClient(mc -> {
+            var r = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.RadarModule.class);
+            for (var st : r.getSettings()) {
+                if (st instanceof com.vortex.client.core.setting.NumberSetting n) {
+                    if (st.getName().equals("Range (Blocks)")) n.set(48);
+                    if (st.getName().equals("Scale")) n.set(1.5);
+                }
+                if (st instanceof com.vortex.client.core.setting.BooleanSetting b
+                        && (st.getName().equals("Animals") || st.getName().equals("Items"))) b.set(true);
+            }
+            r.setEnabled(true);
+        });
+        ctx.waitTicks(30);
+        ctx.takeScreenshot("radar-1");
+        ctx.waitTicks(15);
+        ctx.takeScreenshot("radar-2");
+        srv.runCommand("tp @a 7000.5 -60 0.5 120 10");
+        ctx.waitTicks(10);
+        ctx.takeScreenshot("radar-turned");
+        String fehler = ctx.computeOnClient(mc -> com.vortex.client.core.Errors.summary());
+        ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.RadarModule.class).setEnabled(false));
+        srv.runCommand("kill @e[type=!player]");
+        srv.runCommand("difficulty peaceful");
+        srv.runCommand("gamemode survival @a");
+        pruefe("radar drew without errors", !fehler.contains("Radar"), fehler.replace('\n', '|'));
     }
 
     // ------------------------------------------------------------------
