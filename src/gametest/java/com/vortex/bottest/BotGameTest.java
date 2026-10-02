@@ -550,17 +550,40 @@ public class BotGameTest implements FabricClientGameTest {
     private void guiBilder(ClientGameTestContext ctx) {
         ctx.getInput().resizeWindow(1920, 1080);
         ctx.waitTicks(20);
+        // Zwei Server in die Liste, damit die Mehrspieler-Liste etwas zeigt
+        ctx.runOnClient(mc -> {
+            var liste = new net.minecraft.client.multiplayer.ServerList(mc);
+            liste.load();
+            if (liste.size() == 0) {
+                liste.add(new net.minecraft.client.multiplayer.ServerData("Vortex Test Server", "127.0.0.1:25599",
+                        net.minecraft.client.multiplayer.ServerData.Type.OTHER), false);
+                liste.add(new net.minecraft.client.multiplayer.ServerData("Friends SMP", "127.0.0.1:25598",
+                        net.minecraft.client.multiplayer.ServerData.Type.OTHER), false);
+                liste.save();
+            }
+        });
         for (int skala : new int[]{3, 2}) {
             ctx.runOnClient(mc -> { mc.options.guiScale().set(skala); mc.resizeGui(); });
             ctx.waitTicks(10);
             ctx.setScreen(() -> new net.minecraft.client.gui.screens.TitleScreen());
             ctx.waitTicks(40);
+            // Zeiger auf "Singleplayer", damit man den Hover-Zustand sieht
+            ctx.getInput().setCursorPos(960, skala == 3 ? 443 : 409);
+            ctx.waitTicks(20);
             ctx.takeScreenshot("title-s" + skala);
+            ctx.getInput().setCursorPos(5, 5);
+            // ohne Welten oeffnet Einzelspieler direkt "Welt erstellen"
             ctx.setScreen(() -> new net.minecraft.client.gui.screens.worldselection.SelectWorldScreen(new net.minecraft.client.gui.screens.TitleScreen()));
             ctx.waitTicks(30);
-            ctx.takeScreenshot("singleplayer-s" + skala);
+            ctx.takeScreenshot("createworld-s" + skala);
             ctx.setScreen(() -> new net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen(new net.minecraft.client.gui.screens.TitleScreen()));
             ctx.waitTicks(30);
+            // ersten Server anklicken (Auswahl sichtbar)
+            ctx.getInput().setCursorPos(960, skala == 3 ? 160 : 110);
+            ctx.getInput().pressMouse(0);
+            ctx.waitTicks(10);
+            ctx.getInput().setCursorPos(5, 5);
+            ctx.waitTicks(10);
             ctx.takeScreenshot("multiplayer-s" + skala);
             ctx.setScreen(() -> new net.minecraft.client.gui.screens.TitleScreen());
             ctx.waitTicks(10);
@@ -574,9 +597,9 @@ public class BotGameTest implements FabricClientGameTest {
                 ctx.setScreen(() -> new com.vortex.client.gui.HomeScreen());
                 ctx.waitTicks(40);
                 ctx.takeScreenshot("home-s" + skala);
-                ctx.setScreen(() -> new com.vortex.client.gui.ClickGui());
+                ctx.setScreen(() -> new net.minecraft.client.gui.screens.PauseScreen(true));
                 ctx.waitTicks(30);
-                ctx.takeScreenshot("clickgui-s" + skala);
+                ctx.takeScreenshot("pause-s" + skala);
                 ctx.setScreen(() -> new com.vortex.client.gui.PanelGui());
                 ctx.waitTicks(30);
                 ctx.takeScreenshot("panelgui-s" + skala);
@@ -585,8 +608,26 @@ public class BotGameTest implements FabricClientGameTest {
             }
             String fehler = ctx.computeOnClient(mc -> com.vortex.client.core.Errors.summary());
             notiz("errors: " + fehler.replace('\n', '|'));
-            pruefe("screens drew without errors", !fehler.contains("Screen") && !fehler.contains("Gui"), "");
+            pruefe("screens drew without errors", !fehler.contains("Screen") && !fehler.contains("Gui")
+                    && !fehler.contains("Menu") && !fehler.contains("Titel") && !fehler.contains("Glatt"), "");
         }
+        // Jetzt gibt es eine Welt: Einzelspieler zeigt die Liste
+        for (int skala : new int[]{3, 2}) {
+            ctx.runOnClient(mc -> { mc.options.guiScale().set(skala); mc.resizeGui(); });
+            ctx.waitTicks(10);
+            ctx.setScreen(() -> new net.minecraft.client.gui.screens.worldselection.SelectWorldScreen(new net.minecraft.client.gui.screens.TitleScreen()));
+            ctx.waitTicks(40);
+            ctx.getInput().setCursorPos(960, skala == 3 ? 230 : 150);
+            ctx.getInput().pressMouse(0);
+            ctx.waitTicks(10);
+            ctx.getInput().setCursorPos(5, 5);
+            ctx.waitTicks(10);
+            ctx.takeScreenshot("singleplayer-s" + skala);
+        }
+        ctx.setScreen(() -> new net.minecraft.client.gui.screens.TitleScreen());
+        ctx.waitTicks(10);
+        String fehler = ctx.computeOnClient(mc -> com.vortex.client.core.Errors.summary());
+        notiz("errors (end): " + fehler.replace('\n', '|'));
     }
 
     // ------------------------------------------------------------------
