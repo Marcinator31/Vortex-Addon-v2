@@ -429,11 +429,12 @@ public class BotGameTest implements FabricClientGameTest {
             srv.runCommand("summon minecraft:pig " + (px + 2.6) + " -60 0.5 {NoGravity:0b,Silent:1b,attributes:[{id:\"minecraft:movement_speed\",base:0.0}]}");
             ctx.waitTicks(2);
             double x0 = srv.computeOnServer(s -> {
-                var l = s.overworld().getEntitiesOfClass(net.minecraft.world.entity.animal.pig.Pig.class, new AABB(3990, -62, -5, 4300, -50, 5));
+                var l = s.overworld().getEntitiesOfClass(net.minecraft.world.entity.animal.pig.Pig.class, new AABB(3990, -62, -5, 4300, -50, 5), e -> e.isAlive() && !e.isDeadOrDying());
                 return l.isEmpty() ? Double.NaN : l.get(0).getX();
             });
             boolean sprint = ctx.computeOnClient(mc -> {
-                var l = mc.level.getEntitiesOfClass(net.minecraft.world.entity.animal.pig.Pig.class, mc.player.getBoundingBox().inflate(5));
+                var l = mc.level.getEntitiesOfClass(net.minecraft.world.entity.animal.pig.Pig.class, mc.player.getBoundingBox().inflate(5),
+                        e -> e.isAlive() && !e.isDeadOrDying());          // nicht das sterbende vom letzten Schlag
                 if (l.isEmpty()) return false;
                 mc.gameMode.attack(mc.player, l.get(0));
                 mc.player.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
@@ -441,11 +442,12 @@ public class BotGameTest implements FabricClientGameTest {
             });
             ctx.waitTicks(8);
             double x1 = srv.computeOnServer(s -> {
-                var l = s.overworld().getEntitiesOfClass(net.minecraft.world.entity.animal.pig.Pig.class, new AABB(3990, -62, -5, 4300, -50, 5));
+                var l = s.overworld().getEntitiesOfClass(net.minecraft.world.entity.animal.pig.Pig.class, new AABB(3990, -62, -5, 4300, -50, 5), e -> e.isAlive() && !e.isDeadOrDying());
                 return l.isEmpty() ? Double.NaN : l.get(0).getX();
             });
             weg[i] = sprint ? Math.round((x1 - x0) * 100) / 100.0 : -1;
-            srv.runCommand("kill @e[type=pig]");
+            srv.runOnServer(sv -> sv.overworld().getEntitiesOfClass(net.minecraft.world.entity.animal.pig.Pig.class,
+                    new AABB(3990, -62, -5, 4300, -50, 5)).forEach(e -> e.discard()));
             ctx.waitTicks(6);
         }
         ctx.runOnClient(mc -> {
