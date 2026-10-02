@@ -64,7 +64,8 @@ public final class AntiAnker {
         }
         // 2. Kopf blocken
         if (m.blockHead.get() && p.onGround()) {
-            BlockPos kopf = BlockPos.containing(p.getX(), p.getBoundingBox().maxY + 0.01, p.getZ());
+            // erster Block, der ganz ueber dem Kopf liegt
+            BlockPos kopf = BlockPos.containing(p.getX(), Math.ceil(p.getBoundingBox().maxY - 1e-4), p.getZ());
             BlockState st = mc.level.getBlockState(kopf);
             if (st.canBeReplaced() && mc.level.getEntities((net.minecraft.world.entity.Entity) null, new AABB(kopf), e -> e.isAlive() && e.blocksBuilding).isEmpty()) {
                 int platz = Inv.hotbar(p, s -> s.is(Items.OBSIDIAN) || s.is(Items.CRYING_OBSIDIAN));

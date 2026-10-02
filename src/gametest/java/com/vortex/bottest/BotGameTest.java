@@ -834,13 +834,24 @@ public class BotGameTest implements FabricClientGameTest {
 
     private net.fabricmc.fabric.api.entity.FakePlayer gegner;
 
+    /** Fabric-FakePlayer sind unverwundbar -- dieser Gegner nicht. */
+    private static final class Gegner extends net.fabricmc.fabric.api.entity.FakePlayer {
+        Gegner(net.minecraft.server.level.ServerLevel l, com.mojang.authlib.GameProfile g) {
+            super(l, g);
+        }
+
+        @Override
+        public boolean isInvulnerableTo(net.minecraft.server.level.ServerLevel l, net.minecraft.world.damagesource.DamageSource q) {
+            return false;
+        }
+    }
+
     /** Ein "Gegner" als Spieler (Fabric FakePlayer), fuer den Client sichtbar. */
     private void gegnerSetzen(TestServerContext srv, double x, double y, double z) {
         srv.runOnServer(s -> {
             var lvl = s.overworld();
             if (gegner == null) {
-                gegner = net.fabricmc.fabric.api.entity.FakePlayer.get(lvl,
-                        new com.mojang.authlib.GameProfile(java.util.UUID.randomUUID(), "Gegner"));
+                gegner = new Gegner(lvl, new com.mojang.authlib.GameProfile(java.util.UUID.randomUUID(), "Gegner"));
                 s.getPlayerList().broadcastAll(net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket
                         .createPlayerInitializing(java.util.List.of(gegner)));
                 gegner.snapTo(x, y, z, 90f, 0f);
@@ -876,7 +887,7 @@ public class BotGameTest implements FabricClientGameTest {
             mc.player.getInventory().setSelectedSlot(0);
             var m = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AutoAnchorModule.class);
             m.placement.set("Head First");
-            m.delay.set(0);
+            m.delay.set(3);
             m.maxSelfDamage.set(20);
             m.restock.set(true);
             m.setEnabled(true);
@@ -884,6 +895,7 @@ public class BotGameTest implements FabricClientGameTest {
         float vorher = gegnerLeben(srv);
         float ichVorher = leben(srv);
         boolean kopf = false;
+        final float startLeben = vorher;
         int bisKopf = -1, bisRestock = -1;
         for (int t = 1; t <= 80; t++) {
             ctx.waitTick();
@@ -902,8 +914,25 @@ public class BotGameTest implements FabricClientGameTest {
         float ichSchaden = ichVorher - leben(srv);
         pruefe("restock moved anchors into the hotbar", bisRestock > 0, bisRestock + " tick(s)");
         notiz("anchor above the enemy's head seen after " + bisKopf + " tick(s) (in a single tick it can be placed and blown up before the server check sees it)");
-        pruefe("auto anchor hurts the enemy", schaden > 10, String.format("enemy %.1f damage, me %.1f", schaden, ichSchaden));
+        pruefe("auto anchor goes above the enemy's head", kopf, bisKopf + " tick(s)");
+        pruefe("auto anchor hurts the enemy", schaden > 10, String.format("enemy %.1f damage, me %.1f (netherite prot IV)", schaden, ichSchaden));
         ctx.takeScreenshot("anchor-auto");
+
+        // Delay 0: alles in einem Tick
+        srv.runCommand("fill -4 -60 -4 6 -56 4 minecraft:air");
+        gegnerSetzen(srv, 3.5, -60, 0.5);
+        srv.runCommand("effect give @p minecraft:instant_health 1 10 true");
+        ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AutoAnchorModule.class).delay.set(0));
+        ctx.waitTicks(25);
+        vorher = gegnerLeben(srv);
+        int bisTreffer = -1;
+        for (int t = 1; t <= 40; t++) {
+            ctx.waitTick();
+            if (gegnerLeben(srv) < vorher - 1) { bisTreffer = t; break; }
+        }
+        ctx.waitTicks(3);
+        notiz(String.format("delay 0: first hit after %d tick(s), enemy %.1f damage", bisTreffer, vorher - gegnerLeben(srv)));
+        pruefe("delay 0 does the whole combo fast", bisTreffer > 0 && bisTreffer <= 3, bisTreffer + " tick(s)");
         ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AutoAnchorModule.class).setEnabled(false));
         srv.runCommand("fill -4 -60 -4 6 -56 4 minecraft:air");
         ctx.waitTicks(10);

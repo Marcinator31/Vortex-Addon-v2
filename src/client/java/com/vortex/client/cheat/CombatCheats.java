@@ -730,7 +730,7 @@ public final class CombatCheats {
         BlockPos fuss = ziel.blockPosition();
         // Ueber dem Kopf: der Platz direkt ueber dem Gegner (beim Springen
         // eins hoeher, damit der Anker nicht in ihm steckt).
-        BlockPos kopf = BlockPos.containing(ziel.getX(), ziel.getBoundingBox().maxY + 0.01, ziel.getZ());
+        BlockPos kopf = BlockPos.containing(ziel.getX(), Math.ceil(ziel.getBoundingBox().maxY - 1e-4), ziel.getZ());
         BlockPos[] seiten = {
                 fuss.north(), fuss.south(), fuss.east(), fuss.west(),
                 fuss.above().north(), fuss.above().south(), fuss.above().east(), fuss.above().west()
