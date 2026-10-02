@@ -928,7 +928,7 @@ public class BotGameTest implements FabricClientGameTest {
         ctx.waitTicks(25);
         ctx.runOnClient(mc -> {
             var m = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AutoAnchorModule.class);
-            m.delay.set(0);
+            m.delay.set(1);
             m.setEnabled(true);
         });
         vorher = gegnerLeben(srv);
@@ -938,8 +938,8 @@ public class BotGameTest implements FabricClientGameTest {
             if (gegnerLeben(srv) < vorher - 1) { bisTreffer = t; break; }
         }
         ctx.waitTicks(3);
-        notiz(String.format("delay 0: first hit after %d tick(s), enemy %.1f damage", bisTreffer, vorher - gegnerLeben(srv)));
-        pruefe("delay 0 does the whole combo fast", bisTreffer > 0 && bisTreffer <= 3, bisTreffer + " tick(s)");
+        notiz(String.format("delay 1: first hit after %d tick(s), enemy %.1f damage", bisTreffer, vorher - gegnerLeben(srv)));
+        pruefe("delay 1 does the whole combo fast", bisTreffer > 0 && bisTreffer <= 8, bisTreffer + " tick(s)");
         ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AutoAnchorModule.class).setEnabled(false));
         srv.runCommand("fill -4 -60 -4 6 -56 4 minecraft:air");
         ctx.waitTicks(10);

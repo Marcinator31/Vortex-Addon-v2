@@ -521,12 +521,8 @@ public final class CombatCheats {
             grund(p, "Respawn anchors do not explode in the Nether -- only in the Overworld and the End.");
             return;
         }
-        int warte = m.delay.getInt();
-        if (tick - ankerZuletzt < Math.max(1, warte)) return;
-        // Delay 0: alle Schritte (setzen, Schild, laden, zuenden) in einem Tick
-        for (int schritt = 0; schritt < (warte == 0 ? 4 : 1); schritt++) {
-            if (!ankerSchritt(mc, p, m)) break;
-        }
+        if (tick - ankerZuletzt < m.delay.getInt()) return;
+        ankerSchritt(mc, p, m);
     }
 
     /** Ein Schritt von Auto Anchor. @return true, wenn etwas getan wurde. */

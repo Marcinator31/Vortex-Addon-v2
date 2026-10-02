@@ -24,8 +24,7 @@ import com.vortex.client.module.Module;
 public class AutoAnchorModule extends Module {
 
     public final NumberSetting range = new NumberSetting("Range", 4.5, 2.0, 6.0, 0.5);
-    /** 0 = setzen, Schild, laden und zuenden im SELBEN Tick (wie Fast Anchor "Instant"). */
-    public final NumberSetting delay = new NumberSetting("Delay (ticks)", 3, 0, 10, 1);
+    public final NumberSetting delay = new NumberSetting("Delay (ticks)", 3, 1, 10, 1);
     /**
      * Wohin der Anker kommt (seit 2.42).
      *   Head First  zuerst direkt ueber den Kopf des Gegners (staerkster Platz:
