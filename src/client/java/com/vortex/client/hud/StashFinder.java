@@ -89,7 +89,7 @@ public final class StashFinder {
         LevelRenderEvents.AFTER_TRANSLUCENT_FEATURES.register(StashFinder::render);
         ClientPlayConnectionEvents.DISCONNECT.register((h, c) -> { geladen = List.of(); letzteVersion = -1; });
         ClientCommandRegistrationCallback.EVENT.register((d, access) -> d.register(literal("stashes")
-                .requires(s -> !com.vortex.client.core.CleanModules.aktiv())   // Clean Modules: unsichtbar
+                .requires(s -> !cleanModules())   // Clean Modules: unsichtbar
                 .executes(c -> { liste(false); return 1; })
                 .then(literal("all").executes(c -> { liste(true); return 1; }))
                 .then(literal("clear").executes(c -> { leeren(); return 1; }))));
@@ -404,6 +404,15 @@ public final class StashFinder {
             com.vortex.client.core.Errors.report("StashFinder.render", pvpErr);
         } finally {
             com.vortex.client.core.Profiler.record("StashFinder draw", System.nanoTime() - t0);
+        }
+    }
+
+    /** "Clean Modules" im Client an? (Aelterer Client ohne die Einstellung: nein.) */
+    private static boolean cleanModules() {
+        try {
+            return com.vortex.client.core.CleanModules.aktiv();
+        } catch (Throwable alterClient) {
+            return false;
         }
     }
 }

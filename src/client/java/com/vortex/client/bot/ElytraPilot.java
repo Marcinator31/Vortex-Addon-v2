@@ -97,7 +97,7 @@ public final class ElytraPilot {
             try { tick(mc); } catch (Throwable e) { com.vortex.client.core.Errors.report("ElytraPilot", e); }
         });
         ClientCommandRegistrationCallback.EVENT.register((d, access) -> d.register(literal("autopilot")
-                .requires(s -> !com.vortex.client.core.CleanModules.aktiv())   // Clean Modules: unsichtbar
+                .requires(s -> !cleanModules())   // Clean Modules: unsichtbar
                 .then(literal("stop").executes(c -> {
                     zielX = zielZ = null;
                     zielName = null;
@@ -560,5 +560,14 @@ public final class ElytraPilot {
         if (slot < 0) return false;
         Inv.benutzeMitBlick(mc, slot, null);
         return true;
+    }
+
+    /** "Clean Modules" im Client an? (Aelterer Client ohne die Einstellung: nein.) */
+    private static boolean cleanModules() {
+        try {
+            return com.vortex.client.core.CleanModules.aktiv();
+        } catch (Throwable alterClient) {
+            return false;
+        }
     }
 }
