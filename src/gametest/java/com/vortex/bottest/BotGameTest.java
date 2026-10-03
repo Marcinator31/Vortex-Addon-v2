@@ -66,6 +66,16 @@ public class BotGameTest implements FabricClientGameTest {
             if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
             return;
         }
+        if (System.getProperty("vortex.bottest.only", "").contains("clean")) {
+            try { abschnitt(ctx, "Clean Modules", () -> cleanTest(ctx)); } finally { schreibe(); }
+            if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
+            return;
+        }
+        if (System.getProperty("vortex.bottest.only", "").contains("hosting")) {
+            try { abschnitt(ctx, "Hosting Options (launcher hosts the world)", () -> { try { hostingTest(ctx); } catch (Exception e) { throw new RuntimeException(e); } }); } finally { schreibe(); }
+            if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
+            return;
+        }
         if (System.getProperty("vortex.bottest.only", "").contains("chunkstudy")) {
             try { abschnitt(ctx, "New Chunks study", () -> chunkStudie(ctx)); } finally { schreibe(); }
             if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
@@ -551,6 +561,205 @@ public class BotGameTest implements FabricClientGameTest {
 
     // ------------------------------------------------------------------
     // GUI (nur -PbotOnly=gui): Bildschirme in 1920x1080, GUI-Skala 2 und 3
+
+    private static int chatZeilen(net.minecraft.client.Minecraft mc) {
+        try {
+            var f = net.minecraft.client.gui.components.ChatComponent.class.getDeclaredField("allMessages");
+            f.setAccessible(true);
+            return ((java.util.List<?>) f.get(mc.gui.hud.getChat())).size();
+        } catch (Exception e) { return -1; }
+    }
+
+    private static int keyEintraege(net.minecraft.client.gui.screens.Screen sc, String name) {
+        try {
+            var f = sc.getClass().getDeclaredField("entries");
+            f.setAccessible(true);
+            int n = 0;
+            for (Object o : (java.util.List<?>) f.get(sc)) if (o.toString().contains(name)) n++;
+            return n;
+        } catch (Exception e) { return -1; }
+    }
+
+    /**
+     * "Clean Modules": Cheats/Bots aus und unsichtbar (Mod-Menue, Bots-Kachel,
+     * Keybinds, HUD-Editor), ihre Tasten wirkungslos, Chat geleert. Wieder aus:
+     * alles sichtbar, Cheats bleiben aus.
+     */
+    private void cleanTest(ClientGameTestContext ctx) {
+        try (TestSingleplayerContext sp = ctx.worldBuilder().create()) {
+            sp.getServer().runCommand("time set noon");
+            ctx.waitTicks(30);
+            ctx.runOnClient(mc -> {
+                mc.options.guiScale().set(2); mc.resizeGui();
+                var mm = ModuleManager.INSTANCE;
+                mm.get(com.vortex.client.module.modules.AntiHungerModule.class).setEnabled(true);
+                mm.get(com.vortex.client.module.modules.RadarModule.class).setEnabled(true);
+                mm.get(com.vortex.client.module.modules.AntiHungerModule.class).getToggleKey().setKeyCode(org.lwjgl.glfw.GLFW.GLFW_KEY_K);
+                mm.get(com.vortex.client.module.modules.FpsModule.class).getToggleKey().setKeyCode(org.lwjgl.glfw.GLFW.GLFW_KEY_J);
+                mc.player.sendSystemMessage(net.minecraft.network.chat.Component.literal("§d[Auto Anchor] §7Waiting for an enemy player"));
+                com.vortex.client.core.ClientSettings.INSTANCE.cleanModules.set(false);
+            });
+            ctx.waitTicks(5);
+            int chatVorher = ctx.computeOnClient(BotGameTest::chatZeilen);
+            ctx.setScreen(() -> new com.vortex.client.gui.KeyListScreen(null));
+            ctx.waitTicks(10);
+            int keyVorher = ctx.computeOnClient(mc -> keyEintraege(mc.gui.screen(), "Anti Hunger"));
+            ctx.setScreen(() -> new com.vortex.client.gui.HomeScreen());
+            ctx.waitTicks(40);
+            ctx.takeScreenshot("clean-off-home");
+            ctx.setScreen(() -> new com.vortex.client.gui.PanelGui());
+            ctx.waitTicks(30);
+            ctx.takeScreenshot("clean-off-mods");
+            ctx.setScreen(() -> null);
+            ctx.waitTicks(5);
+
+            // Einschalten
+            ctx.runOnClient(mc -> com.vortex.client.core.ClientSettings.INSTANCE.cleanModules.set(true));
+            ctx.waitTicks(5);
+            boolean cheatsAus = ctx.computeOnClient(mc -> {
+                for (var m : ModuleManager.INSTANCE.getModules())
+                    if (com.vortex.client.core.CleanModules.istCheat(m) && m.isEnabled()) return false;
+                return true;
+            });
+            pruefe("all cheats and bots are off", cheatsAus, "");
+            int chatNachher = ctx.computeOnClient(BotGameTest::chatZeilen);
+            pruefe("chat is cleared", chatVorher > 0 && chatNachher == 0, chatVorher + " -> " + chatNachher + " lines");
+            ctx.setScreen(() -> new com.vortex.client.gui.KeyListScreen(null));
+            ctx.waitTicks(10);
+            int keyNachher = ctx.computeOnClient(mc -> keyEintraege(mc.gui.screen(), "Anti Hunger"));
+            int fpsKey = ctx.computeOnClient(mc -> keyEintraege(mc.gui.screen(), "FPS"));
+            pruefe("cheat keybind hidden in Keybinds", keyVorher == 1 && keyNachher == 0, keyVorher + " -> " + keyNachher);
+            pruefe("normal keybinds stay", fpsKey >= 1, "FPS: " + fpsKey);
+            ctx.takeScreenshot("clean-on-keybinds");
+            ctx.setScreen(() -> new com.vortex.client.gui.HomeScreen());
+            ctx.waitTicks(40);
+            ctx.takeScreenshot("clean-on-home");
+            ctx.setScreen(() -> new com.vortex.client.gui.PanelGui());
+            ctx.waitTicks(30);
+            ctx.takeScreenshot("clean-on-mods");
+            ctx.setScreen(() -> new com.vortex.client.gui.HudEditorScreen());
+            ctx.waitTicks(20);
+            ctx.takeScreenshot("clean-on-hudeditor");
+            ctx.setScreen(() -> null);
+            ctx.waitTicks(10);
+            // (Modul-Tasten liest der Client direkt per GLFW -- die Test-Eingabe kommt dort nicht an,
+            //  daher hier kein Tastentest.)
+            // Einschalten per Code (z. B. Preset) wird sofort zurueckgenommen
+            ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.RadarModule.class).setEnabled(true));
+            ctx.waitTicks(3);
+            pruefe("a cheat switched on anyway goes off again", ctx.computeOnClient(mc -> !ModuleManager.INSTANCE.get(com.vortex.client.module.modules.RadarModule.class).isEnabled()), "");
+
+            // Ausschalten
+            ctx.runOnClient(mc -> com.vortex.client.core.ClientSettings.INSTANCE.cleanModules.set(false));
+            ctx.waitTicks(5);
+            ctx.setScreen(() -> new com.vortex.client.gui.KeyListScreen(null));
+            ctx.waitTicks(10);
+            pruefe("keybind visible again after turning it off", ctx.computeOnClient(mc -> keyEintraege(mc.gui.screen(), "Anti Hunger")) == 1, "");
+            ctx.setScreen(() -> new com.vortex.client.gui.PanelGui());
+            ctx.waitTicks(30);
+            ctx.takeScreenshot("clean-off-again-mods");
+            ctx.setScreen(() -> null);
+            ctx.waitTicks(5);
+            String err = ctx.computeOnClient(mc -> com.vortex.client.core.Errors.summary());
+            pruefe("no errors", !err.contains("Clean") && !err.contains("Screen") && !err.contains("Gui"), err.replace('\n', '|'));
+            ctx.runOnClient(mc -> {
+                ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AntiHungerModule.class).setEnabled(false);
+                ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AntiHungerModule.class).getToggleKey().setKeyCode(org.lwjgl.glfw.GLFW.GLFW_KEY_UNKNOWN);
+                ModuleManager.INSTANCE.get(com.vortex.client.module.modules.FpsModule.class).getToggleKey().setKeyCode(org.lwjgl.glfw.GLFW.GLFW_KEY_UNKNOWN);
+            });
+        }
+    }
+
+    /** Bildschirmmitte eines Knopfs (in Fensterpixeln), dessen Text so beginnt; null = keiner. */
+    private static double[] knopf(net.minecraft.client.Minecraft mc, String anfang) {
+        var sc = mc.gui.screen();
+        if (sc == null) return null;
+        double f = mc.getWindow().getGuiScale();
+        for (var w : net.fabricmc.fabric.api.client.screen.v1.Screens.getWidgets(sc)) {
+            if (w.getMessage().getString().startsWith(anfang))
+                return new double[]{(w.getX() + w.getWidth() / 2.0) * f, (w.getY() + w.getHeight() / 2.0) * f};
+        }
+        return null;
+    }
+
+    /**
+     * "Hosting Options" im Spiel: Der Launcher hostet (state.json im Austauschordner),
+     * im Pausenmenue steht "Hosting", der Bildschirm zeigt Adresse/Spieler, Klicks
+     * landen als Wunsch in inbox/ (die arbeitet der Launcher ab -- im Launcher-Labor geprueft).
+     */
+    private void hostingTest(ClientGameTestContext ctx) throws Exception {
+        java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("vortex-hosting");
+        java.nio.file.Files.writeString(dir.resolve("state.json"), "{\"status\":\"running\",\"world\":\"Survival mit Lukas\",\"version\":\"26.2\","
+                + "\"address\":\"bore.pub:41873\",\"lan\":\"192.168.178.24:25565\",\"network\":\"bore\",\"host\":\"Player0\","
+                + "\"players\":[{\"name\":\"Player0\",\"op\":true,\"host\":true},{\"name\":\"Lukas3577\",\"op\":true,\"host\":false},{\"name\":\"Steve_2011\",\"op\":false,\"host\":false}],"
+                + "\"settings\":{\"gamemode\":\"survival\",\"difficulty\":\"hard\",\"pvp\":true,\"cheats\":false,\"whitelist\":false,\"maxPlayers\":8},\"restartNeeded\":true}");
+        // LauncherHosting liest die Eigenschaft beim ersten Laden der Klasse
+        System.setProperty("vortex.hosting.dir", dir.toString());
+        try (TestSingleplayerContext sp = ctx.worldBuilder().create()) {
+            sp.getServer().runCommand("time set noon");
+            ctx.waitTicks(30);
+            for (int skala : new int[]{3, 2}) {
+                ctx.runOnClient(mc -> { mc.options.guiScale().set(skala); mc.resizeGui(); });
+                ctx.waitTicks(10);
+                ctx.setScreen(() -> new net.minecraft.client.gui.screens.PauseScreen(true));
+                ctx.waitTicks(20);
+                ctx.takeScreenshot("hosting-pause-s" + skala);
+                double[] k = ctx.computeOnClient(mc -> knopf(mc, "Hosting"));
+                pruefe("pause menu shows \"Hosting\" (gui scale " + skala + ")", k != null, "");
+                if (k == null) continue;
+                ctx.getInput().setCursorPos(k[0], k[1]);
+                ctx.waitTicks(2);
+                ctx.getInput().pressMouse(0);
+                ctx.waitTicks(20);
+                String name = ctx.computeOnClient(mc -> mc.gui.screen() == null ? "none" : mc.gui.screen().getClass().getSimpleName());
+                pruefe("click opens Hosting Options (gui scale " + skala + ")", name.equals("HostingOptionsScreen"), name);
+                ctx.takeScreenshot("hosting-options-s" + skala);
+            }
+            // Spielmodus-Knopf klicken -> Wunsch in inbox
+            double[] gm = ctx.computeOnClient(mc -> knopf(mc, "Game mode"));
+            pruefe("game mode button is there", gm != null, "");
+            if (gm != null) {
+                ctx.getInput().setCursorPos(gm[0], gm[1]);
+                ctx.waitTicks(2);
+                ctx.getInput().pressMouse(0);
+                ctx.waitTicks(10);
+                String inbox = "";
+                try (var st = java.nio.file.Files.list(dir.resolve("inbox"))) {
+                    for (var f : st.toList()) inbox += java.nio.file.Files.readString(f) + " ";
+                } catch (Exception e) { inbox = "no inbox: " + e.getMessage(); }
+                pruefe("click writes the wish for the launcher", inbox.contains("\"gamemode\":\"creative\""), inbox.trim());
+                String knopfText = ctx.computeOnClient(mc -> {
+                    var sc = mc.gui.screen();
+                    for (var w : net.fabricmc.fabric.api.client.screen.v1.Screens.getWidgets(sc)) if (w.getMessage().getString().startsWith("Game mode")) return w.getMessage().getString();
+                    return "?";
+                });
+                pruefe("button shows the new game mode right away", knopfText.contains("Creative"), knopfText);
+                ctx.takeScreenshot("hosting-options-after-click");
+            }
+            // Kick-Knopf von Steve
+            double[] kick = ctx.computeOnClient(mc -> knopf(mc, "Kick"));
+            if (kick != null) {
+                ctx.getInput().setCursorPos(kick[0], kick[1]);
+                ctx.waitTicks(2);
+                ctx.getInput().pressMouse(0);
+                ctx.waitTicks(10);
+                String inbox = "";
+                try (var st = java.nio.file.Files.list(dir.resolve("inbox"))) {
+                    for (var f : st.toList()) inbox += java.nio.file.Files.readString(f) + " ";
+                }
+                pruefe("kick writes a player action", inbox.contains("\"action\":\"kick\""), inbox.trim());
+            } else pruefe("kick button is there", false, "");
+            // Launcher meldet "aus" -> kein Hosting mehr im Pausenmenue
+            java.nio.file.Files.writeString(dir.resolve("state.json"), "{\"status\":\"off\"}");
+            ctx.waitTicks(20);
+            ctx.setScreen(() -> new net.minecraft.client.gui.screens.PauseScreen(true));
+            ctx.waitTicks(20);
+            pruefe("after hosting ends the button is gone", ctx.computeOnClient(mc -> knopf(mc, "Hosting")) == null, "");
+            ctx.setScreen(() -> null);
+            String err = ctx.computeOnClient(mc -> com.vortex.client.core.Errors.summary());
+            pruefe("no errors", !err.contains("Hosting") && !err.contains("Menu"), err.replace('\n', '|'));
+        }
+    }
 
     private void guiBilder(ClientGameTestContext ctx) {
         ctx.getInput().resizeWindow(1920, 1080);

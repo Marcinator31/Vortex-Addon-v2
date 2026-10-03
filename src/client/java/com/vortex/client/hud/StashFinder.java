@@ -89,6 +89,7 @@ public final class StashFinder {
         LevelRenderEvents.AFTER_TRANSLUCENT_FEATURES.register(StashFinder::render);
         ClientPlayConnectionEvents.DISCONNECT.register((h, c) -> { geladen = List.of(); letzteVersion = -1; });
         ClientCommandRegistrationCallback.EVENT.register((d, access) -> d.register(literal("stashes")
+                .requires(s -> !com.vortex.client.core.CleanModules.aktiv())   // Clean Modules: unsichtbar
                 .executes(c -> { liste(false); return 1; })
                 .then(literal("all").executes(c -> { liste(true); return 1; }))
                 .then(literal("clear").executes(c -> { leeren(); return 1; }))));
