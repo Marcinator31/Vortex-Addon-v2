@@ -66,6 +66,11 @@ public class BotGameTest implements FabricClientGameTest {
             if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
             return;
         }
+        if (System.getProperty("vortex.bottest.only", "").contains("clean")) {
+            try { abschnitt(ctx, "Clean Modules", () -> cleanTest(ctx)); } finally { schreibe(); }
+            if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
+            return;
+        }
         if (System.getProperty("vortex.bottest.only", "").contains("hosting")) {
             try { abschnitt(ctx, "Hosting Options (launcher hosts the world)", () -> { try { hostingTest(ctx); } catch (Exception e) { throw new RuntimeException(e); } }); } finally { schreibe(); }
             if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
@@ -556,6 +561,119 @@ public class BotGameTest implements FabricClientGameTest {
 
     // ------------------------------------------------------------------
     // GUI (nur -PbotOnly=gui): Bildschirme in 1920x1080, GUI-Skala 2 und 3
+
+    private static int chatZeilen(net.minecraft.client.Minecraft mc) {
+        try {
+            var f = net.minecraft.client.gui.components.ChatComponent.class.getDeclaredField("allMessages");
+            f.setAccessible(true);
+            return ((java.util.List<?>) f.get(mc.gui.hud.getChat())).size();
+        } catch (Exception e) { return -1; }
+    }
+
+    private static int keyEintraege(net.minecraft.client.gui.screens.Screen sc, String name) {
+        try {
+            var f = sc.getClass().getDeclaredField("entries");
+            f.setAccessible(true);
+            int n = 0;
+            for (Object o : (java.util.List<?>) f.get(sc)) if (o.toString().contains(name)) n++;
+            return n;
+        } catch (Exception e) { return -1; }
+    }
+
+    /**
+     * "Clean Modules": Cheats/Bots aus und unsichtbar (Mod-Menue, Bots-Kachel,
+     * Keybinds, HUD-Editor), ihre Tasten wirkungslos, Chat geleert. Wieder aus:
+     * alles sichtbar, Cheats bleiben aus.
+     */
+    private void cleanTest(ClientGameTestContext ctx) {
+        try (TestSingleplayerContext sp = ctx.worldBuilder().create()) {
+            sp.getServer().runCommand("time set noon");
+            ctx.waitTicks(30);
+            ctx.runOnClient(mc -> {
+                mc.options.guiScale().set(2); mc.resizeGui();
+                var mm = ModuleManager.INSTANCE;
+                mm.get(com.vortex.client.module.modules.AntiHungerModule.class).setEnabled(true);
+                mm.get(com.vortex.client.module.modules.RadarModule.class).setEnabled(true);
+                mm.get(com.vortex.client.module.modules.AntiHungerModule.class).getToggleKey().setKeyCode(org.lwjgl.glfw.GLFW.GLFW_KEY_K);
+                mm.get(com.vortex.client.module.modules.FpsModule.class).getToggleKey().setKeyCode(org.lwjgl.glfw.GLFW.GLFW_KEY_J);
+                mc.player.sendSystemMessage(net.minecraft.network.chat.Component.literal("§d[Auto Anchor] §7Waiting for an enemy player"));
+                com.vortex.client.core.ClientSettings.INSTANCE.cleanModules.set(false);
+            });
+            ctx.waitTicks(5);
+            int chatVorher = ctx.computeOnClient(BotGameTest::chatZeilen);
+            ctx.setScreen(() -> new com.vortex.client.gui.KeyListScreen(null));
+            ctx.waitTicks(10);
+            int keyVorher = ctx.computeOnClient(mc -> keyEintraege(mc.gui.screen(), "Anti Hunger"));
+            ctx.setScreen(() -> new com.vortex.client.gui.HomeScreen());
+            ctx.waitTicks(40);
+            ctx.takeScreenshot("clean-off-home");
+            ctx.setScreen(() -> new com.vortex.client.gui.PanelGui());
+            ctx.waitTicks(30);
+            ctx.takeScreenshot("clean-off-mods");
+            ctx.setScreen(() -> null);
+            ctx.waitTicks(5);
+
+            // Einschalten
+            ctx.runOnClient(mc -> com.vortex.client.core.ClientSettings.INSTANCE.cleanModules.set(true));
+            ctx.waitTicks(5);
+            boolean cheatsAus = ctx.computeOnClient(mc -> {
+                for (var m : ModuleManager.INSTANCE.getModules())
+                    if (com.vortex.client.core.CleanModules.istCheat(m) && m.isEnabled()) return false;
+                return true;
+            });
+            pruefe("all cheats and bots are off", cheatsAus, "");
+            int chatNachher = ctx.computeOnClient(BotGameTest::chatZeilen);
+            pruefe("chat is cleared", chatVorher > 0 && chatNachher == 0, chatVorher + " -> " + chatNachher + " lines");
+            ctx.setScreen(() -> new com.vortex.client.gui.KeyListScreen(null));
+            ctx.waitTicks(10);
+            int keyNachher = ctx.computeOnClient(mc -> keyEintraege(mc.gui.screen(), "Anti Hunger"));
+            int fpsKey = ctx.computeOnClient(mc -> keyEintraege(mc.gui.screen(), "FPS"));
+            pruefe("cheat keybind hidden in Keybinds", keyVorher == 1 && keyNachher == 0, keyVorher + " -> " + keyNachher);
+            pruefe("normal keybinds stay", fpsKey >= 1, "FPS: " + fpsKey);
+            ctx.takeScreenshot("clean-on-keybinds");
+            ctx.setScreen(() -> new com.vortex.client.gui.HomeScreen());
+            ctx.waitTicks(40);
+            ctx.takeScreenshot("clean-on-home");
+            ctx.setScreen(() -> new com.vortex.client.gui.PanelGui());
+            ctx.waitTicks(30);
+            ctx.takeScreenshot("clean-on-mods");
+            ctx.setScreen(() -> new com.vortex.client.gui.HudEditorScreen());
+            ctx.waitTicks(20);
+            ctx.takeScreenshot("clean-on-hudeditor");
+            ctx.setScreen(() -> null);
+            ctx.waitTicks(5);
+            // Taste eines Cheats druecken -> bleibt aus
+            ctx.getInput().pressKey(org.lwjgl.glfw.GLFW.GLFW_KEY_K);
+            ctx.waitTicks(5);
+            boolean ahAus = ctx.computeOnClient(mc -> !ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AntiHungerModule.class).isEnabled());
+            pruefe("cheat key does nothing", ahAus, "");
+            // Einschalten per Code (z. B. Preset) wird sofort zurueckgenommen
+            ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.RadarModule.class).setEnabled(true));
+            ctx.waitTicks(3);
+            pruefe("a cheat switched on anyway goes off again", ctx.computeOnClient(mc -> !ModuleManager.INSTANCE.get(com.vortex.client.module.modules.RadarModule.class).isEnabled()), "");
+
+            // Ausschalten
+            ctx.runOnClient(mc -> com.vortex.client.core.ClientSettings.INSTANCE.cleanModules.set(false));
+            ctx.waitTicks(5);
+            ctx.setScreen(() -> new com.vortex.client.gui.KeyListScreen(null));
+            ctx.waitTicks(10);
+            pruefe("keybind visible again after turning it off", ctx.computeOnClient(mc -> keyEintraege(mc.gui.screen(), "Anti Hunger")) == 1, "");
+            ctx.setScreen(() -> new com.vortex.client.gui.PanelGui());
+            ctx.waitTicks(30);
+            ctx.takeScreenshot("clean-off-again-mods");
+            ctx.setScreen(() -> null);
+            ctx.getInput().pressKey(org.lwjgl.glfw.GLFW.GLFW_KEY_K);
+            ctx.waitTicks(5);
+            pruefe("cheat key works again", ctx.computeOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AntiHungerModule.class).isEnabled()), "");
+            String err = ctx.computeOnClient(mc -> com.vortex.client.core.Errors.summary());
+            pruefe("no errors", !err.contains("Clean") && !err.contains("Screen") && !err.contains("Gui"), err.replace('\n', '|'));
+            ctx.runOnClient(mc -> {
+                ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AntiHungerModule.class).setEnabled(false);
+                ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AntiHungerModule.class).getToggleKey().setKeyCode(org.lwjgl.glfw.GLFW.GLFW_KEY_UNKNOWN);
+                ModuleManager.INSTANCE.get(com.vortex.client.module.modules.FpsModule.class).getToggleKey().setKeyCode(org.lwjgl.glfw.GLFW.GLFW_KEY_UNKNOWN);
+            });
+        }
+    }
 
     /** Bildschirmmitte eines Knopfs (in Fensterpixeln), dessen Text so beginnt; null = keiner. */
     private static double[] knopf(net.minecraft.client.Minecraft mc, String anfang) {

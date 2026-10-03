@@ -97,6 +97,7 @@ public final class ElytraPilot {
             try { tick(mc); } catch (Throwable e) { com.vortex.client.core.Errors.report("ElytraPilot", e); }
         });
         ClientCommandRegistrationCallback.EVENT.register((d, access) -> d.register(literal("autopilot")
+                .requires(s -> !com.vortex.client.core.CleanModules.aktiv())   // Clean Modules: unsichtbar
                 .then(literal("stop").executes(c -> {
                     zielX = zielZ = null;
                     zielName = null;
