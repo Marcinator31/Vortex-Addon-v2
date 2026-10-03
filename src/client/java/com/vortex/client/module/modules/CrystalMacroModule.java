@@ -47,6 +47,12 @@ public class CrystalMacroModule extends Module {
     public final BooleanSetting onlyWhenHolding =
             new BooleanSetting("Only While Key Held", true);
 
+    /**
+     * Restock (seit 2.42): fehlt in der Hotbar Nachschub (unter 16 Stueck),
+     * wird er aus dem Inventar geholt -- siehe cheat/Nachschub.
+     */
+    public final BooleanSetting restock = new BooleanSetting("Restock", true);
+
     public CrystalMacroModule() {
         super("Crystal Macro", Category.CHEATS);
         addSetting(delay);
@@ -55,5 +61,6 @@ public class CrystalMacroModule extends Module {
         addSetting(breakThem);
         addSetting(breakRange);
         addSetting(onlyWhenHolding);
+        addSetting(restock);
     }
 }

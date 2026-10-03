@@ -40,6 +40,12 @@ public class FastAnchorModule extends Module {
     public final BooleanSetting swing = new BooleanSetting("Swing", true);
     public final BooleanSetting showDamage = new BooleanSetting("Damage In Chat", false);
 
+    /**
+     * Restock (seit 2.42): fehlt in der Hotbar Nachschub (unter 16 Stueck),
+     * wird er aus dem Inventar geholt -- siehe cheat/Nachschub.
+     */
+    public final BooleanSetting restock = new BooleanSetting("Restock", true);
+
     public FastAnchorModule() {
         super("Fast Anchor", Category.CHEATS);
         addSetting(speed);
@@ -53,5 +59,6 @@ public class FastAnchorModule extends Module {
         addSetting(switchBack);
         addSetting(swing);
         addSetting(showDamage);
+        addSetting(restock);
     }
 }

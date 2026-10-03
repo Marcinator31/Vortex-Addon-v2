@@ -147,6 +147,8 @@ public class VortexPlusAddon implements ClientModInitializer {
                 "Places and breaks end crystals by itself. Calculates the damage like the server does (distance, cover, armour, protection, resistance, difficulty) and only places where the target takes enough and you do not. Face place, instant break, anti suicide, anti weakness. Extreme ban risk.");
         register(new com.vortex.client.module.modules.SurroundModule(),
                 "Keeps obsidian around your feet so no end crystal can be placed right next to you, and crystals further away hit much weaker. Broken blocks are put back at once. Optional: head too, and breaking crystals in the way (only if the blast will not kill you).");
+        register(new com.vortex.client.module.modules.AntiAnchorModule(),
+                "Counter to respawn anchor PvP: puts obsidian above your head so no anchor can go there, puts glowstone between an enemy anchor and you, then charges and detonates it yourself -- you stand behind the shield, the enemy does not. Only detonates when your own damage stays low.");
         register(new com.vortex.client.module.modules.FastAnchorModule(),
                 "One right click: place, charge and detonate a respawn anchor -- in one tick. Glowstone Shield puts a glowstone block between you and the anchor, which blocks part of the blast. Won't detonate if it would hurt you too much. Extreme ban risk.");
         register(new com.vortex.client.module.modules.GodModeModule(),
@@ -251,6 +253,8 @@ public class VortexPlusAddon implements ClientModInitializer {
             try { com.vortex.client.bot.CropFarmer.register(); } catch (Throwable e) { com.vortex.client.core.Errors.report("CropFarmer", e); }
             try { com.vortex.client.bot.TreeFarmer.register(); } catch (Throwable e) { com.vortex.client.core.Errors.report("TreeFarmer", e); }
             try { com.vortex.client.bot.ElytraPilot.register(); } catch (Throwable e) { com.vortex.client.core.Errors.report("ElytraPilot", e); }
+            try { com.vortex.client.cheat.AntiAnker.register(); } catch (Throwable e) { com.vortex.client.core.Errors.report("AntiAnchor", e); }
+            try { com.vortex.client.cheat.Nachschub.register(); } catch (Throwable e) { com.vortex.client.core.Errors.report("Restock", e); }
             try { com.vortex.client.cheat.Surround.register(); } catch (Throwable e) { com.vortex.client.core.Errors.report("Surround", e); }
             try { com.vortex.client.bot.BotHud.register(); } catch (Throwable e) { com.vortex.client.core.Errors.report("BotHud", e); }
             // registerSafety ruft der Client selbst -- hier wuerde sie

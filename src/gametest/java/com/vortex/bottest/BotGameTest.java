@@ -87,6 +87,9 @@ public class BotGameTest implements FabricClientGameTest {
             if (nur.isEmpty() || nur.contains("wtap")) abschnitt(ctx, "W-Tap", () -> wTapTest(ctx, srv));
             if (nur.contains("pvp")) abschnitt(ctx, "PvP: Surround vs crystal", () -> surroundTest(ctx, srv));
             if (nur.contains("pvp")) abschnitt(ctx, "PvP: Auto Totem refill + main hand", () -> totemTest(ctx, srv));
+            if (nur.contains("anchor")) abschnitt(ctx, "Anchor: Auto Anchor above the head + restock", () -> autoAnkerTest(ctx, srv));
+            if (nur.contains("anchor")) abschnitt(ctx, "Anchor: Anti Anchor counter", () -> antiAnkerTest(ctx, srv));
+            if (nur.contains("preset")) abschnitt(ctx, "Preset switch keeps modules off", () -> presetTest(ctx));
             if (nur.contains("potion")) abschnitt(ctx, "Potion HUD look", () -> potionTest(ctx, srv));
             if (nur.isEmpty() || nur.contains("crop")) abschnitt(ctx, "Crop Farmer", () -> cropTest(ctx, srv));
             if (nur.isEmpty() || nur.contains("tree")) abschnitt(ctx, "Tree Farmer", () -> treeTest(ctx, srv));
@@ -825,6 +828,277 @@ public class BotGameTest implements FabricClientGameTest {
             if (st.is(net.minecraft.world.item.Items.TOTEM_OF_UNDYING)) n += st.getCount();
         }
         return n;
+    }
+
+    // ------------------------------------------------------------------
+    // PRESET (Client 4.18.2): Module, die im Ziel-Preset fehlen, sind danach aus
+
+    private void presetTest(ClientGameTestContext ctx) {
+        String ergebnis = ctx.computeOnClient(mc -> {
+            var cm = com.vortex.client.core.ConfigManager.class;
+            int vorher = com.vortex.client.core.ConfigManager.getActivePreset();
+            int ziel = (vorher + 1) % com.vortex.client.core.ConfigManager.PRESET_COUNT;
+            var anti = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AntiAnchorModule.class);
+            var sur = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.SurroundModule.class);
+            anti.setEnabled(true);
+            sur.setEnabled(false);
+            try {
+                // Ziel-Preset: aelter, kennt Anti Anchor noch gar nicht; Surround an
+                java.nio.file.Files.createDirectories(com.vortex.client.core.ConfigManager.dataDir());
+                java.nio.file.Files.writeString(com.vortex.client.core.ConfigManager.dataDir().resolve("preset" + (ziel + 1) + ".txt"),
+                        "Surround\tEnabled\ttrue\n");
+            } catch (Exception e) { return "write failed: " + e; }
+            com.vortex.client.core.ConfigManager.switchTo(ziel);
+            String r = "anti=" + anti.isEnabled() + " surround=" + sur.isEnabled();
+            com.vortex.client.core.ConfigManager.switchTo(vorher);
+            r += " | back: anti=" + anti.isEnabled() + " surround=" + sur.isEnabled();
+            anti.setEnabled(false);
+            sur.setEnabled(false);
+            return r;
+        });
+        notiz(ergebnis);
+        pruefe("after switching: module missing in the preset is off, saved one is on", ergebnis.startsWith("anti=false surround=true"), ergebnis);
+        pruefe("switching back restores the old preset", ergebnis.contains("back: anti=true surround=false"), ergebnis);
+    }
+
+    // ------------------------------------------------------------------
+    // ANKER (2.42): Auto Anchor ueber dem Kopf, Restock, Anti Anchor
+
+    private net.fabricmc.fabric.api.entity.FakePlayer gegner;
+
+    /** Fabric-FakePlayer sind unverwundbar -- dieser Gegner nicht. */
+    private static final class Gegner extends net.fabricmc.fabric.api.entity.FakePlayer {
+        Gegner(net.minecraft.server.level.ServerLevel l, com.mojang.authlib.GameProfile g) {
+            super(l, g);
+        }
+
+        @Override
+        public boolean isInvulnerableTo(net.minecraft.server.level.ServerLevel l, net.minecraft.world.damagesource.DamageSource q) {
+            return false;
+        }
+
+        private long letzterTreffer = Long.MIN_VALUE / 2;
+
+        /**
+         * Ein FakePlayer tickt nicht -- seine Unverwundbarkeit nach einem
+         * Treffer (invulnerableTime, 20 Ticks) liefe nie ab und jeder weitere
+         * Treffer verpuffte. Hier laeuft sie ab wie bei einem echten Spieler.
+         */
+        @Override
+        public boolean hurtServer(net.minecraft.server.level.ServerLevel l, net.minecraft.world.damagesource.DamageSource q, float a) {
+            long jetzt = l.getGameTime();
+            invulnerableTime = (int) Math.max(0, invulnerableTime - (jetzt - letzterTreffer));
+            boolean r = super.hurtServer(l, q, a);
+            if (r) letzterTreffer = jetzt;
+            return r;
+        }
+    }
+
+    /** Ein "Gegner" als Spieler (Fabric FakePlayer), fuer den Client sichtbar. */
+    private void gegnerSetzen(TestServerContext srv, double x, double y, double z) {
+        srv.runOnServer(s -> {
+            var lvl = s.overworld();
+            if (gegner != null && (gegner.isRemoved() || !gegner.isAlive())) {
+                // Im letzten Durchgang gestorben -- ein neuer Gegner
+                lvl.removePlayerImmediately(gegner, net.minecraft.world.entity.Entity.RemovalReason.KILLED);
+                gegner = null;
+            }
+            if (gegner == null) {
+                gegner = new Gegner(lvl, new com.mojang.authlib.GameProfile(java.util.UUID.randomUUID(), "Gegner"));
+                s.getPlayerList().broadcastAll(net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket
+                        .createPlayerInitializing(java.util.List.of(gegner)));
+                gegner.snapTo(x, y, z, 90f, 0f);
+                lvl.addNewPlayer(gegner);
+            }
+            gegner.snapTo(x, y, z, 90f, 0f);
+            gegner.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.MAX_HEALTH).setBaseValue(200);
+            gegner.setHealth(200f);
+            gegner.setGameMode(net.minecraft.world.level.GameType.SURVIVAL);
+        });
+    }
+
+    private float gegnerLeben(TestServerContext srv) {
+        return srv.computeOnServer(s -> gegner == null ? -1f : gegner.getHealth());
+    }
+
+    private void autoAnkerTest(ClientGameTestContext ctx, TestServerContext srv) {
+        pvpBuehne(ctx, srv);
+        srv.runCommand("attribute @p minecraft:max_health base set 200");
+        srv.runCommand("effect give @p minecraft:instant_health 1 10 true");
+        // Anker und Glowstone NUR im Inventar -- ohne Restock ginge nichts
+        srv.runCommand("item replace entity @p hotbar.0 with minecraft:diamond_sword");
+        srv.runCommand("item replace entity @p inventory.0 with minecraft:respawn_anchor 32");
+        srv.runCommand("item replace entity @p inventory.1 with minecraft:glowstone 64");
+        // Wie im echten Kampf: volle Netherite-Ruestung mit Schutz IV
+        for (String[] r : new String[][]{{"head", "helmet"}, {"chest", "chestplate"}, {"legs", "leggings"}, {"feet", "boots"}})
+            srv.runCommand("item replace entity @p armor." + r[0] + " with minecraft:netherite_" + r[1] + "[minecraft:enchantments={\"minecraft:protection\":4}]");
+        gegnerSetzen(srv, 3.5, -60, 0.5);
+        ctx.waitTicks(20);
+        boolean sichtbar = ctx.computeOnClient(mc -> mc.level.players().stream().anyMatch(o -> o != mc.player));
+        pruefe("enemy player is visible to the client", sichtbar, "");
+        ctx.runOnClient(mc -> {
+            mc.player.getInventory().setSelectedSlot(0);
+            var m = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AutoAnchorModule.class);
+            m.placement.set("Head First");
+            m.delay.set(3);
+            m.maxSelfDamage.set(20);
+            m.restock.set(true);
+            m.setEnabled(true);
+        });
+        float vorher = gegnerLeben(srv);
+        float ichVorher = leben(srv);
+        boolean kopf = false;
+        final float startLeben = vorher;
+        int bisKopf = -1, bisRestock = -1;
+        for (int t = 1; t <= 80; t++) {
+            ctx.waitTick();
+            if (bisRestock < 0 && ctx.computeOnClient(mc -> {
+                for (int i = 0; i < 9; i++) if (mc.player.getInventory().getItem(i).is(net.minecraft.world.item.Items.RESPAWN_ANCHOR)) return true;
+                return false;
+            })) bisRestock = t;
+            if (!kopf && srv.computeOnServer(s -> s.overworld().getBlockState(new net.minecraft.core.BlockPos(3, -58, 0)).is(Blocks.RESPAWN_ANCHOR))) {
+                kopf = true;
+                bisKopf = t;
+            }
+            if (gegnerLeben(srv) < vorher - 1) break;
+        }
+        ctx.waitTicks(5);
+        float schaden = vorher - gegnerLeben(srv);
+        float ichSchaden = ichVorher - leben(srv);
+        pruefe("restock moved anchors into the hotbar", bisRestock > 0, bisRestock + " tick(s)");
+        notiz("anchor above the enemy's head seen after " + bisKopf + " tick(s) (in a single tick it can be placed and blown up before the server check sees it)");
+        pruefe("auto anchor goes above the enemy's head", kopf, bisKopf + " tick(s)");
+        pruefe("auto anchor hurts the enemy", schaden > 10, String.format("enemy %.1f damage, me %.1f (netherite prot IV)", schaden, ichSchaden));
+        ctx.takeScreenshot("anchor-auto");
+
+        // Delay 0: alles in einem Tick (vorher Vorrat auffuellen -- Delay 3 hat inzwischen weitergemacht)
+        ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AutoAnchorModule.class).setEnabled(false));
+        srv.runCommand("item replace entity @p inventory.0 with minecraft:respawn_anchor 32");
+        srv.runCommand("item replace entity @p inventory.1 with minecraft:glowstone 64");
+        srv.runCommand("fill -4 -60 -4 6 -56 4 minecraft:air");
+        gegnerSetzen(srv, 3.5, -60, 0.5);
+        srv.runCommand("effect give @p minecraft:instant_health 1 10 true");
+        ctx.waitTicks(25);
+        ctx.runOnClient(mc -> {
+            var m = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AutoAnchorModule.class);
+            m.delay.set(1);
+            m.setEnabled(true);
+        });
+        vorher = gegnerLeben(srv);
+        int bisTreffer = -1;
+        StringBuilder verlauf = new StringBuilder();
+        for (int t = 1; t <= 40; t++) {
+            ctx.waitTick();
+            if (t <= 12) {
+                String c = ctx.computeOnClient(mc -> {
+                    var st = mc.level.getBlockState(new net.minecraft.core.BlockPos(3, -58, 0));
+                    int g = 0;
+                    for (int i = 0; i < 9; i++) if (mc.player.getInventory().getItem(i).is(net.minecraft.world.item.Items.GLOWSTONE)) g += mc.player.getInventory().getItem(i).getCount();
+                    return (st.is(Blocks.RESPAWN_ANCHOR) ? "A" + st.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.RESPAWN_ANCHOR_CHARGES) : st.isAir() ? "-" : "x") + "/g" + g + "/sel" + mc.player.getInventory().getSelectedSlot();
+                });
+                String sv = srv.computeOnServer(s2 -> {
+                    var st = s2.overworld().getBlockState(new net.minecraft.core.BlockPos(3, -58, 0));
+                    return st.is(Blocks.RESPAWN_ANCHOR) ? "A" + st.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.RESPAWN_ANCHOR_CHARGES) : st.isAir() ? "-" : "x";
+                });
+                verlauf.append(t).append(": c=").append(c).append(" s=").append(sv).append(" | ");
+            }
+            if (gegnerLeben(srv) < vorher - 1) { bisTreffer = t; break; }
+        }
+        notiz("verlauf: " + verlauf);
+        ctx.waitTicks(3);
+        notiz(ctx.computeOnClient(mc -> {
+            int g = 0, a = 0;
+            for (int i = 0; i < 9; i++) {
+                var st = mc.player.getInventory().getItem(i);
+                if (st.is(net.minecraft.world.item.Items.GLOWSTONE)) g += st.getCount();
+                if (st.is(net.minecraft.world.item.Items.RESPAWN_ANCHOR)) a += st.getCount();
+            }
+            var m = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AutoAnchorModule.class);
+            return "diag: enemies=" + mc.level.players().stream().filter(o -> o != mc.player).map(o -> o.getName().getString() + "@" + o.blockPosition().toShortString() + (o.isAlive() ? "" : "(dead)")).toList()
+                    + " module=" + m.isEnabled() + " hotbar glow=" + g + " anchors=" + a + " screen=" + mc.gui.screen() + " hp=" + mc.player.getHealth();
+        }));
+        notiz("blocks: " + srv.computeOnServer(s -> {
+            StringBuilder b = new StringBuilder();
+            var lvl = s.overworld();
+            for (int x = -4; x <= 6; x++) for (int y = -60; y <= -56; y++) for (int z = -4; z <= 4; z++) {
+                var st = lvl.getBlockState(new net.minecraft.core.BlockPos(x, y, z));
+                if (st.isAir() || st.is(Blocks.FIRE)) continue;
+                b.append(x).append(',').append(y).append(',').append(z).append('=').append(st.toString().replace("Block{minecraft:", "").replace("}", "")).append(' ');
+            }
+            return b.toString();
+        }));
+        notiz(String.format("delay 1: first hit after %d tick(s), enemy %.1f damage", bisTreffer, vorher - gegnerLeben(srv)));
+        pruefe("delay 1 does the whole combo fast", bisTreffer > 0 && bisTreffer <= 8, bisTreffer + " tick(s)");
+        ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AutoAnchorModule.class).setEnabled(false));
+        srv.runCommand("fill -4 -60 -4 6 -56 4 minecraft:air");
+        ctx.waitTicks(10);
+    }
+
+    private void antiAnkerTest(ClientGameTestContext ctx, TestServerContext srv) {
+        pvpBuehne(ctx, srv);
+        srv.runCommand("attribute @p minecraft:max_health base set 200");
+        srv.runCommand("item replace entity @p hotbar.0 with minecraft:diamond_sword");
+        srv.runCommand("item replace entity @p inventory.0 with minecraft:obsidian 64");
+        srv.runCommand("item replace entity @p inventory.1 with minecraft:glowstone 64");
+        gegnerSetzen(srv, 5.5, -60, 0.5);
+        ctx.waitTicks(10);
+
+        // a) Ohne Schutz: geladener Anker 2 Bloecke neben mir, gezuendet
+        srv.runCommand("effect give @p minecraft:instant_health 1 10 true");
+        ctx.waitTicks(25);
+        srv.runCommand("setblock -2 -60 0 minecraft:respawn_anchor[charges=1]");
+        ctx.waitTicks(5);
+        float vorher = leben(srv);
+        ctx.runOnClient(mc -> {
+            mc.player.getInventory().setSelectedSlot(0);
+            mc.gameMode.useItemOn(mc.player, net.minecraft.world.InteractionHand.MAIN_HAND,
+                    new net.minecraft.world.phys.BlockHitResult(net.minecraft.world.phys.Vec3.atCenterOf(new net.minecraft.core.BlockPos(-2, -60, 0)),
+                            net.minecraft.core.Direction.UP, new net.minecraft.core.BlockPos(-2, -60, 0), false));
+        });
+        ctx.waitTicks(5);
+        float ohne = vorher - leben(srv);
+        notiz(String.format("enemy anchor 2 blocks away, no protection: %.1f damage", ohne));
+        srv.runCommand("fill -4 -60 -4 2 -56 4 minecraft:air");
+        srv.runCommand("fill -4 -61 -4 2 -61 4 minecraft:obsidian");
+        srv.runCommand("effect give @p minecraft:instant_health 1 10 true");
+        srv.runCommand("tp @p 0.5 -60 0.5");
+        ctx.waitTicks(25);
+
+        // b) Anti Anchor an: Kopf blocken
+        ctx.runOnClient(mc -> {
+            var m = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AntiAnchorModule.class);
+            m.restock.set(true);
+            m.setEnabled(true);
+        });
+        int bisKopf = -1;
+        for (int t = 1; t <= 40; t++) {
+            ctx.waitTick();
+            if (srv.computeOnServer(s -> s.overworld().getBlockState(new net.minecraft.core.BlockPos(0, -58, 0)).is(Blocks.OBSIDIAN))) { bisKopf = t; break; }
+        }
+        pruefe("anti anchor puts obsidian above the head", bisKopf > 0, bisKopf + " tick(s)");
+
+        // c) Gegner setzt einen Anker neben mich: Schild + selbst zuenden
+        srv.runCommand("effect give @p minecraft:instant_health 1 10 true");
+        ctx.waitTicks(25);
+        vorher = leben(srv);
+        srv.runCommand("setblock -2 -60 0 minecraft:respawn_anchor[charges=1]");
+        int bisWeg = -1;
+        boolean schild = false;
+        for (int t = 1; t <= 40; t++) {
+            ctx.waitTick();
+            if (!schild) schild = srv.computeOnServer(s -> s.overworld().getBlockState(new net.minecraft.core.BlockPos(-1, -60, 0)).is(Blocks.GLOWSTONE));
+            boolean weg = srv.computeOnServer(s -> !s.overworld().getBlockState(new net.minecraft.core.BlockPos(-2, -60, 0)).is(Blocks.RESPAWN_ANCHOR));
+            if (weg) { bisWeg = t; break; }
+        }
+        ctx.waitTicks(5);
+        float mit = vorher - leben(srv);
+        pruefe("anti anchor shields an enemy anchor with glowstone", schild, "");
+        pruefe("anti anchor detonates the enemy anchor itself", bisWeg > 0, bisWeg + " tick(s)");
+        pruefe("detonated behind the shield: much less damage", mit < ohne * 0.5f, String.format("%.1f -> %.1f", ohne, mit));
+        ctx.takeScreenshot("anchor-anti");
+        ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AntiAnchorModule.class).setEnabled(false));
+        srv.runCommand("attribute @p minecraft:max_health base set 20");
+        srv.runCommand("difficulty peaceful");
     }
 
     // ------------------------------------------------------------------
