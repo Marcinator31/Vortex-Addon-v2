@@ -970,10 +970,25 @@ public class BotGameTest implements FabricClientGameTest {
         });
         vorher = gegnerLeben(srv);
         int bisTreffer = -1;
+        StringBuilder verlauf = new StringBuilder();
         for (int t = 1; t <= 40; t++) {
             ctx.waitTick();
+            if (t <= 12) {
+                String c = ctx.computeOnClient(mc -> {
+                    var st = mc.level.getBlockState(new net.minecraft.core.BlockPos(3, -58, 0));
+                    int g = 0;
+                    for (int i = 0; i < 9; i++) if (mc.player.getInventory().getItem(i).is(net.minecraft.world.item.Items.GLOWSTONE)) g += mc.player.getInventory().getItem(i).getCount();
+                    return (st.is(Blocks.RESPAWN_ANCHOR) ? "A" + st.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.RESPAWN_ANCHOR_CHARGES) : st.isAir() ? "-" : "x") + "/g" + g + "/sel" + mc.player.getInventory().getSelectedSlot();
+                });
+                String sv = srv.computeOnServer(s2 -> {
+                    var st = s2.overworld().getBlockState(new net.minecraft.core.BlockPos(3, -58, 0));
+                    return st.is(Blocks.RESPAWN_ANCHOR) ? "A" + st.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.RESPAWN_ANCHOR_CHARGES) : st.isAir() ? "-" : "x";
+                });
+                verlauf.append(t).append(": c=").append(c).append(" s=").append(sv).append(" | ");
+            }
             if (gegnerLeben(srv) < vorher - 1) { bisTreffer = t; break; }
         }
+        notiz("verlauf: " + verlauf);
         ctx.waitTicks(3);
         notiz(ctx.computeOnClient(mc -> {
             int g = 0, a = 0;
