@@ -986,6 +986,16 @@ public class BotGameTest implements FabricClientGameTest {
             return "diag: enemies=" + mc.level.players().stream().filter(o -> o != mc.player).map(o -> o.getName().getString() + "@" + o.blockPosition().toShortString() + (o.isAlive() ? "" : "(dead)")).toList()
                     + " module=" + m.isEnabled() + " hotbar glow=" + g + " anchors=" + a + " screen=" + mc.gui.screen() + " hp=" + mc.player.getHealth();
         }));
+        notiz("blocks: " + srv.computeOnServer(s -> {
+            StringBuilder b = new StringBuilder();
+            var lvl = s.overworld();
+            for (int x = -4; x <= 6; x++) for (int y = -60; y <= -56; y++) for (int z = -4; z <= 4; z++) {
+                var st = lvl.getBlockState(new net.minecraft.core.BlockPos(x, y, z));
+                if (st.isAir() || st.is(Blocks.FIRE)) continue;
+                b.append(x).append(',').append(y).append(',').append(z).append('=').append(st.toString().replace("Block{minecraft:", "").replace("}", "")).append(' ');
+            }
+            return b.toString();
+        }));
         notiz(String.format("delay 1: first hit after %d tick(s), enemy %.1f damage", bisTreffer, vorher - gegnerLeben(srv)));
         pruefe("delay 1 does the whole combo fast", bisTreffer > 0 && bisTreffer <= 8, bisTreffer + " tick(s)");
         ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AutoAnchorModule.class).setEnabled(false));
