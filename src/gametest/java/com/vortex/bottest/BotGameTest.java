@@ -641,7 +641,13 @@ public class BotGameTest implements FabricClientGameTest {
             ctx.waitTicks(20);
             ctx.takeScreenshot("clean-on-hudeditor");
             ctx.setScreen(() -> null);
+            ctx.waitTicks(10);
+            // Gegenprobe: normale Modul-Taste (FPS) wirkt weiter
+            boolean fpsVor = ctx.computeOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.FpsModule.class).isEnabled());
+            ctx.getInput().pressKey(org.lwjgl.glfw.GLFW.GLFW_KEY_J);
             ctx.waitTicks(5);
+            boolean fpsNach = ctx.computeOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.FpsModule.class).isEnabled());
+            pruefe("normal module key still works", fpsVor != fpsNach, fpsVor + " -> " + fpsNach);
             // Taste eines Cheats druecken -> bleibt aus
             ctx.getInput().pressKey(org.lwjgl.glfw.GLFW.GLFW_KEY_K);
             ctx.waitTicks(5);
@@ -662,6 +668,7 @@ public class BotGameTest implements FabricClientGameTest {
             ctx.waitTicks(30);
             ctx.takeScreenshot("clean-off-again-mods");
             ctx.setScreen(() -> null);
+            ctx.waitTicks(10);
             ctx.getInput().pressKey(org.lwjgl.glfw.GLFW.GLFW_KEY_K);
             ctx.waitTicks(5);
             pruefe("cheat key works again", ctx.computeOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.AntiHungerModule.class).isEnabled()), "");
