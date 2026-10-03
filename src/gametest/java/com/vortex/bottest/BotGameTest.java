@@ -66,6 +66,11 @@ public class BotGameTest implements FabricClientGameTest {
             if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
             return;
         }
+        if (System.getProperty("vortex.bottest.only", "").contains("hosting")) {
+            try { abschnitt(ctx, "Hosting Options (launcher hosts the world)", () -> { try { hostingTest(ctx); } catch (Exception e) { throw new RuntimeException(e); } }); } finally { schreibe(); }
+            if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
+            return;
+        }
         if (System.getProperty("vortex.bottest.only", "").contains("chunkstudy")) {
             try { abschnitt(ctx, "New Chunks study", () -> chunkStudie(ctx)); } finally { schreibe(); }
             if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
@@ -551,6 +556,97 @@ public class BotGameTest implements FabricClientGameTest {
 
     // ------------------------------------------------------------------
     // GUI (nur -PbotOnly=gui): Bildschirme in 1920x1080, GUI-Skala 2 und 3
+
+    /** Bildschirmmitte eines Knopfs (in Fensterpixeln), dessen Text so beginnt; null = keiner. */
+    private static double[] knopf(net.minecraft.client.Minecraft mc, String anfang) {
+        var sc = mc.gui.screen();
+        if (sc == null) return null;
+        double f = mc.getWindow().getGuiScale();
+        for (var w : net.fabricmc.fabric.api.client.screen.v1.Screens.getWidgets(sc)) {
+            if (w.getMessage().getString().startsWith(anfang))
+                return new double[]{(w.getX() + w.getWidth() / 2.0) * f, (w.getY() + w.getHeight() / 2.0) * f};
+        }
+        return null;
+    }
+
+    /**
+     * "Hosting Options" im Spiel: Der Launcher hostet (state.json im Austauschordner),
+     * im Pausenmenue steht "Hosting", der Bildschirm zeigt Adresse/Spieler, Klicks
+     * landen als Wunsch in inbox/ (die arbeitet der Launcher ab -- im Launcher-Labor geprueft).
+     */
+    private void hostingTest(ClientGameTestContext ctx) throws Exception {
+        java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("vortex-hosting");
+        java.nio.file.Files.writeString(dir.resolve("state.json"), "{\"status\":\"running\",\"world\":\"Survival mit Lukas\",\"version\":\"26.2\","
+                + "\"address\":\"bore.pub:41873\",\"lan\":\"192.168.178.24:25565\",\"network\":\"bore\",\"host\":\"Player0\","
+                + "\"players\":[{\"name\":\"Player0\",\"op\":true,\"host\":true},{\"name\":\"Lukas3577\",\"op\":true,\"host\":false},{\"name\":\"Steve_2011\",\"op\":false,\"host\":false}],"
+                + "\"settings\":{\"gamemode\":\"survival\",\"difficulty\":\"hard\",\"pvp\":true,\"cheats\":false,\"whitelist\":false,\"maxPlayers\":8},\"restartNeeded\":true}");
+        // LauncherHosting liest die Eigenschaft beim ersten Laden der Klasse
+        System.setProperty("vortex.hosting.dir", dir.toString());
+        try (TestSingleplayerContext sp = ctx.worldBuilder().create()) {
+            sp.getServer().runCommand("time set noon");
+            ctx.waitTicks(30);
+            for (int skala : new int[]{3, 2}) {
+                ctx.runOnClient(mc -> { mc.options.guiScale().set(skala); mc.resizeGui(); });
+                ctx.waitTicks(10);
+                ctx.setScreen(() -> new net.minecraft.client.gui.screens.PauseScreen(true));
+                ctx.waitTicks(20);
+                ctx.takeScreenshot("hosting-pause-s" + skala);
+                double[] k = ctx.computeOnClient(mc -> knopf(mc, "Hosting"));
+                pruefe("pause menu shows \"Hosting\" (gui scale " + skala + ")", k != null, "");
+                if (k == null) continue;
+                ctx.getInput().setCursorPos(k[0], k[1]);
+                ctx.waitTicks(2);
+                ctx.getInput().pressMouse(0);
+                ctx.waitTicks(20);
+                String name = ctx.computeOnClient(mc -> mc.gui.screen() == null ? "none" : mc.gui.screen().getClass().getSimpleName());
+                pruefe("click opens Hosting Options (gui scale " + skala + ")", name.equals("HostingOptionsScreen"), name);
+                ctx.takeScreenshot("hosting-options-s" + skala);
+            }
+            // Spielmodus-Knopf klicken -> Wunsch in inbox
+            double[] gm = ctx.computeOnClient(mc -> knopf(mc, "Game mode"));
+            pruefe("game mode button is there", gm != null, "");
+            if (gm != null) {
+                ctx.getInput().setCursorPos(gm[0], gm[1]);
+                ctx.waitTicks(2);
+                ctx.getInput().pressMouse(0);
+                ctx.waitTicks(10);
+                String inbox = "";
+                try (var st = java.nio.file.Files.list(dir.resolve("inbox"))) {
+                    for (var f : st.toList()) inbox += java.nio.file.Files.readString(f) + " ";
+                } catch (Exception e) { inbox = "no inbox: " + e.getMessage(); }
+                pruefe("click writes the wish for the launcher", inbox.contains("\"gamemode\":\"creative\""), inbox.trim());
+                String knopfText = ctx.computeOnClient(mc -> {
+                    var sc = mc.gui.screen();
+                    for (var w : net.fabricmc.fabric.api.client.screen.v1.Screens.getWidgets(sc)) if (w.getMessage().getString().startsWith("Game mode")) return w.getMessage().getString();
+                    return "?";
+                });
+                pruefe("button shows the new game mode right away", knopfText.contains("Creative"), knopfText);
+                ctx.takeScreenshot("hosting-options-after-click");
+            }
+            // Kick-Knopf von Steve
+            double[] kick = ctx.computeOnClient(mc -> knopf(mc, "Kick"));
+            if (kick != null) {
+                ctx.getInput().setCursorPos(kick[0], kick[1]);
+                ctx.waitTicks(2);
+                ctx.getInput().pressMouse(0);
+                ctx.waitTicks(10);
+                String inbox = "";
+                try (var st = java.nio.file.Files.list(dir.resolve("inbox"))) {
+                    for (var f : st.toList()) inbox += java.nio.file.Files.readString(f) + " ";
+                }
+                pruefe("kick writes a player action", inbox.contains("\"action\":\"kick\""), inbox.trim());
+            } else pruefe("kick button is there", false, "");
+            // Launcher meldet "aus" -> kein Hosting mehr im Pausenmenue
+            java.nio.file.Files.writeString(dir.resolve("state.json"), "{\"status\":\"off\"}");
+            ctx.waitTicks(20);
+            ctx.setScreen(() -> new net.minecraft.client.gui.screens.PauseScreen(true));
+            ctx.waitTicks(20);
+            pruefe("after hosting ends the button is gone", ctx.computeOnClient(mc -> knopf(mc, "Hosting")) == null, "");
+            ctx.setScreen(() -> null);
+            String err = ctx.computeOnClient(mc -> com.vortex.client.core.Errors.summary());
+            pruefe("no errors", !err.contains("Hosting") && !err.contains("Menu"), err.replace('\n', '|'));
+        }
+    }
 
     private void guiBilder(ClientGameTestContext ctx) {
         ctx.getInput().resizeWindow(1920, 1080);
