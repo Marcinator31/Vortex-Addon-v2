@@ -877,16 +877,19 @@ public class BotGameTest implements FabricClientGameTest {
             return false;
         }
 
-        static final StringBuilder TREFFER = new StringBuilder();
+        private long letzterTreffer = Long.MIN_VALUE / 2;
 
+        /**
+         * Ein FakePlayer tickt nicht -- seine Unverwundbarkeit nach einem
+         * Treffer (invulnerableTime, 20 Ticks) liefe nie ab und jeder weitere
+         * Treffer verpuffte. Hier laeuft sie ab wie bei einem echten Spieler.
+         */
         @Override
         public boolean hurtServer(net.minecraft.server.level.ServerLevel l, net.minecraft.world.damagesource.DamageSource q, float a) {
-            float vor = getHealth();
+            long jetzt = l.getGameTime();
+            invulnerableTime = (int) Math.max(0, invulnerableTime - (jetzt - letzterTreffer));
             boolean r = super.hurtServer(l, q, a);
-            synchronized (TREFFER) {
-                if (TREFFER.length() < 1500) TREFFER.append(q.getMsgId()).append(' ').append(String.format("%.1f", a)).append(r ? "+" : "!")
-                        .append(String.format("(%.1f->%.1f)", vor, getHealth())).append(" invT=").append(invulnerableTime).append("; ");
-            }
+            if (r) letzterTreffer = jetzt;
             return r;
         }
     }
@@ -982,7 +985,6 @@ public class BotGameTest implements FabricClientGameTest {
             m.setEnabled(true);
         });
         vorher = gegnerLeben(srv);
-        synchronized (Gegner.TREFFER) { Gegner.TREFFER.setLength(0); }
         int bisTreffer = -1;
         StringBuilder verlauf = new StringBuilder();
         for (int t = 1; t <= 40; t++) {
@@ -1003,7 +1005,6 @@ public class BotGameTest implements FabricClientGameTest {
             if (gegnerLeben(srv) < vorher - 1) { bisTreffer = t; break; }
         }
         notiz("verlauf: " + verlauf);
-        notiz("treffer: " + srv.computeOnServer(s2 -> { synchronized (Gegner.TREFFER) { return Gegner.TREFFER.toString() + " alive=" + (gegner != null && gegner.isAlive()) + " hp=" + (gegner == null ? -1 : gegner.getHealth()) + "/" + (gegner == null ? -1 : gegner.getMaxHealth()); } }));
         ctx.waitTicks(3);
         notiz(ctx.computeOnClient(mc -> {
             int g = 0, a = 0;
