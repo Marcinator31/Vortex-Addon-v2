@@ -66,6 +66,11 @@ public class BotGameTest implements FabricClientGameTest {
             if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
             return;
         }
+        if (System.getProperty("vortex.bottest.only", "").contains("radar")) {
+            try { abschnitt(ctx, "Radar frame time", () -> radarPerfTest(ctx)); } finally { schreibe(); }
+            if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
+            return;
+        }
         if (System.getProperty("vortex.bottest.only", "").contains("clean")) {
             try { abschnitt(ctx, "Clean Modules", () -> cleanTest(ctx)); } finally { schreibe(); }
             if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
@@ -561,6 +566,57 @@ public class BotGameTest implements FabricClientGameTest {
 
     // ------------------------------------------------------------------
     // GUI (nur -PbotOnly=gui): Bildschirme in 1920x1080, GUI-Skala 2 und 3
+
+    /** Mittlere Zeit je Tick+Bild (ms) ueber n Ticks. */
+    private static double msJeBild(ClientGameTestContext ctx, int n) {
+        ctx.waitTicks(20);
+        long t0 = System.nanoTime();
+        ctx.waitTicks(n);
+        return (System.nanoTime() - t0) / 1e6 / n;
+    }
+
+    /** Was kostet der Radar pro Bild? Mit vielen Mobs, verschiedene Einstellungen. */
+    private void radarPerfTest(ClientGameTestContext ctx) {
+        try (TestSingleplayerContext sp = ctx.worldBuilder().create()) {
+            var srv = sp.getServer();
+            srv.runCommand("time set noon");
+            for (int i = 0; i < 60; i++) {
+                int x = (i % 10) * 4 - 20, z = (i / 10) * 4 + 8;
+                srv.runCommand("summon minecraft:" + (i % 3 == 0 ? "zombie" : i % 3 == 1 ? "cow" : "skeleton") + " " + x + " -60 " + z + " {NoAI:1b,PersistenceRequired:1b}");
+            }
+            ctx.runOnClient(mc -> { mc.options.guiScale().set(2); mc.resizeGui(); });
+            ctx.setScreen(() -> null);
+            ctx.waitTicks(40);
+            var radar = com.vortex.client.module.modules.RadarModule.class;
+            ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(radar).setEnabled(false));
+            double aus = msJeBild(ctx, 300);
+            ctx.runOnClient(mc -> {
+                var r = ModuleManager.INSTANCE.get(radar);
+                r.showAnimals.set(true); r.showHostiles.set(true); r.scale.set(1.0);
+                r.setEnabled(true);
+            });
+            double an1 = msJeBild(ctx, 300);
+            ctx.takeScreenshot("radar-scale1");
+            ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(radar).scale.set(2.5));
+            double an25 = msJeBild(ctx, 300);
+            ctx.takeScreenshot("radar-scale25");
+            ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(radar).sweep.set(false));
+            double ohneSweep = msJeBild(ctx, 300);
+            ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(radar).mobIcons.set(false));
+            double ohneIcons = msJeBild(ctx, 300);
+            int anzahl = ctx.computeOnClient(mc -> com.vortex.client.core.EntityCache.all().size());
+            String prof = ctx.computeOnClient(mc -> com.vortex.client.core.Profiler.summary().replace('\n', '|'));
+            notiz(String.format("entities %d | ms per tick+frame: radar off %.2f | on (scale 1) %.2f | scale 2.5 %.2f | without sweep %.2f | without mob icons %.2f",
+                    anzahl, aus, an1, an25, ohneSweep, ohneIcons));
+            notiz("profiler: " + (prof.length() > 700 ? prof.substring(0, 700) : prof));
+            ctx.runOnClient(mc -> {
+                var r = ModuleManager.INSTANCE.get(radar);
+                r.setEnabled(false); r.scale.set(1.0); r.sweep.set(true); r.mobIcons.set(true); r.showAnimals.set(false);
+            });
+            pruefe("radar costs less than 1 ms per frame (scale 1)", an1 - aus < 1.0, String.format("+%.2f ms", an1 - aus));
+            pruefe("radar costs less than 1.5 ms per frame (scale 2.5)", an25 - aus < 1.5, String.format("+%.2f ms", an25 - aus));
+        }
+    }
 
     private static int chatZeilen(net.minecraft.client.Minecraft mc) {
         try {
