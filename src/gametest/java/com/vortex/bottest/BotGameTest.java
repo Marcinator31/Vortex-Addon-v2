@@ -66,6 +66,11 @@ public class BotGameTest implements FabricClientGameTest {
             if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
             return;
         }
+        if (System.getProperty("vortex.bottest.only", "").contains("menuperf")) {
+            try { abschnitt(ctx, "Menu frame times", () -> menuPerfTest(ctx)); } finally { schreibe(); }
+            if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
+            return;
+        }
         if (System.getProperty("vortex.bottest.only", "").contains("clean")) {
             try { abschnitt(ctx, "Clean Modules", () -> cleanTest(ctx)); } finally { schreibe(); }
             if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
@@ -561,6 +566,67 @@ public class BotGameTest implements FabricClientGameTest {
 
     // ------------------------------------------------------------------
     // GUI (nur -PbotOnly=gui): Bildschirme in 1920x1080, GUI-Skala 2 und 3
+
+    /** ms pro echtem Bild (renderFrame), n Bilder direkt hintereinander. */
+    private static double[] bildZeit(ClientGameTestContext ctx, int n) {
+        return ctx.computeOnClient(mc -> {
+            for (int i = 0; i < 10; i++) mc.renderFrame(false);   // aufwaermen
+            long[] t = new long[n];
+            for (int i = 0; i < n; i++) {
+                long a = System.nanoTime();
+                mc.renderFrame(false);
+                t[i] = System.nanoTime() - a;
+            }
+            java.util.Arrays.sort(t);
+            double sum = 0;
+            for (long x : t) sum += x;
+            return new double[]{sum / n / 1e6, t[n / 2] / 1e6, t[(int) (n * 0.95)] / 1e6};
+        });
+    }
+
+    private String messe(ClientGameTestContext ctx, String name, java.util.function.Supplier<net.minecraft.client.gui.screens.Screen> sc) {
+        StringBuilder b = new StringBuilder(name).append(": ");
+        for (boolean modern : new boolean[]{false, true}) {
+            ctx.runOnClient(mc -> com.vortex.client.core.ClientSettings.INSTANCE.modernMenus.set(modern));
+            ctx.setScreen(sc::get);
+            ctx.getInput().setCursorPos(640, 300);
+            ctx.waitTicks(30);
+            ctx.runOnClient(mc -> com.vortex.client.core.Profiler.reset());
+            double[] z = bildZeit(ctx, 120);
+            b.append(String.format("%s avg %.2f / median %.2f / p95 %.2f ms   ", modern ? "VORTEX" : "vanilla", z[0], z[1], z[2]));
+            if (modern) {
+                String prof = ctx.computeOnClient(mc -> com.vortex.client.core.Profiler.summary().replace('\n', '|'));
+                b.append(" [").append(prof.length() > 300 ? prof.substring(0, 300) : prof).append("]");
+                ctx.takeScreenshot("perf-" + name);
+            }
+        }
+        ctx.runOnClient(mc -> com.vortex.client.core.ClientSettings.INSTANCE.modernMenus.set(true));
+        return b.toString();
+    }
+
+    /** Wie schnell sind Titel, Server-/Weltliste, Start- und Mod-Menue -- Vortex gegen Vanilla. */
+    private void menuPerfTest(ClientGameTestContext ctx) {
+        ctx.getInput().resizeWindow(1280, 720);
+        ctx.runOnClient(mc -> { mc.options.guiScale().set(2); mc.resizeGui(); });
+        ctx.waitTicks(20);
+        ctx.runOnClient(mc -> {
+            var liste = new net.minecraft.client.multiplayer.ServerList(mc);
+            liste.load();
+            for (int i = liste.size(); i < 12; i++)
+                liste.add(new net.minecraft.client.multiplayer.ServerData("Server " + i, "127.0.0.1:" + (25590 + i),
+                        net.minecraft.client.multiplayer.ServerData.Type.OTHER), false);
+            liste.save();
+        });
+        var title = (java.util.function.Supplier<net.minecraft.client.gui.screens.Screen>) net.minecraft.client.gui.screens.TitleScreen::new;
+        notiz(messe(ctx, "title", title));
+        notiz(messe(ctx, "multiplayer", () -> new net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen(new net.minecraft.client.gui.screens.TitleScreen())));
+        try (TestSingleplayerContext sp = ctx.worldBuilder().create()) { ctx.waitTicks(20); }
+        notiz(messe(ctx, "worlds", () -> new net.minecraft.client.gui.screens.worldselection.SelectWorldScreen(new net.minecraft.client.gui.screens.TitleScreen())));
+        notiz(messe(ctx, "home", com.vortex.client.gui.HomeScreen::new));
+        notiz(messe(ctx, "mods", com.vortex.client.gui.PanelGui::new));
+        ctx.setScreen(net.minecraft.client.gui.screens.TitleScreen::new);
+        ctx.waitTicks(5);
+    }
 
     private static int chatZeilen(net.minecraft.client.Minecraft mc) {
         try {
