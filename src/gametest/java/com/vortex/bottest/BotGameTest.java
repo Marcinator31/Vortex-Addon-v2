@@ -66,6 +66,11 @@ public class BotGameTest implements FabricClientGameTest {
             if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
             return;
         }
+        if (System.getProperty("vortex.bottest.only", "").contains("music")) {
+            try { abschnitt(ctx, "Music: Spotify sign-in, song above head, listen along", () -> { try { musikTest(ctx); } catch (Exception e) { throw new RuntimeException(e); } }); } finally { schreibe(); }
+            if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
+            return;
+        }
         if (System.getProperty("vortex.bottest.only", "").contains("clean")) {
             try { abschnitt(ctx, "Clean Modules", () -> cleanTest(ctx)); } finally { schreibe(); }
             if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
@@ -561,6 +566,225 @@ public class BotGameTest implements FabricClientGameTest {
 
     // ------------------------------------------------------------------
     // GUI (nur -PbotOnly=gui): Bildschirme in 1920x1080, GUI-Skala 2 und 3
+
+    /** Schein-Spotify fuer den Musik-Test: Konto, Wiedergabe, Abspielen. */
+    private static final class FakeSpotify {
+        final com.sun.net.httpserver.HttpServer srv;
+        final java.util.List<String> befehle = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        volatile String challenge = "";
+        volatile String trackId = "4uLU6hMCjMI75M1A2tKUQC", titel = "Eigenes Lied", kontext = "spotify:playlist:37i9dQZF1DXcBWIGoYBM5M";
+        volatile long position = 30_000, seit = System.currentTimeMillis();
+        volatile boolean spielt = true;
+        volatile int tokenAufrufe;
+
+        FakeSpotify() throws Exception {
+            srv = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+            srv.createContext("/", ex -> {
+                String pfad = ex.getRequestURI().getPath(), m = ex.getRequestMethod();
+                String body = new String(ex.getRequestBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                String auth = String.valueOf(ex.getRequestHeaders().getFirst("Authorization"));
+                int code = 204;
+                String antwort = "";
+                if (pfad.equals("/api/token")) {
+                    tokenAufrufe++;
+                    java.util.Map<String, String> f = new java.util.HashMap<>();
+                    for (String kv : body.split("&")) { int i = kv.indexOf('='); if (i > 0) f.put(kv.substring(0, i), java.net.URLDecoder.decode(kv.substring(i + 1), java.nio.charset.StandardCharsets.UTF_8)); }
+                    boolean ok;
+                    if ("authorization_code".equals(f.get("grant_type"))) {
+                        String c = "";
+                        try {
+                            c = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(java.security.MessageDigest.getInstance("SHA-256")
+                                    .digest(f.getOrDefault("code_verifier", "").getBytes(java.nio.charset.StandardCharsets.US_ASCII)));
+                        } catch (Exception ignored) { }
+                        ok = "TESTCODE".equals(f.get("code")) && c.equals(challenge) && f.containsKey("client_id") && !f.containsKey("client_secret");
+                    } else ok = "refresh_token".equals(f.get("grant_type")) && "RT1".equals(f.get("refresh_token"));
+                    code = ok ? 200 : 400;
+                    antwort = ok ? "{\"access_token\":\"AT1\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"refresh_token\":\"RT1\"}" : "{\"error\":\"invalid_grant\"}";
+                } else if (!auth.equals("Bearer AT1")) {
+                    code = 401;
+                    antwort = "{\"error\":{\"status\":401,\"message\":\"bad token\"}}";
+                } else if (pfad.equals("/v1/me")) {
+                    code = 200;
+                    antwort = "{\"display_name\":\"Tester\",\"id\":\"tester\",\"product\":\"premium\"}";
+                } else if (pfad.equals("/v1/me/player") && m.equals("GET")) {
+                    long pos = position + (spielt ? System.currentTimeMillis() - seit : 0);
+                    code = 200;
+                    antwort = "{\"is_playing\":" + spielt + ",\"progress_ms\":" + pos + ",\"currently_playing_type\":\"track\","
+                            + "\"device\":{\"name\":\"Test-PC\",\"volume_percent\":55},\"context\":{\"uri\":\"" + kontext + "\"},"
+                            + "\"item\":{\"id\":\"" + trackId + "\",\"name\":\"" + titel + "\",\"duration_ms\":240000,"
+                            + "\"artists\":[{\"name\":\"Band\"}],\"album\":{\"name\":\"Album\",\"images\":[]}}}";
+                } else if (pfad.equals("/v1/me/player/play")) {
+                    befehle.add("play " + body);
+                    var j = com.google.gson.JsonParser.parseString(body.isEmpty() ? "{}" : body).getAsJsonObject();
+                    if (j.has("uris")) trackId = j.getAsJsonArray("uris").get(0).getAsString().substring(14);
+                    if (j.has("offset")) trackId = j.getAsJsonObject("offset").get("uri").getAsString().substring(14);
+                    kontext = j.has("context_uri") ? j.get("context_uri").getAsString() : "";
+                    titel = j.has("context_uri") ? "Eigenes Lied" : "Fremdes Lied";
+                    position = j.has("position_ms") ? j.get("position_ms").getAsLong() : 0;
+                    seit = System.currentTimeMillis();
+                    spielt = true;
+                } else if (pfad.equals("/v1/me/player/pause")) {
+                    befehle.add("pause");
+                    position += System.currentTimeMillis() - seit; seit = System.currentTimeMillis();
+                    spielt = false;
+                } else {
+                    befehle.add(m + " " + pfad);
+                }
+                byte[] b = antwort.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                ex.getResponseHeaders().add("Content-Type", "application/json");
+                ex.sendResponseHeaders(code, b.length == 0 ? -1 : b.length);
+                if (b.length > 0) try (var os = ex.getResponseBody()) { os.write(b); }
+                ex.close();
+            });
+            srv.start();
+        }
+
+        String basis() { return "http://127.0.0.1:" + srv.getAddress().getPort(); }
+        java.util.List<String> kopie() { synchronized (befehle) { return new java.util.ArrayList<>(befehle); } }
+    }
+
+    private static <T> T warteAuf(ClientGameTestContext ctx, int ticks, java.util.function.Function<net.minecraft.client.Minecraft, T> f) {
+        for (int i = 0; i < ticks; i++) {
+            T t = ctx.computeOnClient(f::apply);
+            if (t != null && !Boolean.FALSE.equals(t)) return t;
+            ctx.waitTick();
+        }
+        return null;
+    }
+
+    /**
+     * Musik: Spotify-Anmeldung (PKCE, Rueckkehr ueber 127.0.0.1:47819), eigene
+     * Wiedergabe abfragen, Song eines anderen Spielers ueber dem Kopf, Mithoeren
+     * (automatisch beim naechsten Spieler und per Knopf) und Fortsetzen der eigenen
+     * Musik danach -- gegen einen Schein-Spotify-Server.
+     */
+    private void musikTest(ClientGameTestContext ctx) throws Exception {
+        FakeSpotify fake = new FakeSpotify();
+        System.setProperty("vortex.spotify.api", fake.basis() + "/v1");
+        System.setProperty("vortex.spotify.accounts", fake.basis());
+        System.setProperty("vortex.spotify.keinBrowser", "true");
+        var dienst = com.vortex.client.musik.MusikDienst.class;
+        try (TestSingleplayerContext sp = ctx.worldBuilder().create()) {
+            TestServerContext srv = sp.getServer();
+            srv.runCommand("time set noon");
+            srv.runCommand("tp @p 0.5 -60 0.5 0 0");
+            ctx.waitTicks(30);
+            // 1) Anmelden
+            ctx.runOnClient(mc -> {
+                com.vortex.client.musik.Spotify.abmelden();
+                com.vortex.client.musik.Spotify.setzeEigeneClientId("0123456789abcdef0123456789abcdef");
+                com.vortex.client.musik.Spotify.anmelden();
+            });
+            String url = warteAuf(ctx, 40, mc -> com.vortex.client.musik.Spotify.letzteAnmeldeUrl());
+            pruefe("sign-in URL with PKCE, no secret", url != null && url.contains("code_challenge_method=S256") && url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A47819%2Fcallback")
+                    && !url.contains("secret"), String.valueOf(url).replace(fake.basis(), ""));
+            java.util.Map<String, String> q = new java.util.HashMap<>();
+            for (String kv : url.substring(url.indexOf('?') + 1).split("&")) { int i = kv.indexOf('='); q.put(kv.substring(0, i), java.net.URLDecoder.decode(kv.substring(i + 1), java.nio.charset.StandardCharsets.UTF_8)); }
+            fake.challenge = q.get("code_challenge");
+            // Browser spielen: Spotify schickt zurueck an 127.0.0.1:47819
+            var http = java.net.http.HttpClient.newHttpClient();
+            var falsch = http.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://127.0.0.1:47819/callback?code=X&state=falsch")).build(), java.net.http.HttpResponse.BodyHandlers.ofString());
+            var r = http.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://127.0.0.1:47819/callback?code=TESTCODE&state="
+                    + java.net.URLEncoder.encode(q.get("state"), java.nio.charset.StandardCharsets.UTF_8))).build(), java.net.http.HttpResponse.BodyHandlers.ofString());
+            pruefe("callback page answers", r.statusCode() == 200 && r.body().contains("Spotify is connected") && !falsch.body().contains("connected"), r.statusCode() + "");
+            Boolean verbunden = warteAuf(ctx, 100, mc -> com.vortex.client.musik.Spotify.verbunden() && "Tester".equals(com.vortex.client.musik.Spotify.name()) ? Boolean.TRUE : null);
+            pruefe("connected as Tester (Premium)", verbunden != null && Boolean.TRUE.equals(ctx.computeOnClient(mc -> com.vortex.client.musik.Spotify.premium())),
+                    ctx.computeOnClient(mc -> com.vortex.client.musik.Spotify.status() + " " + com.vortex.client.musik.Spotify.fehler()));
+
+            // 2) Eigene Wiedergabe
+            String eigen = warteAuf(ctx, 100, mc -> { var s = com.vortex.client.musik.MusikDienst.eigener(); return s != null ? s.titel() + " @" + s.jetzt() / 1000 + "s" : null; });
+            pruefe("own song read from Spotify", eigen != null && eigen.startsWith("Eigenes Lied"), eigen);
+
+            // 3) Anderer Spieler mit Song in der Naehe
+            java.util.UUID lukas = java.util.UUID.nameUUIDFromBytes("Lukas".getBytes());
+            srv.runOnServer(s -> {
+                var lvl = s.overworld();
+                var fp = net.fabricmc.fabric.api.entity.FakePlayer.get(lvl, new com.mojang.authlib.GameProfile(lukas, "Lukas"));
+                s.getPlayerList().broadcastAll(net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket.createPlayerInitializing(java.util.List.of(fp)));
+                fp.snapTo(0.5, -60, 4.5, 180f, 0f);
+                lvl.addNewPlayer(fp);
+            });
+            ctx.waitTicks(20);
+            final long start = System.currentTimeMillis();
+            Runnable songSetzen = () -> ctx.runOnClient(mc -> com.vortex.client.musik.MusikDienst.testFremd(lukas, "Lukas",
+                    new com.vortex.client.musik.Song("1301WleyT98MSxVHPZCA6M", "Fremdes Lied", "Andere Band", "", "", 200_000, 61_000, true, start, "")));
+            songSetzen.run();
+            String kopf = ctx.computeOnClient(mc -> {
+                var p = mc.level.getPlayerByUUID(lukas);
+                var c = p == null ? null : com.vortex.client.musik.MusikDienst.kopfText(p);
+                return c == null ? "-" : c.getString();
+            });
+            pruefe("song above the other player's head", kopf.contains("Fremdes Lied") && kopf.contains("Andere Band"), kopf);
+            ctx.runOnClient(mc -> mc.player.setYRot(0f));
+            ctx.waitTicks(5);
+            ctx.takeScreenshot("music-head");
+
+            // 4) Mithoeren automatisch (Nearest Player)
+            ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.SpotifyModule.class).listenAlong.set("Nearest Player"));
+            String play = null;
+            for (int i = 0; i < 100 && play == null; i++) {
+                songSetzen.run();
+                ctx.waitTick();
+                play = fake.kopie().stream().filter(b -> b.contains("1301WleyT98MSxVHPZCA6M")).findFirst().orElse(null);
+            }
+            long erwartet = 61_000 + (System.currentTimeMillis() - start);
+            long gesendet = -1;
+            if (play != null) gesendet = com.google.gson.JsonParser.parseString(play.substring(5)).getAsJsonObject().get("position_ms").getAsLong();
+            pruefe("listen along: plays the other player's song at the same spot", play != null && Math.abs(gesendet - erwartet) < 3000,
+                    play == null ? "no play command: " + fake.kopie() : "position " + gesendet + " ms, expected about " + erwartet);
+            String ich = warteAuf(ctx, 60, mc -> { var s = com.vortex.client.musik.MusikDienst.eigener(); return s != null && s.titel().equals("Fremdes Lied") ? s.titel() : null; });
+            pruefe("own Spotify now plays it", ich != null, "");
+            ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.NowPlayingModule.class).setEnabled(true));
+            ctx.waitTicks(10);
+            ctx.takeScreenshot("music-listening-hud");
+
+            // 5) Spieler geht weg -> eigene Musik weiter (Playlist + Song + Stelle)
+            int vorher = fake.kopie().size();
+            srv.runOnServer(s -> { var p = s.overworld().getPlayerByUUID(lukas); if (p != null) p.snapTo(60.5, -60, 60.5, 0f, 0f); });
+            String fortsetzen = null;
+            for (int i = 0; i < 100 && fortsetzen == null; i++) {
+                songSetzen.run();
+                ctx.waitTick();
+                var l = fake.kopie();
+                fortsetzen = l.subList(Math.min(vorher, l.size()), l.size()).stream().filter(b -> b.contains("context_uri")).findFirst().orElse(null);
+            }
+            pruefe("walking away resumes my own playlist", fortsetzen != null && fortsetzen.contains("37i9dQZF1DXcBWIGoYBM5M") && fortsetzen.contains("4uLU6hMCjMI75M1A2tKUQC"),
+                    String.valueOf(fortsetzen));
+
+            // 6) Per Knopf (Manual)
+            srv.runOnServer(s -> { var p = s.overworld().getPlayerByUUID(lukas); if (p != null) p.snapTo(0.5, -60, 20.5, 180f, 0f); });
+            ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.SpotifyModule.class).listenAlong.set("Manual"));
+            ctx.waitTicks(10);
+            songSetzen.run();
+            int vor2 = fake.kopie().size();
+            ctx.runOnClient(mc -> com.vortex.client.musik.MusikDienst.mithoerenUmschalten(lukas));
+            String manuell = null;
+            for (int i = 0; i < 80 && manuell == null; i++) {
+                songSetzen.run();
+                ctx.waitTick();
+                var l = fake.kopie();
+                manuell = l.subList(Math.min(vor2, l.size()), l.size()).stream().filter(b -> b.contains("1301WleyT98MSxVHPZCA6M")).findFirst().orElse(null);
+            }
+            pruefe("manual listen along (16 blocks away)", manuell != null, "");
+            ctx.setScreen(() -> new com.vortex.client.musik.MusikScreen(null));
+            for (int i = 0; i < 30; i++) { songSetzen.run(); ctx.waitTick(); }
+            ctx.takeScreenshot("music-screen");
+            ctx.runOnClient(mc -> com.vortex.client.musik.MusikDienst.mithoerenUmschalten(lukas));
+            ctx.waitTicks(10);
+            pruefe("stop via button", ctx.computeOnClient(mc -> com.vortex.client.musik.MusikDienst.ziel() == null), "");
+            ctx.setScreen(() -> null);
+
+            // 7) Abmelden
+            ctx.runOnClient(mc -> com.vortex.client.musik.Spotify.abmelden());
+            ctx.waitTicks(5);
+            pruefe("disconnect forgets the account", ctx.computeOnClient(mc -> !com.vortex.client.musik.Spotify.verbunden()), "");
+            String err = ctx.computeOnClient(mc -> com.vortex.client.core.Errors.summary());
+            pruefe("no errors", !err.contains("Musik") && !err.contains("Spotify") && !err.contains("SongAboveHead") && !err.contains("NowPlaying"), err.replace('\n', '|'));
+            notiz("spotify calls: " + fake.kopie());
+        } finally {
+            fake.srv.stop(0);
+        }
+    }
 
     private static int chatZeilen(net.minecraft.client.Minecraft mc) {
         try {
