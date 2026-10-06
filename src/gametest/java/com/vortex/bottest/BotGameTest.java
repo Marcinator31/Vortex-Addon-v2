@@ -582,6 +582,12 @@ public class BotGameTest implements FabricClientGameTest {
         });
     }
 
+    /** Auf Chunks warten, aber nicht scheitern: auf langsamer CI-Grafik lieber ein halbfertiges Bild. */
+    private void warteWelt(TestSingleplayerContext sp, int ticks) {
+        try { sp.getConnection().waitForChunksDownload(ticks); } catch (Throwable t) { notiz("chunks download slow: " + t.getMessage()); }
+        try { sp.getConnection().waitForChunksRender(ticks); } catch (Throwable t) { notiz("chunks render slow: " + t.getMessage()); }
+    }
+
     /** Hoehe der Oberflaeche (blockiert: laedt den Chunk auf dem Server). */
     private static int oberflaeche(TestServerContext srv, int x, int z) {
         return srv.computeOnServer(s -> s.overworld().getChunk(x >> 4, z >> 4).getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING, x & 15, z & 15));
@@ -616,7 +622,7 @@ public class BotGameTest implements FabricClientGameTest {
             {"structure minecraft:village_plains", "12800"}, {"biome minecraft:frozen_peaks", "12700"}, {"biome minecraft:warm_ocean", "6000"}
         };
         var bauer = ctx.worldBuilder().setUseConsistentSettings(false).adjustSettings(st -> st.setSeed(System.getProperty("vortex.scout.seed", "vortex-wallpaper")));
-        fotoModus(ctx, 16);
+        fotoModus(ctx, Integer.getInteger("vortex.scout.rd", 10));
         try (TestSingleplayerContext sp = bauer.create()) {
             TestServerContext srv = sp.getServer();
             srv.runCommand("gamemode spectator @a");
@@ -631,14 +637,13 @@ public class BotGameTest implements FabricClientGameTest {
                 int y0 = oberflaeche(srv, p[0], p[1]);
                 notiz(String.format("%s at %d %d (surface %d)", o[0], p[0], p[1], y0));
                 srv.runCommand("time set " + o[1]);
-                for (int hoehe : new int[]{8, 30}) {
+                for (int hoehe : new int[]{10, 40}) {
                     srv.runCommand("tp @a " + p[0] + " " + (y0 + hoehe) + " " + p[1] + " 0 8");
-                    sp.getConnection().waitForChunksDownload();
-                    sp.getConnection().waitForChunksRender();
+                    warteWelt(sp, 20 * 90);
                     for (int yaw : new int[]{0, 90, 180, 270}) {
                         srv.runCommand("tp @a " + p[0] + " " + (y0 + hoehe) + " " + p[1] + " " + yaw + " " + (hoehe > 20 ? 14 : 6));
                         ctx.waitTicks(6);
-                        sp.getConnection().waitForChunksRender();
+                        warteWelt(sp, 20 * 30);
                         String name = String.format("scout-%02d-%s-h%d-y%d", n, o[0].replaceAll(".*:", ""), hoehe, yaw);
                         ctx.takeScreenshot(net.fabricmc.fabric.api.client.gametest.v1.screenshot.TestScreenshotOptions.of(name).withSize(960, 540).disableCounterPrefix());
                     }
