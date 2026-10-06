@@ -66,6 +66,10 @@ public class BotGameTest implements FabricClientGameTest {
             if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
             return;
         }
+        if (System.getProperty("vortex.bottest.only", "").contains("scout")) {
+            try { abschnitt(ctx, "Wallpaper scouting", () -> scoutTest(ctx)); } finally { schreibe(); }
+            return;
+        }
         if (System.getProperty("vortex.bottest.only", "").contains("clean")) {
             try { abschnitt(ctx, "Clean Modules", () -> cleanTest(ctx)); } finally { schreibe(); }
             if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
@@ -561,6 +565,88 @@ public class BotGameTest implements FabricClientGameTest {
 
     // ------------------------------------------------------------------
     // GUI (nur -PbotOnly=gui): Bildschirme in 1920x1080, GUI-Skala 2 und 3
+
+    /** Fuer Wallpaper: HUD aus, schoene Grafik, Zuschauer. */
+    private static void fotoModus(ClientGameTestContext ctx, int sicht) {
+        ctx.runOnClient(mc -> {
+            for (var mod : ModuleManager.INSTANCE.getModules()) if (mod instanceof com.vortex.client.hud.HudElement && mod.isEnabled()) mod.setEnabled(false);
+            mc.options.applyGraphicsPreset(net.minecraft.client.GraphicsPreset.FABULOUS);
+            mc.options.renderDistance().set(sicht);
+            mc.options.simulationDistance().set(Math.min(12, sicht));
+            mc.options.fov().set(75);
+            mc.options.biomeBlendRadius().set(7);
+            mc.options.entityShadows().set(true);
+            mc.options.ambientOcclusion().set(true);
+            mc.options.gamma().set(0.5);
+            if (!mc.gui.hud.isHidden()) mc.gui.hud.toggle();
+        });
+    }
+
+    /** Hoehe der Oberflaeche (blockiert: laedt den Chunk auf dem Server). */
+    private static int oberflaeche(TestServerContext srv, int x, int z) {
+        return srv.computeOnServer(s -> s.overworld().getChunk(x >> 4, z >> 4).getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING, x & 15, z & 15));
+    }
+
+    private static int[] finde(TestServerContext srv, String was) {
+        String[] erg = new String[1];
+        srv.runOnServer(s -> {
+            var src = s.createCommandSourceStack().withSuppressedOutput();
+            var out = new StringBuilder();
+            var quelle = src.withSource(new net.minecraft.commands.CommandSource() {
+                public void sendSystemMessage(net.minecraft.network.chat.Component c) { out.append(c.getString()); }
+                public boolean acceptsSuccess() { return true; }
+                public boolean acceptsFailure() { return true; }
+                public boolean shouldInformAdmins() { return false; }
+            });
+            s.getCommands().performPrefixedCommand(quelle, "locate " + was);
+            erg[0] = out.toString();
+        });
+        var mm = java.util.regex.Pattern.compile("\\[(-?\\d+), ~?(-?\\d+|~), (-?\\d+)\\]").matcher(erg[0] == null ? "" : erg[0]);
+        if (!mm.find()) return null;
+        return new int[]{Integer.parseInt(mm.group(1)), Integer.parseInt(mm.group(3))};
+    }
+
+    /** Orte fuer Wallpaper suchen: je Biom 4 Richtungen x 2 Hoehen, kleine Probebilder. */
+    private void scoutTest(ClientGameTestContext ctx) {
+        String[][] orte = {
+            {"biome minecraft:cherry_grove", "12800"}, {"biome minecraft:jagged_peaks", "23200"}, {"biome minecraft:meadow", "12700"},
+            {"biome minecraft:mangrove_swamp", "12600"}, {"biome minecraft:windswept_savanna", "12900"}, {"biome minecraft:eroded_badlands", "12800"},
+            {"biome minecraft:flower_forest", "1000"}, {"biome minecraft:snowy_taiga", "23300"}, {"biome minecraft:bamboo_jungle", "1500"},
+            {"biome minecraft:pale_garden", "13300"}, {"biome minecraft:mushroom_fields", "12500"}, {"biome minecraft:stony_shore", "12900"},
+            {"structure minecraft:village_plains", "12800"}, {"biome minecraft:frozen_peaks", "12700"}, {"biome minecraft:warm_ocean", "6000"}
+        };
+        var bauer = ctx.worldBuilder().setUseConsistentSettings(false).adjustSettings(st -> st.setSeed(System.getProperty("vortex.scout.seed", "vortex-wallpaper")));
+        fotoModus(ctx, 16);
+        try (TestSingleplayerContext sp = bauer.create()) {
+            TestServerContext srv = sp.getServer();
+            srv.runCommand("gamemode spectator @a");
+            srv.runCommand("weather clear 1000000");
+            srv.runCommand("gamerule advance_time false");
+            srv.runCommand("gamerule doDaylightCycle false");
+            ctx.runOnClient(mc -> { if (!mc.gui.hud.isHidden()) mc.gui.hud.toggle(); });
+            int n = 0;
+            for (String[] o : orte) {
+                int[] p = finde(srv, o[0]);
+                if (p == null) { notiz("not found: " + o[0]); continue; }
+                int y0 = oberflaeche(srv, p[0], p[1]);
+                notiz(String.format("%s at %d %d (surface %d)", o[0], p[0], p[1], y0));
+                srv.runCommand("time set " + o[1]);
+                for (int hoehe : new int[]{8, 30}) {
+                    srv.runCommand("tp @a " + p[0] + " " + (y0 + hoehe) + " " + p[1] + " 0 8");
+                    sp.getConnection().waitForChunksDownload();
+                    sp.getConnection().waitForChunksRender();
+                    for (int yaw : new int[]{0, 90, 180, 270}) {
+                        srv.runCommand("tp @a " + p[0] + " " + (y0 + hoehe) + " " + p[1] + " " + yaw + " " + (hoehe > 20 ? 14 : 6));
+                        ctx.waitTicks(6);
+                        sp.getConnection().waitForChunksRender();
+                        String name = String.format("scout-%02d-%s-h%d-y%d", n, o[0].replaceAll(".*:", ""), hoehe, yaw);
+                        ctx.takeScreenshot(net.fabricmc.fabric.api.client.gametest.v1.screenshot.TestScreenshotOptions.of(name).withSize(960, 540).disableCounterPrefix());
+                    }
+                }
+                n++;
+            }
+        }
+    }
 
     private static int chatZeilen(net.minecraft.client.Minecraft mc) {
         try {
