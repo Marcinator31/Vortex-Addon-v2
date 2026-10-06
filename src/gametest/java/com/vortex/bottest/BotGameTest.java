@@ -66,6 +66,11 @@ public class BotGameTest implements FabricClientGameTest {
             if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
             return;
         }
+        if (System.getProperty("vortex.bottest.only", "").contains("scroll")) {
+            try { abschnitt(ctx, "Smooth scrolling in the server list", () -> scrollTest(ctx)); } finally { schreibe(); }
+            if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
+            return;
+        }
         if (System.getProperty("vortex.bottest.only", "").contains("music")) {
             try { abschnitt(ctx, "Music: Spotify sign-in, song above head, listen along", () -> { try { musikTest(ctx); } catch (Exception e) { throw new RuntimeException(e); } }); } finally { schreibe(); }
             if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
@@ -566,6 +571,52 @@ public class BotGameTest implements FabricClientGameTest {
 
     // ------------------------------------------------------------------
     // GUI (nur -PbotOnly=gui): Bildschirme in 1920x1080, GUI-Skala 2 und 3
+
+    private static net.minecraft.client.gui.components.AbstractScrollArea liste(net.minecraft.client.Minecraft mc) {
+        for (var w : net.fabricmc.fabric.api.client.screen.v1.Screens.getWidgets(mc.gui.screen()))
+            if (w instanceof net.minecraft.client.gui.components.AbstractScrollArea a) return a;
+        for (var c : mc.gui.screen().children())
+            if (c instanceof net.minecraft.client.gui.components.AbstractScrollArea a) return a;
+        return null;
+    }
+
+    /** Mausrad gleitet (Modern Menus), Ziehen/Setzen springt sofort, aus = Vanilla. */
+    private void scrollTest(ClientGameTestContext ctx) {
+        ctx.runOnClient(mc -> {
+            var l = new net.minecraft.client.multiplayer.ServerList(mc);
+            l.load();
+            for (int i = l.size(); i < 25; i++) l.add(new net.minecraft.client.multiplayer.ServerData("Server " + i, "127.0.0.1:" + (25500 + i), net.minecraft.client.multiplayer.ServerData.Type.OTHER), false);
+            l.save();
+        });
+        for (boolean modern : new boolean[]{true, false}) {
+            ctx.runOnClient(mc -> com.vortex.client.core.ClientSettings.INSTANCE.modernMenus.set(modern));
+            ctx.setScreen(() -> new net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen(new net.minecraft.client.gui.screens.TitleScreen()));
+            ctx.waitTicks(20);
+            double[] r = ctx.computeOnClient(mc -> {
+                var a = liste(mc);
+                if (a == null) return new double[]{-1, -1, -1};
+                a.setScrollAmount(0);
+                a.mouseScrolled(a.getX() + 10, a.getY() + 10, 0, -2);
+                return new double[]{a.scrollAmount(), a.maxScrollAmount(), 0};
+            });
+            double sofort = r[0];
+            ctx.waitTicks(3);
+            double mitte = ctx.computeOnClient(mc -> liste(mc).scrollAmount());
+            ctx.waitTicks(20);
+            double ende = ctx.computeOnClient(mc -> liste(mc).scrollAmount());
+            notiz(String.format("%s: right after the wheel %.1f, after 3 frames %.1f, after 23 frames %.1f (max %.0f)", modern ? "modern" : "vanilla", sofort, mitte, ende, r[1]));
+            if (modern) {
+                pruefe("wheel glides (not there at once, arrives later)", sofort < 1 && ende > 20 && mitte > sofort, "");
+                ctx.runOnClient(mc -> liste(mc).setScrollAmount(5));
+                pruefe("setting the position directly still jumps", Math.abs(ctx.computeOnClient(mc -> liste(mc).scrollAmount()) - 5) < 0.01, "");
+            } else {
+                pruefe("Modern Menus off: vanilla jumps at once", sofort > 20, "");
+            }
+        }
+        ctx.runOnClient(mc -> com.vortex.client.core.ClientSettings.INSTANCE.modernMenus.set(true));
+        ctx.setScreen(net.minecraft.client.gui.screens.TitleScreen::new);
+        ctx.waitTicks(5);
+    }
 
     /** Schein-Spotify fuer den Musik-Test: Konto, Wiedergabe, Abspielen. */
     private static final class FakeSpotify {
