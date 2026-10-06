@@ -926,6 +926,10 @@ public class BotGameTest implements FabricClientGameTest {
     private void guiBilder(ClientGameTestContext ctx) {
         ctx.getInput().resizeWindow(1920, 1080);
         ctx.waitTicks(20);
+        // Menue-Panorama (4.25): wird beim ersten Start geladen
+        String pano = null;
+        for (int i = 0; i < 60 && pano == null; i++) { ctx.waitTicks(20); pano = ctx.computeOnClient(mc -> com.vortex.client.gui.Panoramen.aktiv()); }
+        pruefe("Vortex menu panorama loaded", pano != null, String.valueOf(pano));
         // Zwei Server in die Liste, damit die Mehrspieler-Liste etwas zeigt
         ctx.runOnClient(mc -> {
             var liste = new net.minecraft.client.multiplayer.ServerList(mc);
