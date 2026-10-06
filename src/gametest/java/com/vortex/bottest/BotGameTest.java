@@ -66,6 +66,10 @@ public class BotGameTest implements FabricClientGameTest {
             if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
             return;
         }
+        if (System.getProperty("vortex.bottest.only", "").contains("wallpaper")) {
+            try { abschnitt(ctx, "Wallpaper", () -> wallpaperTest(ctx)); } finally { schreibe(); }
+            return;
+        }
         if (System.getProperty("vortex.bottest.only", "").contains("scout")) {
             try { abschnitt(ctx, "Wallpaper scouting", () -> scoutTest(ctx)); } finally { schreibe(); }
             return;
@@ -610,6 +614,68 @@ public class BotGameTest implements FabricClientGameTest {
         var mm = java.util.regex.Pattern.compile("\\[(-?\\d+), ~?(-?\\d+|~), (-?\\d+)\\]").matcher(erg[0] == null ? "" : erg[0]);
         if (!mm.find()) return null;
         return new int[]{Integer.parseInt(mm.group(1)), Integer.parseInt(mm.group(3))};
+    }
+
+    /**
+     * Endgueltige Wallpaper: ein Ort je Lauf (vortex.wp.spot), Koordinaten aus
+     * dem Suchlauf (Seed "vortex-wallpaper"). Bilder 2560x1440 in drei
+     * Varianten + Panorama (6 Wuerfelseiten 4096x4096) fuer das Hauptmenue.
+     */
+    private void wallpaperTest(ClientGameTestContext ctx) {
+        // id, x, z, Hoehe ueber Boden, Blickrichtung, Neigung, Tageszeit
+        Object[][] orte = {
+            {"cherry", 2016, -1600, 8, 270f, 5f, 11200},
+            {"village", -240, 768, 10, 0f, 7f, 11300},
+            {"flowers", 608, 608, 9, 270f, 6f, 10500},
+            {"jungle", 1600, 1440, 9, 0f, 4f, 6000},
+            {"badlands", 1248, 2112, 10, 0f, 4f, 11300},
+            {"ocean", 1696, 2144, 9, 0f, 6f, 6000},
+            {"taiga", 64, -64, 10, 270f, 5f, 23300},
+            {"peaks", -1120, -2048, 10, 90f, 6f, 12500}
+        };
+        String id = System.getProperty("vortex.wp.spot", "cherry");
+        Object[] o = null;
+        for (Object[] x : orte) if (x[0].equals(id)) o = x;
+        if (o == null) { notiz("unknown spot " + id); return; }
+        final Object[] ort = o;
+        int sicht = Integer.getInteger("vortex.wp.rd", 16);
+        var bauer = ctx.worldBuilder().setUseConsistentSettings(false).adjustSettings(st -> st.setSeed(System.getProperty("vortex.scout.seed", "vortex-wallpaper")));
+        fotoModus(ctx, sicht);
+        ctx.runOnClient(mc -> mc.options.cloudStatus().set(net.minecraft.client.CloudStatus.OFF));
+        try (TestSingleplayerContext sp = bauer.create()) {
+            TestServerContext srv = sp.getServer();
+            srv.runCommand("gamemode spectator @a");
+            srv.runCommand("weather clear 1000000");
+            srv.runCommand("gamerule advance_time false");
+            srv.runCommand("gamerule doDaylightCycle false");
+            srv.runCommand("time set " + ort[6]);
+            int x = (Integer) ort[1], z = (Integer) ort[2];
+            int y0 = oberflaeche(srv, x, z);
+            double y = y0 + (Integer) ort[3] + 0.5;
+            float yaw = (Float) ort[4], pitch = (Float) ort[5];
+            notiz(String.format("%s at %d %.1f %d, yaw %.0f, time %s, render distance %d", id, x, y, z, yaw, ort[6], sicht));
+            srv.runCommand(String.format(java.util.Locale.ROOT, "tp @a %d %.1f %d %.1f %.1f", x, y, z, yaw, pitch));
+            ctx.runOnClient(mc -> { if (!mc.gui.hud.isHidden()) mc.gui.hud.toggle(); });
+            long t0 = System.currentTimeMillis();
+            warteWelt(sp, 20 * 240);
+            ctx.waitTicks(20 * 20);
+            warteWelt(sp, 20 * 120);
+            notiz("   world ready after " + (System.currentTimeMillis() - t0) / 1000 + " s");
+            float[][] varianten = {{0, 0}, {-12, 1}, {14, -1}};
+            for (int i = 0; i < varianten.length; i++) {
+                srv.runCommand(String.format(java.util.Locale.ROOT, "tp @a %d %.1f %d %.1f %.1f", x, y, z, yaw + varianten[i][0], pitch + varianten[i][1]));
+                ctx.waitTicks(10);
+                warteWelt(sp, 20 * 60);
+                ctx.takeScreenshot(net.fabricmc.fabric.api.client.gametest.v1.screenshot.TestScreenshotOptions.of("wp-" + id + "-" + i).withSize(2560, 1440).disableCounterPrefix());
+                notiz("   shot " + i + " after " + (System.currentTimeMillis() - t0) / 1000 + " s");
+            }
+            // Panorama fuer das Hauptmenue (Blick waagrecht)
+            srv.runCommand(String.format(java.util.Locale.ROOT, "tp @a %d %.1f %d %.1f 0", x, y, z, yaw));
+            ctx.waitTicks(10);
+            warteWelt(sp, 20 * 60);
+            ctx.runOnClient(mc -> mc.grabPanoramixScreenshot(mc.gameDirectory));
+            notiz("   panorama after " + (System.currentTimeMillis() - t0) / 1000 + " s");
+        }
     }
 
     /** Orte fuer Wallpaper suchen: je Biom 4 Richtungen x 2 Hoehen, kleine Probebilder. */
