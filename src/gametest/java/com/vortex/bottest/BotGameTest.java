@@ -592,13 +592,11 @@ public class BotGameTest implements FabricClientGameTest {
             ctx.getInput().setCursorPos(640, 300);
             ctx.waitTicks(30);
             ctx.runOnClient(mc -> com.vortex.client.core.Profiler.reset());
-            double[] z = bildZeit(ctx, 120);
-            b.append(String.format("%s avg %.2f / median %.2f / p95 %.2f ms   ", modern ? "VORTEX" : "vanilla", z[0], z[1], z[2]));
-            if (modern) {
-                String prof = ctx.computeOnClient(mc -> com.vortex.client.core.Profiler.summary().replace('\n', '|'));
-                b.append(" [").append(prof.length() > 300 ? prof.substring(0, 300) : prof).append("]");
-                ctx.takeScreenshot("perf-" + name);
-            }
+            ctx.waitTicks(150);
+            String prof = ctx.computeOnClient(mc -> com.vortex.client.core.Profiler.summary());
+            String zeile = java.util.Arrays.stream(prof.split("\n")).filter(l -> l.contains("Screen ")).map(String::trim).reduce((x, y) -> x + " | " + y).orElse("-");
+            b.append(modern ? "VORTEX: " : "vanilla: ").append(zeile).append("    ");
+            if (modern) ctx.takeScreenshot("perf-" + name);
         }
         ctx.runOnClient(mc -> com.vortex.client.core.ClientSettings.INSTANCE.modernMenus.set(true));
         return b.toString();
