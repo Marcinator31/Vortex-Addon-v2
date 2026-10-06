@@ -590,7 +590,7 @@ public class BotGameTest implements FabricClientGameTest {
     private static int[] finde(TestServerContext srv, String was) {
         String[] erg = new String[1];
         srv.runOnServer(s -> {
-            var src = s.createCommandSourceStack().withSuppressedOutput();
+            var src = s.createCommandSourceStack();
             var out = new StringBuilder();
             var quelle = src.withSource(new net.minecraft.commands.CommandSource() {
                 public void sendSystemMessage(net.minecraft.network.chat.Component c) { out.append(c.getString()); }
