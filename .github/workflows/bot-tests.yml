@@ -12,6 +12,9 @@ on:
       client_ref:
         description: 'Client von diesem Branch von Vortex-Client bauen statt das neueste Release (leer = Release)'
         default: ''
+      props:
+        description: 'Weitere Einstellungen fuer den Test (z. B. vortex.scout.part=1/4), mit Leerzeichen getrennt'
+        default: ''
   push:
     # bot-test/...: Aenderungen erst im Spiel pruefen, bevor sie nach main (und in die Beta) gehen
     branches: [ "main", "bot-test/**" ]
@@ -29,7 +32,8 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # Bilder-Laeufe (scout, wallpaper) rendern lange auf der CPU-Grafik
+    timeout-minutes: ${{ (github.event.inputs.only == 'scout' || github.event.inputs.only == 'wallpaper') && 170 || 45 }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -77,12 +81,15 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q xvfb mesa-utils libgl1-mesa-dri libegl1 libvulkan1 mesa-vulkan-drivers
       - name: Bot-Tests im Spiel
+        # Etwas Luft vor dem Job-Ende, damit "Ergebnis einsammeln" noch laeuft
+        timeout-minutes: ${{ (github.event.inputs.only == 'scout' || github.event.inputs.only == 'wallpaper') && 155 || 38 }}
         env:
           ONLY: ${{ github.event.inputs.only }}
+          PROPS: ${{ github.event.inputs.props }}
         run: |
           chmod +x gradlew
           set -o pipefail
-          xvfb-run -a -s "-screen 0 1280x720x24" ./gradlew runClientGameTest -PbotTests ${ONLY:+-PbotOnly=$ONLY} --no-daemon --stacktrace 2>&1 | tee test.log
+          xvfb-run -a -s "-screen 0 1280x720x24" ./gradlew runClientGameTest -PbotTests ${ONLY:+-PbotOnly=$ONLY} ${PROPS:+"-PbotProps=$PROPS"} --no-daemon --stacktrace 2>&1 | tee test.log
       - name: Ergebnis einsammeln
         if: always()
         env:

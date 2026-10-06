@@ -36,5 +36,14 @@ if (project.hasProperty('botOnly')) {
     loom.runs.configureEach { vmArg("-Dvortex.bottest.only=${project.property('botOnly')}") }
 }
 
+// Weitere Systemeigenschaften:  -PbotProps="vortex.scout.part=1/4 vortex.scout.rd=8"
+if (project.hasProperty('botProps')) {
+    project.property('botProps').toString().split(/\s+/).findAll { it }.each { p ->
+        loom.runs.configureEach { vmArg("-D" + p) }
+    }
+}
+// Bilder in hoher Aufloesung brauchen mehr Speicher als der Standard
+loom.runs.configureEach { vmArg("-Xmx6g") }
+
 // Bot-Protokoll im Test (TreeFarmer.dbg ...)
 loom.runs.configureEach { vmArg("-Dvortex.bot.debug=true") }

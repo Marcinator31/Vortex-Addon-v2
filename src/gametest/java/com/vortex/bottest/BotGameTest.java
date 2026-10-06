@@ -630,8 +630,13 @@ public class BotGameTest implements FabricClientGameTest {
             srv.runCommand("gamerule advance_time false");
             srv.runCommand("gamerule doDaylightCycle false");
             ctx.runOnClient(mc -> { if (!mc.gui.hud.isHidden()) mc.gui.hud.toggle(); });
+            // Aufteilen auf parallele Laeufe: vortex.scout.part=k/n
+            String teil = System.getProperty("vortex.scout.part", "1/1");
+            int k = Integer.parseInt(teil.split("/")[0]), anzahl = Integer.parseInt(teil.split("/")[1]);
             int n = 0;
             for (String[] o : orte) {
+                if (n++ % anzahl != k - 1) continue;
+                long t0 = System.currentTimeMillis();
                 int[] p = finde(srv, o[0]);
                 if (p == null) { notiz("not found: " + o[0]); continue; }
                 int y0 = oberflaeche(srv, p[0], p[1]);
@@ -644,11 +649,11 @@ public class BotGameTest implements FabricClientGameTest {
                         srv.runCommand("tp @a " + p[0] + " " + (y0 + hoehe) + " " + p[1] + " " + yaw + " " + (hoehe > 20 ? 14 : 6));
                         ctx.waitTicks(6);
                         warteWelt(sp, 20 * 30);
-                        String name = String.format("scout-%02d-%s-h%d-y%d", n, o[0].replaceAll(".*:", ""), hoehe, yaw);
+                        String name = String.format("scout-%02d-%s-h%d-y%d", n - 1, o[0].replaceAll(".*:", ""), hoehe, yaw);
                         ctx.takeScreenshot(net.fabricmc.fabric.api.client.gametest.v1.screenshot.TestScreenshotOptions.of(name).withSize(960, 540).disableCounterPrefix());
                     }
                 }
-                n++;
+                notiz(String.format("   %s done in %d s", o[0], (System.currentTimeMillis() - t0) / 1000));
             }
         }
     }
