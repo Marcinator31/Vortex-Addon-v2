@@ -584,6 +584,40 @@ public class BotGameTest implements FabricClientGameTest {
         });
     }
 
+    /** Stichproben-Profiler: was macht der Render-Thread gerade (in Vortex-Code)? */
+    private static String stichproben(ClientGameTestContext ctx, int ms) {
+        Thread render = null;
+        for (Thread t : Thread.getAllStackTraces().keySet()) if (t.getName().equals("Render thread")) render = t;
+        if (render == null) return "no render thread";
+        final Thread rt = render;
+        java.util.Map<String, Integer> vortex = new java.util.HashMap<>(), blatt = new java.util.HashMap<>();
+        int[] gesamt = {0};
+        Thread sampler = new Thread(() -> {
+            long ende = System.currentTimeMillis() + ms;
+            while (System.currentTimeMillis() < ende) {
+                StackTraceElement[] st = rt.getStackTrace();
+                boolean inScreen = false;
+                for (StackTraceElement e : st) if (e.getMethodName().contains("extractRenderStateWithTooltip")) { inScreen = true; break; }
+                if (inScreen) {
+                    gesamt[0]++;
+                    String v = null;
+                    for (StackTraceElement e : st) if (e.getClassName().startsWith("com.vortex")) { v = e.getClassName().replaceAll(".*\\.", "") + "." + e.getMethodName() + ":" + e.getLineNumber(); break; }
+                    if (v != null) vortex.merge(v, 1, Integer::sum);
+                    if (st.length > 0) blatt.merge(st[0].getClassName().replaceAll(".*\\.", "") + "." + st[0].getMethodName(), 1, Integer::sum);
+                }
+                try { Thread.sleep(1); } catch (InterruptedException ex) { return; }
+            }
+        });
+        sampler.start();
+        ctx.waitTicks(ms / 50 + 5);
+        try { sampler.join(); } catch (InterruptedException ignored) { }
+        StringBuilder b = new StringBuilder(gesamt[0] + " samples in screen | vortex: ");
+        vortex.entrySet().stream().sorted((x, y) -> y.getValue() - x.getValue()).limit(14).forEach(e -> b.append(e.getKey()).append("=").append(e.getValue()).append(" "));
+        b.append("| leaf: ");
+        blatt.entrySet().stream().sorted((x, y) -> y.getValue() - x.getValue()).limit(8).forEach(e -> b.append(e.getKey()).append("=").append(e.getValue()).append(" "));
+        return b.toString();
+    }
+
     private String messe(ClientGameTestContext ctx, String name, java.util.function.Supplier<net.minecraft.client.gui.screens.Screen> sc) {
         StringBuilder b = new StringBuilder(name).append(": ");
         for (boolean modern : new boolean[]{false, true}) {
@@ -596,7 +630,10 @@ public class BotGameTest implements FabricClientGameTest {
             String prof = ctx.computeOnClient(mc -> com.vortex.client.core.Profiler.summary());
             String zeile = java.util.Arrays.stream(prof.split("\n")).filter(l -> l.contains("Screen ")).map(String::trim).reduce((x, y) -> x + " | " + y).orElse("-");
             b.append(modern ? "VORTEX: " : "vanilla: ").append(zeile).append("    ");
-            if (modern) ctx.takeScreenshot("perf-" + name);
+            if (modern) {
+                ctx.takeScreenshot("perf-" + name);
+                b.append("\n      hot spots: ").append(stichproben(ctx, 3000));
+            }
         }
         ctx.runOnClient(mc -> com.vortex.client.core.ClientSettings.INSTANCE.modernMenus.set(true));
         return b.toString();
