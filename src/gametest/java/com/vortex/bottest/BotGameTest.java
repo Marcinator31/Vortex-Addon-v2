@@ -930,6 +930,14 @@ public class BotGameTest implements FabricClientGameTest {
         String pano = null;
         for (int i = 0; i < 60 && pano == null; i++) { ctx.waitTicks(20); pano = ctx.computeOnClient(mc -> com.vortex.client.gui.Panoramen.aktiv()); }
         pruefe("Vortex menu panorama loaded", pano != null, String.valueOf(pano));
+        ctx.setScreen(() -> new net.minecraft.client.gui.screens.TitleScreen());
+        ctx.waitTicks(30);
+        ctx.takeScreenshot("panorama-vortex");
+        ctx.runOnClient(mc -> com.vortex.client.core.ClientSettings.INSTANCE.menuPanorama.set("Minecraft"));
+        ctx.waitTicks(30);
+        ctx.takeScreenshot("panorama-vanilla");
+        ctx.runOnClient(mc -> com.vortex.client.core.ClientSettings.INSTANCE.menuPanorama.set("Vortex Mix"));
+        ctx.waitTicks(30);
         // Zwei Server in die Liste, damit die Mehrspieler-Liste etwas zeigt
         ctx.runOnClient(mc -> {
             var liste = new net.minecraft.client.multiplayer.ServerList(mc);
