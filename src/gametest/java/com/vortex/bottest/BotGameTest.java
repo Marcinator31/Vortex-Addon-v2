@@ -1768,6 +1768,7 @@ public class BotGameTest implements FabricClientGameTest {
     /** n Bilder hintereinander, je ein Tick = 20 Bilder pro Sekunde. */
     private void folge(ClientGameTestContext ctx, String name, int n) {
         for (int i = 0; i < n; i++) {
+            ctx.runOnClient(mc -> { mc.gui.toastManager().clear(); mc.gui.hud.setOverlayMessage(net.minecraft.network.chat.Component.empty(), false); });
             ctx.takeScreenshot(net.fabricmc.fabric.api.client.gametest.v1.screenshot.TestScreenshotOptions.of(String.format("promo-%s-%03d", name, i)).disableCounterPrefix());
             ctx.waitTick();
         }
@@ -1810,7 +1811,10 @@ public class BotGameTest implements FabricClientGameTest {
         ctx.runOnClient(mc -> {
             mc.options.chatVisibility().set(net.minecraft.world.entity.player.ChatVisiblity.HIDDEN);
             mc.options.setCameraType(net.minecraft.client.CameraType.FIRST_PERSON);
-            an("Fullbright", "Bot Status", "Coordinates", "FPS", "ArmorHUD");
+            aus("FPS", "CPS", "Keystrokes");
+            var sp = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.SpotifyModule.class);
+            if (sp != null && sp.isEnabled()) sp.toggle();
+            an("Fullbright", "Bot Status", "Coordinates", "ArmorHUD");
         });
         ctx.waitTicks(40);
         String dim = ctx.computeOnClient(mc -> mc.level.dimension().identifier().toString() + " y=" + mc.player.getY() + " hand=" + mc.player.getMainHandItem());
@@ -1833,7 +1837,7 @@ public class BotGameTest implements FabricClientGameTest {
         System.out.println("[promo] netherite farmer status end: " + st);
         welt(ctx, "nether-end");
         ctx.runOnClient(mc -> {
-            aus("Netherite Farmer", "Fullbright", "Coordinates", "FPS", "ArmorHUD");
+            aus("Netherite Farmer", "Fullbright", "Coordinates", "ArmorHUD");
             mc.options.chatVisibility().set(net.minecraft.world.entity.player.ChatVisiblity.FULL);
         });
     }
@@ -2015,17 +2019,20 @@ public class BotGameTest implements FabricClientGameTest {
                             p0.getX() + 0.5 + u[0], p0.getY(), p0.getZ() + 0.5 + u[1]));
                 }
                 srv.runCommand("gamemode survival @a");
+                srv.runCommand("time set 1000");
                 ctx.runOnClient(mc -> {
                     mc.options.chatVisibility().set(net.minecraft.world.entity.player.ChatVisiblity.HIDDEN);
                     mc.player.getInventory().setSelectedSlot(0);
                     mc.player.setYRot(-20f); mc.player.setXRot(18f);
                     setze("Kill Aura", "Players Only", false);
                     setze("Kill Aura", "Through Walls", true);
-                    an("Kill Aura", "Keystrokes", "CPS", "FPS", "Reach Display", "Hit Color");
+                    aus("FPS", "CPS", "Fullbright");
+                    an("Keystrokes", "Reach Display", "Hit Color", "ArmorHUD");
                 });
-                ctx.waitTicks(4);
+                ctx.waitTicks(80);
+                ctx.runOnClient(mc -> an("Kill Aura"));
                 folge(ctx, "killaura", 80);
-                ctx.runOnClient(mc -> aus("Kill Aura", "Keystrokes", "CPS", "FPS", "Reach Display"));
+                ctx.runOnClient(mc -> aus("Kill Aura", "Keystrokes", "Reach Display", "ArmorHUD"));
                 srv.runCommand("gamemode creative @a");
             } catch (Throwable t) { System.out.println("[promo] Kill Aura clip: " + t); }
 
