@@ -1740,6 +1740,104 @@ public class BotGameTest implements FabricClientGameTest {
         ctx.takeScreenshot(net.fabricmc.fabric.api.client.gametest.v1.screenshot.TestScreenshotOptions.of("promo-" + name).withSize(1920, 1080).disableCounterPrefix());
     }
 
+    @SuppressWarnings("unchecked")
+    private static void panelSuche(net.minecraft.client.gui.screens.Screen s, String q, String aufklappen) {
+        if (!(s instanceof com.vortex.client.gui.PanelGui)) return;
+        try {
+            var f = com.vortex.client.gui.PanelGui.class.getDeclaredField("search");
+            f.setAccessible(true);
+            var eb = (net.minecraft.client.gui.components.EditBox) f.get(s);
+            if (eb != null && !q.isEmpty()) eb.setValue(q);
+            var o = com.vortex.client.gui.PanelGui.class.getDeclaredField("offen");
+            o.setAccessible(true);
+            var m = modul(aufklappen);
+            if (m != null) ((java.util.Map<Object, Boolean>) o.get(s)).put(m, true);
+        } catch (ReflectiveOperationException e) { throw new RuntimeException(e); }
+    }
+
+    private static void setze(String modul, String setting, Object wert) {
+        var m = modul(modul);
+        if (m == null) return;
+        for (var st : m.getSettings()) {
+            if (!st.getName().equalsIgnoreCase(setting)) continue;
+            if (st instanceof com.vortex.client.core.setting.BooleanSetting b) b.set((Boolean) wert);
+            else if (st instanceof com.vortex.client.core.setting.NumberSetting n) n.set(((Number) wert).doubleValue());
+        }
+    }
+
+    /** n Bilder hintereinander, je ein Tick = 20 Bilder pro Sekunde. */
+    private void folge(ClientGameTestContext ctx, String name, int n) {
+        for (int i = 0; i < n; i++) {
+            ctx.takeScreenshot(net.fabricmc.fabric.api.client.gametest.v1.screenshot.TestScreenshotOptions.of(String.format("promo-%s-%03d", name, i)).disableCounterPrefix());
+            ctx.waitTick();
+        }
+    }
+
+    private void netherFarmer(ClientGameTestContext ctx, TestServerContext srv) {
+        srv.runCommand("kill @e[type=!player]");
+        srv.runCommand("gamemode creative @a");
+        srv.runCommand("execute in minecraft:the_nether run forceload add -16 -32 80 48");
+        srv.runCommand("execute in minecraft:the_nether run tp @a 0.5 15 0.5 -90 10");
+        ctx.waitTicks(100);
+        // Fester Netherrack-Block, damit kein Lavasee stoert; kleiner Startraum
+        for (int x = -8; x < 72; x += 20) {
+            srv.runCommand("execute in minecraft:the_nether run fill " + x + " 9 -14 " + (x + 19) + " 24 14 minecraft:netherrack");
+        }
+        srv.runCommand("execute in minecraft:the_nether run fill -1 15 -1 1 16 1 minecraft:air");
+        java.util.Random r = new java.util.Random(11);
+        int[][] debris = { {5, 15, 1}, {9, 16, -2}, {13, 15, 2}, {18, 14, 0}, {22, 16, 3}, {27, 15, -3}, {31, 15, 1}, {36, 16, -1} };
+        for (int[] d : debris) {
+            srv.runCommand("execute in minecraft:the_nether run setblock " + d[0] + " " + d[1] + " " + d[2] + " minecraft:ancient_debris");
+        }
+        for (int i = 0; i < 40; i++) {
+            String b = r.nextBoolean() ? "nether_quartz_ore" : (r.nextBoolean() ? "nether_gold_ore" : "magma_block");
+            srv.runCommand("execute in minecraft:the_nether run setblock " + (2 + r.nextInt(40)) + " " + (13 + r.nextInt(5)) + " " + (-5 + r.nextInt(11)) + " minecraft:" + b);
+        }
+        srv.runCommand("execute in minecraft:the_nether run tp @a 0.5 15 0.5 -90 10");
+        srv.runCommand("clear @a");
+        srv.runCommand("gamemode survival @a");
+        srv.runCommand("give @a minecraft:netherite_pickaxe[enchantments={efficiency:5,unbreaking:3}]");
+        srv.runCommand("give @a minecraft:cooked_beef 64");
+        srv.runCommand("give @a minecraft:golden_apple 8");
+        srv.runCommand("give @a minecraft:totem_of_undying 2");
+        srv.runCommand("give @a minecraft:netherrack 32");
+        srv.runCommand("item replace entity @a armor.head with minecraft:netherite_helmet");
+        srv.runCommand("item replace entity @a armor.chest with minecraft:netherite_chestplate");
+        srv.runCommand("item replace entity @a armor.legs with minecraft:netherite_leggings");
+        srv.runCommand("item replace entity @a armor.feet with minecraft:netherite_boots");
+        srv.runCommand("effect give @a minecraft:fire_resistance 99999 0 true");
+        srv.runCommand("effect give @a minecraft:haste 99999 1 true");
+        ctx.runOnClient(mc -> {
+            mc.options.chatVisibility().set(net.minecraft.world.entity.player.ChatVisiblity.HIDDEN);
+            mc.options.setCameraType(net.minecraft.client.CameraType.FIRST_PERSON);
+            an("Fullbright", "Bot Status", "Coordinates", "FPS", "ArmorHUD");
+        });
+        ctx.waitTicks(40);
+        String dim = ctx.computeOnClient(mc -> mc.level.dimension().identifier().toString() + " y=" + mc.player.getY() + " hand=" + mc.player.getMainHandItem());
+        System.out.println("[promo] nether: " + dim);
+        welt(ctx, "nether-start");
+        ctx.runOnClient(mc -> an("Netherite Farmer"));
+        ctx.waitTicks(30);
+        folge(ctx, "nf-a", 120);
+        ctx.waitTicks(100);
+        welt(ctx, "nether-mid");
+        String st = ctx.computeOnClient(mc -> com.vortex.client.bot.NetheriteFarmer.statusText());
+        System.out.println("[promo] netherite farmer status: " + st);
+        ctx.runOnClient(mc -> mc.options.setCameraType(net.minecraft.client.CameraType.THIRD_PERSON_BACK));
+        ctx.waitTicks(5);
+        folge(ctx, "nf-b", 100);
+        ctx.runOnClient(mc -> mc.options.setCameraType(net.minecraft.client.CameraType.FIRST_PERSON));
+        ctx.waitTicks(200);
+        folge(ctx, "nf-c", 100);
+        st = ctx.computeOnClient(mc -> com.vortex.client.bot.NetheriteFarmer.statusText());
+        System.out.println("[promo] netherite farmer status end: " + st);
+        welt(ctx, "nether-end");
+        ctx.runOnClient(mc -> {
+            aus("Netherite Farmer", "Fullbright", "Coordinates", "FPS", "ArmorHUD");
+            mc.options.chatVisibility().set(net.minecraft.world.entity.player.ChatVisiblity.FULL);
+        });
+    }
+
     private void promoBilder(ClientGameTestContext ctx) {
         ctx.getInput().resizeWindow(1920, 1080);
         ctx.runOnClient(mc -> {
@@ -1767,33 +1865,32 @@ public class BotGameTest implements FabricClientGameTest {
             ctx.setScreen(() -> new com.vortex.client.gui.HomeScreen());
             ctx.waitTicks(50);
             bild(ctx, "home");
-            for (var kat : new com.vortex.client.module.Module.Category[]{
-                    com.vortex.client.module.Module.Category.CHEATS, com.vortex.client.module.Module.Category.PVP,
-                    com.vortex.client.module.Module.Category.HUD, com.vortex.client.module.Module.Category.MISC }) {
-                // ein paar Module an, damit Schalter leuchten
-                ctx.runOnClient(mc -> an("Crystal Aura", "Auto Totem", "ESP", "Freecam", "Reach Display", "Hit Color", "Toggle Sprint", "Keystrokes", "CPS", "FPS", "Zoom"));
-                ctx.setScreen(() -> new com.vortex.client.gui.ClickGui(kat));
-                ctx.waitTicks(40);
-                bild(ctx, "clickgui-" + kat.name().toLowerCase());
-            }
-            ctx.runOnClient(mc -> aus("Crystal Aura", "Freecam", "ESP", "Auto Totem"));
+            ctx.runOnClient(mc -> an("Crystal Aura", "Auto Totem", "Kill Aura", "Reach Display", "Hit Color", "Toggle Sprint", "Keystrokes", "CPS", "FPS", "Zoom", "Fullbright", "Anti Knockback"));
             ctx.setScreen(() -> new com.vortex.client.gui.PanelGui());
             ctx.waitTicks(40);
             bild(ctx, "panel");
             ctx.setScreen(() -> new com.vortex.client.gui.PanelGui(com.vortex.client.module.Module.Category.CHEATS));
-            ctx.waitTicks(40);
+            ctx.waitTicks(30);
             bild(ctx, "panel-cheats");
-            for (String n : new String[]{ "Crystal Aura", "Kill Aura", "ESP", "Auto Totem" }) {
-                ctx.setScreen(() -> {
-                    var m = modul(n);
-                    return new com.vortex.client.gui.SettingsScreen(null, n, m == null ? List.of() : m.getSettings());
-                });
-                ctx.waitTicks(30);
-                bild(ctx, "settings-" + n.toLowerCase().replace(' ', '-'));
+            // Modul-Einstellungen klappen im Mod-Menue direkt auf
+            String[][] suchen = { {"aura", "Kill Aura"}, {"crystal", "Crystal Aura"}, {"totem", "Auto Totem"}, {"", "Crystal Aura"} };
+            for (int i = 0; i < suchen.length; i++) {
+                String q = suchen[i][0], auf = suchen[i][1];
+                ctx.setScreen(() -> new com.vortex.client.gui.PanelGui(q.isEmpty() ? com.vortex.client.module.Module.Category.CHEATS : null));
+                ctx.waitTicks(10);
+                ctx.runOnClient(mc -> panelSuche(mc.gui.screen(), q, auf));
+                ctx.waitTicks(40);
+                bild(ctx, "panel-open-" + i);
             }
             ctx.setScreen(() -> new com.vortex.client.gui.BotScreen(null));
             ctx.waitTicks(40);
             bild(ctx, "bots");
+            for (int i = 1; i <= 5; i++) {
+                ctx.runOnClient(mc -> { var sc = mc.gui.screen(); if (sc != null) for (int k = 0; k < 4; k++) sc.mouseScrolled(320, 180, 0, -1); });
+                ctx.waitTicks(25);
+                bild(ctx, "bots-" + i);
+            }
+            ctx.runOnClient(mc -> aus("Crystal Aura", "Auto Totem", "Kill Aura", "Anti Knockback"));
 
             // --- Music ----------------------------------------------------
             ctx.runOnClient(mc -> {
@@ -1905,6 +2002,35 @@ public class BotGameTest implements FabricClientGameTest {
             welt(ctx, "xray");
             ctx.runOnClient(mc -> aus("Xray", "Fullbright"));
             ctx.waitTicks(20);
+
+            // --- Kill Aura: echte Treffer, Bild fuer Bild (20 fps) ---------------
+            try {
+                srv.runCommand("kill @e[type=!player]");
+                srv.runCommand("time set 13000");
+                var p0 = ctx.computeOnClient(mc -> mc.player.blockPosition());
+                srv.runCommand("fill " + (p0.getX() - 12) + " " + p0.getY() + " " + (p0.getZ() - 12) + " " + (p0.getX() + 12) + " " + (p0.getY() + 6) + " " + (p0.getZ() + 12) + " minecraft:air");
+                double[][] um = { {2.6, 0.6}, {1.2, 2.5}, {-1.6, 2.2}, {2.4, -1.8}, {0.4, 3.2} };
+                for (double[] u : um) {
+                    srv.runCommand(String.format(java.util.Locale.ROOT, "summon minecraft:zombie %.1f %d %.1f {NoAI:1b,Silent:1b,PersistenceRequired:1b}",
+                            p0.getX() + 0.5 + u[0], p0.getY(), p0.getZ() + 0.5 + u[1]));
+                }
+                srv.runCommand("gamemode survival @a");
+                ctx.runOnClient(mc -> {
+                    mc.options.chatVisibility().set(net.minecraft.world.entity.player.ChatVisiblity.HIDDEN);
+                    mc.player.getInventory().setSelectedSlot(0);
+                    mc.player.setYRot(-20f); mc.player.setXRot(18f);
+                    setze("Kill Aura", "Players Only", false);
+                    setze("Kill Aura", "Through Walls", true);
+                    an("Kill Aura", "Keystrokes", "CPS", "FPS", "Reach Display", "Hit Color");
+                });
+                ctx.waitTicks(4);
+                folge(ctx, "killaura", 80);
+                ctx.runOnClient(mc -> aus("Kill Aura", "Keystrokes", "CPS", "FPS", "Reach Display"));
+                srv.runCommand("gamemode creative @a");
+            } catch (Throwable t) { System.out.println("[promo] Kill Aura clip: " + t); }
+
+            // --- Netherite Farmer im Nether ------------------------------------------
+            try { netherFarmer(ctx, srv); } catch (Throwable t) { System.out.println("[promo] Netherite Farmer: " + t); t.printStackTrace(); }
         }
     }
 
