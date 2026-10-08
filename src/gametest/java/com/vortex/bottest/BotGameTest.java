@@ -1730,6 +1730,12 @@ public class BotGameTest implements FabricClientGameTest {
         for (String n : namen) { var m = modul(n); if (m != null && m.isEnabled()) m.setEnabled(false); }
     }
 
+    private void welt(ClientGameTestContext ctx, String name) {
+        ctx.runOnClient(mc -> mc.gui.hud.getChat().clearMessages(true));
+        ctx.waitTicks(2);
+        ctx.takeScreenshot(net.fabricmc.fabric.api.client.gametest.v1.screenshot.TestScreenshotOptions.of("promo-" + name).disableCounterPrefix());
+    }
+
     private void bild(ClientGameTestContext ctx, String name) {
         ctx.takeScreenshot(net.fabricmc.fabric.api.client.gametest.v1.screenshot.TestScreenshotOptions.of("promo-" + name).withSize(1920, 1080).disableCounterPrefix());
     }
@@ -1753,6 +1759,8 @@ public class BotGameTest implements FabricClientGameTest {
             srv.runCommand("weather clear 1000000");
             srv.runCommand("gamemode creative @a");
             srv.runCommand("gamerule doDaylightCycle false");
+            srv.runCommand("gamerule announceAdvancements false");
+            srv.runCommand("gamerule show_advancement_messages false");
             ctx.waitTicks(60);
 
             // --- Menues ---------------------------------------------------
@@ -1768,7 +1776,7 @@ public class BotGameTest implements FabricClientGameTest {
                 ctx.waitTicks(40);
                 bild(ctx, "clickgui-" + kat.name().toLowerCase());
             }
-            ctx.runOnClient(mc -> aus("Crystal Aura", "Freecam", "ESP"));
+            ctx.runOnClient(mc -> aus("Crystal Aura", "Freecam", "ESP", "Auto Totem"));
             ctx.setScreen(() -> new com.vortex.client.gui.PanelGui());
             ctx.waitTicks(40);
             bild(ctx, "panel");
@@ -1834,7 +1842,7 @@ public class BotGameTest implements FabricClientGameTest {
             srv.runCommand("effect give @a minecraft:speed 99999 1 true");
             srv.runCommand("effect give @a minecraft:strength 99999 1 true");
             ctx.waitTicks(40);
-            bild(ctx, "hud-ingame");
+            welt(ctx, "hud-ingame");
             ctx.setScreen(() -> new com.vortex.client.gui.HudEditorScreen());
             ctx.waitTicks(30);
             bild(ctx, "hudeditor");
@@ -1847,7 +1855,7 @@ public class BotGameTest implements FabricClientGameTest {
                 mc.player.setXRot(0f);
             });
             ctx.waitTicks(20);
-            bild(ctx, "songcard");
+            welt(ctx, "songcard");
             ctx.runOnClient(mc -> mc.options.setCameraType(net.minecraft.client.CameraType.FIRST_PERSON));
 
             // --- ESP: Nacht, Mobs ringsum ----------------------------------------
@@ -1861,29 +1869,40 @@ public class BotGameTest implements FabricClientGameTest {
             }
             ctx.runOnClient(mc -> {
                 mc.player.setYRot(-90f); mc.player.setXRot(10f);
+                var np = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.NowPlayingModule.class);
+                if (np != null && np.isEnabled()) np.toggle();
                 var esp = modul("ESP");
                 if (esp instanceof com.vortex.client.module.modules.EspModule e) e.color.set(0xFF8B5CF6);
                 an("ESP", "Fullbright");
             });
             ctx.waitTicks(60);
-            bild(ctx, "esp");
+            welt(ctx, "esp");
             ctx.runOnClient(mc -> aus("ESP"));
+
+            // --- Freecam: von oben auf die Szene ----------------------------------
+            ctx.runOnClient(mc -> { an("Freecam"); });
+            ctx.waitTicks(10);
+            ctx.runOnClient(mc -> { if (mc.getCameraEntity() != null) { mc.getCameraEntity().setPos(mc.player.getX() - 6, mc.player.getY() + 9, mc.player.getZ() - 6); mc.getCameraEntity().setYRot(-60f); mc.getCameraEntity().setXRot(40f); } });
+            ctx.waitTicks(20);
+            welt(ctx, "freecam");
+            ctx.runOnClient(mc -> aus("Freecam"));
+            ctx.waitTicks(10);
 
             // --- Xray: Steinblock mit Erzen unter dem Spieler -----------------------
             srv.runCommand("time set 6000");
             int x0 = pos.getX(), y0 = pos.getY(), z0 = pos.getZ();
-            srv.runCommand("fill " + (x0 - 14) + " " + (y0 - 14) + " " + (z0 + 4) + " " + (x0 + 14) + " " + (y0 - 2) + " " + (z0 + 30) + " minecraft:stone");
+            srv.runCommand("fill " + (x0 - 16) + " " + y0 + " " + (z0 + 6) + " " + (x0 + 16) + " " + (y0 + 14) + " " + (z0 + 30) + " minecraft:stone");
             java.util.Random r = new java.util.Random(7);
             String[] erze = { "diamond_ore", "diamond_ore", "deepslate_diamond_ore", "gold_ore", "emerald_ore", "redstone_ore", "lapis_ore", "ancient_debris", "iron_ore" };
             for (int i = 0; i < 90; i++) {
-                srv.runCommand("setblock " + (x0 - 13 + r.nextInt(27)) + " " + (y0 - 13 + r.nextInt(11)) + " " + (z0 + 5 + r.nextInt(25)) + " minecraft:" + erze[r.nextInt(erze.length)]);
+                srv.runCommand("setblock " + (x0 - 15 + r.nextInt(31)) + " " + (y0 + r.nextInt(14)) + " " + (z0 + 7 + r.nextInt(23)) + " minecraft:" + erze[r.nextInt(erze.length)]);
             }
-            ctx.runOnClient(mc -> { mc.player.setYRot(0f); mc.player.setXRot(38f); });
+            ctx.runOnClient(mc -> { mc.player.setYRot(0f); mc.player.setXRot(-8f); });
             ctx.waitTicks(40);
-            bild(ctx, "xray-off");
+            welt(ctx, "xray-off");
             ctx.runOnClient(mc -> an("Xray"));
             ctx.waitTicks(60);
-            bild(ctx, "xray");
+            welt(ctx, "xray");
             ctx.runOnClient(mc -> aus("Xray", "Fullbright"));
             ctx.waitTicks(20);
         }
