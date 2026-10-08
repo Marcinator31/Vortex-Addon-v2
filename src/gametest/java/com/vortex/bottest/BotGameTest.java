@@ -66,6 +66,10 @@ public class BotGameTest implements FabricClientGameTest {
             if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
             return;
         }
+        if (System.getProperty("vortex.bottest.only", "").contains("logo")) {
+            try { abschnitt(ctx, "Logo screenshots", () -> logoBilder(ctx)); } finally { schreibe(); }
+            return;
+        }
         if (System.getProperty("vortex.bottest.only", "").contains("promo")) {
             try { abschnitt(ctx, "Promo screenshots", () -> promoBilder(ctx)); } finally { schreibe(); }
             return;
@@ -1840,6 +1844,31 @@ public class BotGameTest implements FabricClientGameTest {
             aus("Netherite Farmer", "Fullbright", "Coordinates", "ArmorHUD");
             mc.options.chatVisibility().set(net.minecraft.world.entity.player.ChatVisiblity.FULL);
         });
+    }
+
+    /** Neues Logo: Hauptmenue beim Einblenden (Klingen falten sich), Right-Shift-Menue beim Oeffnen. */
+    private void logoBilder(ClientGameTestContext ctx) {
+        ctx.getInput().resizeWindow(1920, 1080);
+        ctx.runOnClient(mc -> { mc.options.guiScale().set(3); mc.resizeGui(); });
+        ctx.waitTicks(40);
+        ctx.setScreen(() -> new net.minecraft.client.gui.screens.TitleScreen(true));
+        for (int i = 0; i < 8; i++) { bild(ctx, "logo-title-" + i); ctx.waitTicks(3); }
+        ctx.waitTicks(60);
+        bild(ctx, "logo-title-end");
+        try (TestSingleplayerContext sp = ctx.worldBuilder().create()) {
+            ctx.waitTicks(60);
+            ctx.setScreen(() -> new com.vortex.client.gui.HomeScreen());
+            for (int i = 0; i < 6; i++) { bild(ctx, "logo-home-" + i); ctx.waitTicks(2); }
+            ctx.waitTicks(40);
+            bild(ctx, "logo-home-end");
+            ctx.setScreen(() -> new com.vortex.client.gui.PanelGui());
+            ctx.waitTicks(30);
+            bild(ctx, "logo-panel");
+            ctx.setScreen(() -> new net.minecraft.client.gui.screens.PauseScreen(true));
+            ctx.waitTicks(30);
+            bild(ctx, "logo-pause");
+            ctx.setScreen(() -> null);
+        }
     }
 
     private void promoBilder(ClientGameTestContext ctx) {
