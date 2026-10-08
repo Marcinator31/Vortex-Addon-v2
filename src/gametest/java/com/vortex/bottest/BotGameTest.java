@@ -66,6 +66,10 @@ public class BotGameTest implements FabricClientGameTest {
             if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
             return;
         }
+        if (System.getProperty("vortex.bottest.only", "").contains("promo")) {
+            try { abschnitt(ctx, "Promo screenshots", () -> promoBilder(ctx)); } finally { schreibe(); }
+            return;
+        }
         if (System.getProperty("vortex.bottest.only", "").contains("clean")) {
             try { abschnitt(ctx, "Clean Modules", () -> cleanTest(ctx)); } finally { schreibe(); }
             if (fehler > 0) throw new AssertionError(fehler + " check(s) failed");
@@ -1710,4 +1714,179 @@ public class BotGameTest implements FabricClientGameTest {
             return n;
         });
     }
+    // ------------------------------------------------------------------
+    // Bilder fuer das Werbevideo: echte Menues und Module, 1920x1080, OHNE Cosmetics
+    // ------------------------------------------------------------------
+    private static com.vortex.client.module.Module modul(String name) {
+        for (var m : ModuleManager.INSTANCE.getModules()) if (m.getName().equalsIgnoreCase(name)) return m;
+        return null;
+    }
+
+    private static void an(String... namen) {
+        for (String n : namen) { var m = modul(n); if (m != null && !m.isEnabled()) m.setEnabled(true); }
+    }
+
+    private static void aus(String... namen) {
+        for (String n : namen) { var m = modul(n); if (m != null && m.isEnabled()) m.setEnabled(false); }
+    }
+
+    private void bild(ClientGameTestContext ctx, String name) {
+        ctx.takeScreenshot(net.fabricmc.fabric.api.client.gametest.v1.screenshot.TestScreenshotOptions.of("promo-" + name).withSize(1920, 1080).disableCounterPrefix());
+    }
+
+    private void promoBilder(ClientGameTestContext ctx) {
+        ctx.getInput().resizeWindow(1920, 1080);
+        ctx.runOnClient(mc -> {
+            mc.options.guiScale().set(3); mc.resizeGui();
+            com.vortex.client.cosmetics.Cosmetics.speichern(com.vortex.client.cosmetics.Cosmetics.Auswahl.LEER, false);
+            com.vortex.client.core.ClientSettings.INSTANCE.cleanModules.set(false);
+        });
+        String pano = null;
+        for (int i = 0; i < 60 && pano == null; i++) { ctx.waitTicks(20); pano = ctx.computeOnClient(mc -> com.vortex.client.gui.Panoramen.aktiv()); }
+        ctx.setScreen(() -> new net.minecraft.client.gui.screens.TitleScreen());
+        ctx.waitTicks(60);
+        ctx.getInput().setCursorPos(5, 5);
+        bild(ctx, "title");
+        try (TestSingleplayerContext sp = ctx.worldBuilder().create()) {
+            TestServerContext srv = sp.getServer();
+            srv.runCommand("time set 6000");
+            srv.runCommand("weather clear 1000000");
+            srv.runCommand("gamemode creative @a");
+            srv.runCommand("gamerule doDaylightCycle false");
+            ctx.waitTicks(60);
+
+            // --- Menues ---------------------------------------------------
+            ctx.setScreen(() -> new com.vortex.client.gui.HomeScreen());
+            ctx.waitTicks(50);
+            bild(ctx, "home");
+            for (var kat : new com.vortex.client.module.Module.Category[]{
+                    com.vortex.client.module.Module.Category.CHEATS, com.vortex.client.module.Module.Category.PVP,
+                    com.vortex.client.module.Module.Category.HUD, com.vortex.client.module.Module.Category.MISC }) {
+                // ein paar Module an, damit Schalter leuchten
+                ctx.runOnClient(mc -> an("Crystal Aura", "Auto Totem", "ESP", "Freecam", "Reach Display", "Hit Color", "Toggle Sprint", "Keystrokes", "CPS", "FPS", "Zoom"));
+                ctx.setScreen(() -> new com.vortex.client.gui.ClickGui(kat));
+                ctx.waitTicks(40);
+                bild(ctx, "clickgui-" + kat.name().toLowerCase());
+            }
+            ctx.runOnClient(mc -> aus("Crystal Aura", "Freecam", "ESP"));
+            ctx.setScreen(() -> new com.vortex.client.gui.PanelGui());
+            ctx.waitTicks(40);
+            bild(ctx, "panel");
+            ctx.setScreen(() -> new com.vortex.client.gui.PanelGui(com.vortex.client.module.Module.Category.CHEATS));
+            ctx.waitTicks(40);
+            bild(ctx, "panel-cheats");
+            for (String n : new String[]{ "Crystal Aura", "Kill Aura", "ESP", "Auto Totem" }) {
+                ctx.setScreen(() -> {
+                    var m = modul(n);
+                    return new com.vortex.client.gui.SettingsScreen(null, n, m == null ? List.of() : m.getSettings());
+                });
+                ctx.waitTicks(30);
+                bild(ctx, "settings-" + n.toLowerCase().replace(' ', '-'));
+            }
+            ctx.setScreen(() -> new com.vortex.client.gui.BotScreen(null));
+            ctx.waitTicks(40);
+            bild(ctx, "bots");
+
+            // --- Music ----------------------------------------------------
+            ctx.runOnClient(mc -> {
+                var m = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.SpotifyModule.class);
+                if (m != null) { if (!m.isEnabled()) m.toggle(); m.ownAboveHead.set(true); }
+                var np = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.NowPlayingModule.class);
+                if (np != null && !np.isEnabled()) np.toggle();
+                try {
+                    var img = new java.awt.image.BufferedImage(256, 256, java.awt.image.BufferedImage.TYPE_INT_RGB);
+                    var g = img.createGraphics();
+                    g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                    g.setPaint(new java.awt.GradientPaint(0, 0, new java.awt.Color(0x7C3AED), 256, 256, new java.awt.Color(0x0EA5E9)));
+                    g.fillRect(0, 0, 256, 256);
+                    g.setColor(new java.awt.Color(255, 255, 255, 70));
+                    for (int r = 40; r < 360; r += 34) g.drawOval(128 - r, 150 - r, r * 2, r * 2);
+                    g.setColor(new java.awt.Color(0x120E1F));
+                    g.fillOval(98, 120, 60, 60);
+                    g.dispose();
+                    var out = new java.io.ByteArrayOutputStream();
+                    javax.imageio.ImageIO.write(img, "png", out);
+                    com.vortex.client.musik.Cover.testBild("https://i.scdn.co/image/promo", out.toByteArray(), 0x7C3AED);
+                } catch (Exception e) { throw new RuntimeException(e); }
+                com.vortex.client.musik.MusikDienst.testEigener(new com.vortex.client.musik.Song("", "Into the Night", "Kontraa", "Single",
+                        "https://i.scdn.co/image/promo", 140000, 46000, true, System.currentTimeMillis(), ""));
+            });
+            ctx.setScreen(() -> new com.vortex.client.musik.MusikScreen(null));
+            ctx.waitTicks(40);
+            bild(ctx, "music");
+            ctx.setScreen(() -> null);
+
+            // --- HUD im Spiel -------------------------------------------------
+            ctx.runOnClient(mc -> {
+                an("Keystrokes", "CPS", "FPS", "ArmorHUD", "Coordinates", "Potion Effects", "Ping", "Compass Bar");
+                mc.player.setYRot(135f); mc.player.setXRot(8f);
+                mc.player.getInventory().setItem(0, new ItemStack(Items.NETHERITE_SWORD));
+                mc.player.getInventory().setItem(1, new ItemStack(Items.END_CRYSTAL, 64));
+                mc.player.getInventory().setItem(2, new ItemStack(Items.TOTEM_OF_UNDYING));
+                mc.player.getInventory().setItem(3, new ItemStack(Items.OBSIDIAN, 64));
+                mc.player.getInventory().setItem(4, new ItemStack(Items.GOLDEN_APPLE, 16));
+                mc.player.getInventory().setItem(5, new ItemStack(Items.ENDER_PEARL, 16));
+            });
+            srv.runCommand("item replace entity @a armor.head with minecraft:netherite_helmet");
+            srv.runCommand("item replace entity @a armor.chest with minecraft:netherite_chestplate");
+            srv.runCommand("item replace entity @a armor.legs with minecraft:netherite_leggings");
+            srv.runCommand("item replace entity @a armor.feet with minecraft:netherite_boots");
+            srv.runCommand("effect give @a minecraft:speed 99999 1 true");
+            srv.runCommand("effect give @a minecraft:strength 99999 1 true");
+            ctx.waitTicks(40);
+            bild(ctx, "hud-ingame");
+            ctx.setScreen(() -> new com.vortex.client.gui.HudEditorScreen());
+            ctx.waitTicks(30);
+            bild(ctx, "hudeditor");
+            ctx.setScreen(() -> null);
+
+            // --- Song ueber dem Kopf (von vorne, F5) -----------------------------
+            ctx.runOnClient(mc -> {
+                aus("Keystrokes", "CPS", "FPS", "ArmorHUD", "Coordinates", "Potion Effects", "Ping", "Compass Bar");
+                mc.options.setCameraType(net.minecraft.client.CameraType.THIRD_PERSON_FRONT);
+                mc.player.setXRot(0f);
+            });
+            ctx.waitTicks(20);
+            bild(ctx, "songcard");
+            ctx.runOnClient(mc -> mc.options.setCameraType(net.minecraft.client.CameraType.FIRST_PERSON));
+
+            // --- ESP: Nacht, Mobs ringsum ----------------------------------------
+            var pos = ctx.computeOnClient(mc -> mc.player.blockPosition());
+            srv.runCommand("time set 18000");
+            int[][] ziele = { {7, 2}, {10, -4}, {13, 5}, {6, -9}, {16, 0}, {11, 9}, {19, -6} };
+            String[] typen = { "zombie", "skeleton", "creeper", "zombie", "enderman", "spider", "villager" };
+            for (int i = 0; i < ziele.length; i++) {
+                srv.runCommand("summon minecraft:" + typen[i] + " " + (pos.getX() + ziele[i][0]) + " " + pos.getY() + " " + (pos.getZ() + ziele[i][1])
+                        + " {NoAI:1b,PersistenceRequired:1b,Silent:1b}");
+            }
+            ctx.runOnClient(mc -> {
+                mc.player.setYRot(-90f); mc.player.setXRot(10f);
+                var esp = modul("ESP");
+                if (esp instanceof com.vortex.client.module.modules.EspModule e) e.color.set(0xFF8B5CF6);
+                an("ESP", "Fullbright");
+            });
+            ctx.waitTicks(60);
+            bild(ctx, "esp");
+            ctx.runOnClient(mc -> aus("ESP"));
+
+            // --- Xray: Steinblock mit Erzen unter dem Spieler -----------------------
+            srv.runCommand("time set 6000");
+            int x0 = pos.getX(), y0 = pos.getY(), z0 = pos.getZ();
+            srv.runCommand("fill " + (x0 - 14) + " " + (y0 - 14) + " " + (z0 + 4) + " " + (x0 + 14) + " " + (y0 - 2) + " " + (z0 + 30) + " minecraft:stone");
+            java.util.Random r = new java.util.Random(7);
+            String[] erze = { "diamond_ore", "diamond_ore", "deepslate_diamond_ore", "gold_ore", "emerald_ore", "redstone_ore", "lapis_ore", "ancient_debris", "iron_ore" };
+            for (int i = 0; i < 90; i++) {
+                srv.runCommand("setblock " + (x0 - 13 + r.nextInt(27)) + " " + (y0 - 13 + r.nextInt(11)) + " " + (z0 + 5 + r.nextInt(25)) + " minecraft:" + erze[r.nextInt(erze.length)]);
+            }
+            ctx.runOnClient(mc -> { mc.player.setYRot(0f); mc.player.setXRot(38f); });
+            ctx.waitTicks(40);
+            bild(ctx, "xray-off");
+            ctx.runOnClient(mc -> an("Xray"));
+            ctx.waitTicks(60);
+            bild(ctx, "xray");
+            ctx.runOnClient(mc -> aus("Xray", "Fullbright"));
+            ctx.waitTicks(20);
+        }
+    }
+
 }
