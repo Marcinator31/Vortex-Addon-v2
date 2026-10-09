@@ -37,10 +37,26 @@ public class EspModule extends Module implements com.vortex.client.module.ExtraD
 
     public void toggleMob(String id) {
         if (!enabledMobs.add(id)) enabledMobs.remove(id);
+        TYP_CACHE.clear();
     }
 
     public void setMob(String id, boolean on) {
         if (on) enabledMobs.add(id); else enabledMobs.remove(id);
+        TYP_CACHE.clear();
+    }
+
+    /** Ergebnis je Entity-Typ (laeuft pro Entity pro Bild -- kein String-Bau). */
+    private final java.util.Map<net.minecraft.world.entity.EntityType<?>, Boolean> TYP_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+
+    public boolean isTypeEnabled(net.minecraft.world.entity.EntityType<?> typ) {
+        if (typ == null) return false;
+        Boolean b = TYP_CACHE.get(typ);
+        if (b == null) {
+            Identifier id = net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(typ);
+            b = isMobEnabled(id);
+            TYP_CACHE.put(typ, b);
+        }
+        return b;
     }
 
     public Set<String> getEnabledMobs() {
@@ -58,6 +74,7 @@ public class EspModule extends Module implements com.vortex.client.module.ExtraD
 
     public void deserializeMobs(String data) {
         enabledMobs.clear();
+        TYP_CACHE.clear();
         if (data == null || data.isEmpty()) return;
         for (String s : data.split(",")) {
             String t = s.trim();
@@ -80,6 +97,7 @@ public class EspModule extends Module implements com.vortex.client.module.ExtraD
     @Override
     public void clearExtra() {
         getEnabledMobs().clear();
+        TYP_CACHE.clear();
     }
 
 

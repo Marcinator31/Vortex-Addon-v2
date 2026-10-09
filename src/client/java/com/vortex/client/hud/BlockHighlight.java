@@ -98,6 +98,26 @@ public final class BlockHighlight {
         public boolean leer() { return bloecke.length == 0; }
     }
 
+    /** Je Kante e (Achse = e / 4): Nachbar-Richtungen d1, d2 und Versatz der Kanten-Startecke. */
+    private static final int[][] KD1 = new int[12][], KD2 = new int[12][], KE = new int[12][];
+    static {
+        int e = 0;
+        for (int achse = 0; achse < 3; achse++) {
+            for (int s1 = -1; s1 <= 1; s1 += 2) {
+                for (int s2 = -1; s2 <= 1; s2 += 2) {
+                    int b = (achse + 1) % 3, c = (achse + 2) % 3;
+                    int[] d1 = new int[3], d2 = new int[3], eo = new int[3];
+                    d1[b] = s1;
+                    d2[c] = s2;
+                    if (s1 > 0) eo[b] = 1;
+                    if (s2 > 0) eo[c] = 1;
+                    KD1[e] = d1; KD2[e] = d2; KE[e] = eo;
+                    e++;
+                }
+            }
+        }
+    }
+
     public static final Mesh LEER = new Mesh(0, 0, 0, new long[0], new float[0], new int[0], new float[0], new int[0]);
 
     /**
@@ -131,32 +151,24 @@ public final class BlockHighlight {
             int x = BlockPos.getX(p), y = BlockPos.getY(p), z = BlockPos.getZ(p);
             float rx = x - ox, ry = y - oy, rz = z - oz;
 
-            // 12 Kanten: je Achse 4 (Vorzeichen der beiden anderen Achsen)
-            for (int achse = 0; achse < 3; achse++) {
-                for (int s1 = -1; s1 <= 1; s1 += 2) {
-                    for (int s2 = -1; s2 <= 1; s2 += 2) {
-                        int[] d1 = new int[3], d2 = new int[3];
-                        int b = (achse + 1) % 3, c = (achse + 2) % 3;
-                        d1[b] = s1;
-                        d2[c] = s2;
-                        boolean n1 = menge.contains(BlockPos.asLong(x + d1[0], y + d1[1], z + d1[2]));
-                        boolean n2 = menge.contains(BlockPos.asLong(x + d2[0], y + d2[1], z + d2[2]));
-                        boolean zeichnen;
-                        if (!n1 && !n2) zeichnen = true;
-                        else if (n1 && n2) zeichnen = !menge.contains(BlockPos.asLong(x + d1[0] + d2[0], y + d1[1] + d2[1], z + d1[2] + d2[2]));
-                        else zeichnen = false;
-                        if (!zeichnen) continue;
-                        // Untere Ecke der Kante (ganzzahlig) -- Schluessel gegen Doppelte
-                        int[] e = {x, y, z};
-                        if (s1 > 0) e[b]++;
-                        if (s2 > 0) e[c]++;
-                        if (!gezeichnet[achse].add(BlockPos.asLong(e[0], e[1], e[2]))) continue;
-                        float ax = e[0] - ox, ay = e[1] - oy, az = e[2] - oz;
-                        kanten.add(ax, ay, az,
-                                ax + (achse == 0 ? 1 : 0), ay + (achse == 1 ? 1 : 0), az + (achse == 2 ? 1 : 0));
-                        kanteBlock.add(i);
-                    }
-                }
+            // 12 Kanten: je Achse 4 (Vorzeichen der beiden anderen Achsen) -- Tabellen statt
+            // neuer Arrays je Kante (bei zehntausenden Bloecken sonst Millionen Objekte)
+            for (int e = 0; e < 12; e++) {
+                int[] d1 = KD1[e], d2 = KD2[e], eo = KE[e];
+                int achse = e >> 2;
+                boolean n1 = menge.contains(BlockPos.asLong(x + d1[0], y + d1[1], z + d1[2]));
+                boolean n2 = menge.contains(BlockPos.asLong(x + d2[0], y + d2[1], z + d2[2]));
+                boolean zeichnen;
+                if (!n1 && !n2) zeichnen = true;
+                else if (n1 && n2) zeichnen = !menge.contains(BlockPos.asLong(x + d1[0] + d2[0], y + d1[1] + d2[1], z + d1[2] + d2[2]));
+                else zeichnen = false;
+                if (!zeichnen) continue;
+                int ex = x + eo[0], ey = y + eo[1], ez = z + eo[2];
+                if (!gezeichnet[achse].add(BlockPos.asLong(ex, ey, ez))) continue;
+                float ax = ex - ox, ay = ey - oy, az = ez - oz;
+                kanten.add(ax, ay, az,
+                        ax + (achse == 0 ? 1 : 0), ay + (achse == 1 ? 1 : 0), az + (achse == 2 ? 1 : 0));
+                kanteBlock.add(i);
             }
 
             // Aussenseiten fuellen
@@ -204,6 +216,33 @@ public final class BlockHighlight {
     }
 
     private static final long EINBLENDEN_MS = 220, AUSBLENDEN_MS = 260;
+    /** Bis hierhin volle Kaesten mit Glow und Fuellung, dahinter vereinfacht (Bloecke). */
+    static final double NAH = 160;
+
+    /** Blickrichtung der Kamera (Einheitsvektor), auch mit Freecam; null wenn unbekannt. */
+    static double[] blickrichtung() {
+        try {
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+            if (mc.player == null) return null;
+            float yaw, pitch;
+            if (com.vortex.client.freecam.Freecam.isActive()) {
+                yaw = com.vortex.client.freecam.Freecam.getYaw();
+                pitch = com.vortex.client.freecam.Freecam.getPitch();
+            } else {
+                float td = mc.getDeltaTracker().getGameTimeDeltaPartialTick(false);
+                yaw = mc.player.getViewYRot(td);
+                pitch = mc.player.getViewXRot(td);
+            }
+            // Dritte Person von vorne schaut zurueck
+            if (mc.options.getCameraType() == net.minecraft.client.CameraType.THIRD_PERSON_FRONT && !com.vortex.client.freecam.Freecam.isActive()) {
+                yaw += 180; pitch = -pitch;
+            }
+            double yr = Math.toRadians(yaw), pr = Math.toRadians(pitch);
+            return new double[] { -Math.sin(yr) * Math.cos(pr), -Math.sin(pr), Math.cos(yr) * Math.cos(pr) };
+        } catch (Throwable t) {
+            return null;
+        }
+    }
     private static final int MAX_GEISTER = 400;
 
     /**
@@ -273,12 +312,23 @@ public final class BlockHighlight {
             final Mesh m = mesh;
             // Deckkraft je Block (einmal pro Bild)
             final float[] alpha = new float[m.bloecke.length];
-            boolean irgendwas = false;
+            // Fern: weiter als NAH -> statt Kasten nur ein kleines Kreuz, kein Glow, keine
+            // Fuellung (auf diese Entfernung ist ein Block ohnehin nur ein paar Pixel gross).
+            // Hinter der Kamera: gar nicht (spart bei grosser Reichweite die Haelfte).
+            final boolean[] fern = new boolean[m.bloecke.length];
+            final double[] vorne = blickrichtung();
+            boolean irgendwas = false, irgendwasFern = false;
             for (int i = 0; i < alpha.length; i++) {
                 long p = m.bloecke[i];
-                alpha[i] = deckkraft(p, BlockPos.getX(p) + 0.5, BlockPos.getY(p) + 0.5, BlockPos.getZ(p) + 0.5, cam, stil, jetzt);
-                if (alpha[i] > 0.004f) irgendwas = true;
+                double bx = BlockPos.getX(p) + 0.5, by = BlockPos.getY(p) + 0.5, bz = BlockPos.getZ(p) + 0.5;
+                double dx = bx - cam.x, dy = by - cam.y, dz = bz - cam.z;
+                double d2 = dx * dx + dy * dy + dz * dz;
+                if (vorne != null && d2 > 64 && (dx * vorne[0] + dy * vorne[1] + dz * vorne[2]) < -0.3 * Math.sqrt(d2)) continue;
+                alpha[i] = deckkraft(p, bx, by, bz, cam, stil, jetzt);
+                fern[i] = d2 > NAH * NAH;
+                if (alpha[i] > 0.004f) { irgendwas = true; if (fern[i]) irgendwasFern = true; }
             }
+            final boolean fernDa = irgendwasFern;
             // Ausblendende Bloecke: einzeln, als Kasten
             geister.removeIf(g -> jetzt - g[1] > AUSBLENDEN_MS);
             final long[] gp = new long[geister.size()];
@@ -314,6 +364,7 @@ public final class BlockHighlight {
                         Matrix4f mat = pose.pose();
                         float[] f = m.flaechen;
                         for (int i = 0, k = 0; i < m.flaecheBlock.length; i++, k += 12) {
+                            if (fern[m.flaecheBlock[i]]) continue;
                             float a = alpha[m.flaecheBlock[i]] * fd * fa;
                             if (a <= 0.003f) continue;
                             for (int e = 0; e < 4; e++) v.addVertex(mat, f[k + e * 3], f[k + e * 3 + 1], f[k + e * 3 + 2]).setColor(r, g, b, a);
@@ -335,9 +386,23 @@ public final class BlockHighlight {
                             float w = durchgang == 0 ? breite * 3.0f : breite;
                             float faktor = durchgang == 0 ? 0.22f : 1f;
                             for (int i = 0, j = 0; i < m.kanteBlock.length; i++, j += 6) {
+                                if (fern[m.kanteBlock[i]]) continue;
                                 float a = alpha[m.kanteBlock[i]] * fa * faktor;
                                 if (a <= 0.003f) continue;
                                 linie(mat, v, k[j], k[j + 1], k[j + 2], k[j + 3], k[j + 4], k[j + 5], r, g, b, a, w);
+                            }
+                            // Ferne Bloecke: kleines Kreuz durch die Mitte (3 Linien statt bis zu 12 + Glow)
+                            if (durchgang == 1 && fernDa) {
+                                for (int i = 0; i < m.bloecke.length; i++) {
+                                    if (!fern[i]) continue;
+                                    float a = alpha[i] * fa;
+                                    if (a <= 0.003f) continue;
+                                    long p = m.bloecke[i];
+                                    float cx = BlockPos.getX(p) - ox + 0.5f, cy = BlockPos.getY(p) - oy + 0.5f, cz = BlockPos.getZ(p) - oz + 0.5f;
+                                    linie(mat, v, cx - 0.75f, cy, cz, cx + 0.75f, cy, cz, r, g, b, a, breite + 1f);
+                                    linie(mat, v, cx, cy - 0.75f, cz, cx, cy + 0.75f, cz, r, g, b, a, breite + 1f);
+                                    linie(mat, v, cx, cy, cz - 0.75f, cx, cy, cz + 0.75f, r, g, b, a, breite + 1f);
+                                }
                             }
                             for (int i = 0; i < gp.length; i++) {
                                 float a = ga[i] * fa * faktor;
@@ -404,6 +469,19 @@ public final class BlockHighlight {
         private float[] d;
         private int n;
         FloatListe(int start) { d = new float[Math.max(16, start)]; }
+        void add(float a, float b, float c, float d, float e, float f) {
+            platz(6);
+            float[] x = this.d;
+            x[n] = a; x[n + 1] = b; x[n + 2] = c; x[n + 3] = d; x[n + 4] = e; x[n + 5] = f;
+            n += 6;
+        }
+        void add(float a, float b, float c, float d, float e, float f, float g, float h, float i, float j, float k, float l) {
+            add(a, b, c, d, e, f);
+            add(g, h, i, j, k, l);
+        }
+        private void platz(int m) {
+            if (n + m > d.length) d = java.util.Arrays.copyOf(d, Math.max(d.length * 2, n + m));
+        }
         void add(float... w) {
             if (n + w.length > d.length) d = java.util.Arrays.copyOf(d, Math.max(d.length * 2, n + w.length));
             System.arraycopy(w, 0, d, n, w.length);

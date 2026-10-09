@@ -45,13 +45,14 @@ public final class BlockEspRenderer {
     // Vom Worker befuelltes, vom Render-Thread gelesenes Ergebnis.
     private static final AtomicReference<BlockHighlight.Mesh> RESULT =
             new AtomicReference<>(BlockHighlight.LEER);
-    /** Letztes vollstaendiges Scan-Ergebnis (nur der Worker liest/schreibt es). */
-    private static LongArrayList letzterScan = new LongArrayList();
     /** Was gerade angezeigt wird (nur Render-Thread). */
     private static final BlockHighlight.Kanal KANAL = new BlockHighlight.Kanal();
 
-    // Maximale Anzahl Outlines (schuetzt sowohl Scan als auch Zeichnen).
-    private static final int MAX_RESULTS = 4000;
+    /**
+     * Hoechstens so viele Bloecke anzeigen (die naechsten). Seit 2.44 deutlich mehr:
+     * ferne Bloecke werden nur noch als kleines Kreuz gezeichnet (BlockHighlight).
+     */
+    private static final int MAX_RESULTS = 60000;
 
     /**
      * Obergrenzen fuers ZEICHNEN. Jeder Kasten erzeugt ein Hilfsobjekt und
@@ -63,8 +64,6 @@ public final class BlockEspRenderer {
     /** Tracer: hoechstens so viele (die naechsten zuerst kommen aus dem Ring-Scan). */
     private static final int MAX_TRACER = 500;
 
-    private static volatile boolean running = false;
-    private static Thread worker;
 
     public static void register() {
         LevelRenderEvents.AFTER_TRANSLUCENT_FEATURES.register(context -> {
@@ -83,8 +82,8 @@ public final class BlockEspRenderer {
             SubmitNodeCollector collector = context.submitNodeCollector();
             if (matrices == null || collector == null) return;
 
-            // Worker sicherstellen (laeuft dauerhaft, scannt im Hintergrund).
-            ensureWorker();
+            // Gemeinsamen Chunk-Scanner sicherstellen (laeuft im Hintergrund).
+            ChunkScanner.brauche();
 
             try {
                 float tickDelta = client.getDeltaTracker().getGameTimeDeltaPartialTick(false);
@@ -133,175 +132,132 @@ public final class BlockEspRenderer {
         });
     }
 
-    /** Startet den Hintergrund-Worker einmalig. */
-    private static void ensureWorker() {
-        if (running) return;
-        running = true;
-        worker = new Thread(BlockEspRenderer::workerLoop, "vortexclient-blockesp");
-        worker.setDaemon(true);
-        worker.start();
+    // ------------------------------------------------------------------
+    // Suche ueber den gemeinsamen Chunk-Scanner (seit 2.44)
+    // ------------------------------------------------------------------
+
+    /** Was die Suche gerade sucht (aus den Einstellungen). */
+    private record Auftrag(java.util.Set<net.minecraft.world.level.block.Block> bloecke, int minY, int maxY, boolean frei) {}
+
+    private static final ChunkScanner.Slot<long[]> SLOT = ChunkScanner.anmelden(new ChunkScanner.Job<long[]>() {
+        @Override public boolean aktiv() {
+            BlockEspModule m = (BlockEspModule) find(BlockEspModule.class);
+            return m != null && m.isEnabled() && m.hasAnyBlock();
+        }
+        @Override public Object signatur() {
+            BlockEspModule m = (BlockEspModule) find(BlockEspModule.class);
+            java.util.Set<net.minecraft.world.level.block.Block> b = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+            for (String id : m.getEnabledBlocks()) {
+                try {
+                    Identifier i = Identifier.tryParse(id);
+                    if (i == null) continue;
+                    var blk = BuiltInRegistries.BLOCK.getValue(i);
+                    if (blk != null && blk != net.minecraft.world.level.block.Blocks.AIR) b.add(blk);
+                } catch (Throwable ignored) {}
+            }
+            return new Auftrag(b, m.minY.getInt(), m.maxY.getInt(), m.onlyExposed.get());
+        }
+        @Override public boolean merken() {
+            BlockEspModule m = (BlockEspModule) find(BlockEspModule.class);
+            return m != null && m.remember.get();
+        }
+        @Override public long[] scanne(ClientLevel level, net.minecraft.world.level.chunk.LevelChunk chunk) {
+            return sucheImChunk(level, chunk, (Auftrag) SLOT.signatur);
+        }
+    });
+
+    private static int gebautVersion = -1;
+    private static int gebautX = Integer.MIN_VALUE, gebautZ, gebautRange;
+    private static long gebautZeit;
+
+    static {
+        ChunkScanner.nachher(BlockEspRenderer::anzeigeBauen);
+    }
+
+    /** Einen Chunk durchsuchen: nur Abschnitte, deren Palette einen gesuchten Block enthaelt. */
+    private static long[] sucheImChunk(ClientLevel level, net.minecraft.world.level.chunk.LevelChunk chunk, Auftrag auf) {
+        if (auf == null || auf.bloecke().isEmpty()) return null;
+        java.util.function.Predicate<BlockState> treffer = st -> auf.bloecke().contains(st.getBlock());
+        var abschnitte = chunk.getSections();
+        int bx = chunk.getPos().getMinBlockX(), bz = chunk.getPos().getMinBlockZ();
+        LongArrayList out = null;
+        for (int i = 0; i < abschnitte.length; i++) {
+            var sec = abschnitte[i];
+            if (sec == null || sec.hasOnlyAir()) continue;
+            int y0 = ChunkScanner.abschnittY(chunk, i);
+            if (y0 + 15 < auf.minY() || y0 > auf.maxY()) continue;
+            if (!sec.maybeHas(treffer)) continue;        // Palette: kein gesuchter Block -> 4096 Bloecke uebersprungen
+            for (int y = 0; y < 16; y++) {
+                int wy = y0 + y;
+                if (wy < auf.minY() || wy > auf.maxY()) continue;
+                for (int z = 0; z < 16; z++) {
+                    for (int x = 0; x < 16; x++) {
+                        BlockState st = sec.getBlockState(x, y, z);
+                        if (!treffer.test(st)) continue;
+                        if (auf.frei() && !isExposed(level, bx + x, wy, bz + z)) continue;
+                        if (out == null) out = new LongArrayList();
+                        out.add(BlockPos.asLong(bx + x, wy, bz + z));
+                    }
+                }
+            }
+        }
+        return out == null ? null : out.toLongArray();
     }
 
     /**
-     * Endlosschleife im Hintergrund: scannt die Welt um den Spieler und legt das
-     * Ergebnis ab. Laeuft mit kurzer Pause zwischen den Durchlaeufen, damit der
-     * Thread nicht durchdreht.
+     * Anzeige aus den Chunk-Ergebnissen bauen (Worker-Thread): alles in Reichweite,
+     * die naechsten zuerst, hoechstens MAX_RESULTS. Nur wenn sich etwas geaendert hat
+     * oder der Spieler ein Stueck weiter ist.
      */
-    private static void workerLoop() {
-        while (true) {
-            try {
-                Thread.sleep(60); // ~16 Scans/Sekunde maximal
-
-                Minecraft client = Minecraft.getInstance();
-                BlockEspModule mod = (BlockEspModule) find(BlockEspModule.class);
-                if (client == null || mod == null || !mod.isEnabled()
-                        || !mod.hasAnyBlock()) {
-                    if (!RESULT.get().leer()) RESULT.set(BlockHighlight.LEER);
-                    letzterScan = new LongArrayList();
-                    continue;
-                }
-                ClientLevel world = client.level;
-                if (world == null || client.player == null) {
-                    if (!RESULT.get().leer()) RESULT.set(BlockHighlight.LEER);
-                    letzterScan = new LongArrayList();
-                    continue;
-                }
-
-                int cx = (int) Math.floor(client.player.getX());
-                int cy = (int) Math.floor(client.player.getY());
-                int cz = (int) Math.floor(client.player.getZ());
-                int range = mod.range.getInt();
-
-                LongArrayList found = scan(world, mod, cx, cy, cz, range);
-                if (found == null) continue;                 // abgebrochen
-                letzterScan = found;
-                RESULT.set(BlockHighlight.baue(found)); // atomar uebergeben
-            } catch (InterruptedException ie) {
-                return;
-            } catch (Throwable t) {
-                // Nebenlaeufigkeitsfehler o.ae. -> Durchlauf ueberspringen.
-            }
+    private static void anzeigeBauen() {
+        Minecraft client = Minecraft.getInstance();
+        BlockEspModule mod = (BlockEspModule) find(BlockEspModule.class);
+        if (client.player == null || mod == null || !mod.isEnabled() || !mod.hasAnyBlock()) {
+            if (!RESULT.get().leer()) RESULT.set(BlockHighlight.LEER);
+            gebautVersion = -1;
+            return;
         }
+        int px = client.player.getBlockX(), pz = client.player.getBlockZ(), py = client.player.getBlockY();
+        int range = mod.range.getInt();
+        int v = SLOT.version();
+        long jetzt = System.currentTimeMillis();
+        boolean bewegt = Math.abs(px - gebautX) > 24 || Math.abs(pz - gebautZ) > 24 || range != gebautRange;
+        if (v == gebautVersion && !bewegt) return;
+        if (jetzt - gebautZeit < 250 && !bewegt) return;   // nicht oefter als 4x pro Sekunde neu bauen
+        gebautVersion = v; gebautX = px; gebautZ = pz; gebautRange = range; gebautZeit = jetzt;
+
+        LongArrayList alle = new LongArrayList();
+        long r2 = (long) range * range;
+        SLOT.fuerAlle(mod.remember.get(), (chunk, pos) -> {
+            int cx = (net.minecraft.world.level.ChunkPos.getX(chunk) << 4) + 8 - px, cz = (net.minecraft.world.level.ChunkPos.getZ(chunk) << 4) + 8 - pz;
+            if ((long) cx * cx + (long) cz * cz > (r2 + 512L * range + 65536)) return;   // Chunk ganz ausserhalb
+            for (long p : pos) {
+                long dx = BlockPos.getX(p) - px, dz = BlockPos.getZ(p) - pz;
+                if (dx * dx + dz * dz <= r2) alle.add(p);
+            }
+        });
+        if (alle.size() > MAX_RESULTS) {
+            // naechste zuerst
+            long[] arr = alle.toLongArray();
+            if (arr.length > (1 << 20)) arr = java.util.Arrays.copyOf(arr, 1 << 20);
+            long[] schluessel = new long[arr.length];
+            for (int i = 0; i < arr.length; i++) {
+                long dx = BlockPos.getX(arr[i]) - px, dy = BlockPos.getY(arr[i]) - py, dz = BlockPos.getZ(arr[i]) - pz;
+                schluessel[i] = ((dx * dx + dy * dy + dz * dz) << 20) | i;
+            }
+            java.util.Arrays.sort(schluessel);
+            alle.clear();
+            for (int i = 0; i < MAX_RESULTS; i++) alle.add(arr[(int) (schluessel[i] & 0xFFFFF)]);
+        }
+        RESULT.set(BlockHighlight.baue(alle));
     }
 
-    /**
-     * Durchsucht den Bereich RINGFOERMIG von innen nach aussen und veroeffentlicht
-     * das Zwischenergebnis nach jedem Ring. Dadurch erscheinen nahe Bloecke quasi
-     * sofort, ferne kommen Ring fuer Ring nach -- statt erst nach einem
-     * kompletten (bei grosser Reichweite sekundenlangen) Scan alles auf einmal.
-     */
-    private static LongArrayList scan(ClientLevel world, BlockEspModule mod,
-                                  int cx, int cy, int cz, int range) {
-        LongArrayList out = new LongArrayList();
-        final LongArrayList vorher = letzterScan;
-
-        int worldMin = world.getMinY();
-        int worldMax = world.getMaxY();
-
-        // Hoehenbereich: Schnittmenge aus Welt, Einstellung und einer vertikalen
-        // Begrenzung um den Spieler (sonst waechst das Suchvolumen ins Uferlose).
-        int vRange = Math.min(range, 64);
-        int yStart = Math.max(Math.max(cy - vRange, worldMin), mod.minY.getInt());
-        int yEnd = Math.min(Math.min(cy + vRange, worldMax), mod.maxY.getInt());
-        if (yStart > yEnd) return out;
-
-        boolean onlyExposed = mod.onlyExposed.get();
-
-        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
-
-        // Merker fuer die Chunk-Pruefung: nicht geladene Chunks liefern bei
-        // getBlockState einfach Luft -- Bloecke darin wuerden also stillschweigend
-        // uebersehen. Die Pruefung passiert pro Chunk (nicht pro Block), deshalb
-        // wird das letzte Ergebnis gemerkt.
-        int lastChunkX = Integer.MIN_VALUE, lastChunkZ = Integer.MIN_VALUE;
-        boolean lastChunkLoaded = false;
-
-        // Ring 0 = nur die Mittelspalte, dann immer groessere Quadrat-Ringe.
-        //
-        // WICHTIG: Es wird gezielt nur der RAND jedes Rings abgelaufen. Frueher
-        // lief die Schleife ueber die ganze Flaeche und verwarf das Innere wieder
-        // -- bei Reichweite 64 waren das rund 366.000 statt 16.600 Spalten, also
-        // 22-mal so viel Arbeit. Dadurch dauerte ein Durchlauf lange und die
-        // angezeigten Bloecke hinkten der Wirklichkeit hinterher.
-        for (int r = 0; r <= range; r++) {
-            int steps = (r == 0) ? 1 : 8 * r;   // Anzahl Felder auf dem Rand
-            for (int i = 0; i < steps; i++) {
-                int dx, dz;
-                if (r == 0) {
-                    dx = 0; dz = 0;
-                } else {
-                    // Rand im Uhrzeigersinn ablaufen: oben, rechts, unten, links.
-                    int side = i / (2 * r);        // 0..3
-                    int off = i % (2 * r);         // Position auf dieser Seite
-                    switch (side) {
-                        case 0:  dx = -r + off; dz = -r;        break;
-                        case 1:  dx = r;        dz = -r + off;  break;
-                        case 2:  dx = r - off;  dz = r;         break;
-                        default: dx = -r;       dz = r - off;   break;
-                    }
-                }
-                {
-                    int x = cx + dx;
-                    int z = cz + dz;
-
-                    // Chunk geladen? Sonst die ganze Spalte ueberspringen --
-                    // spart Arbeit und macht klar, dass hier nicht "nichts" ist,
-                    // sondern schlicht keine Daten vorliegen.
-                    int chX = x >> 4, chZ = z >> 4;
-                    if (chX != lastChunkX || chZ != lastChunkZ) {
-                        lastChunkX = chX;
-                        lastChunkZ = chZ;
-                        try {
-                            lastChunkLoaded = world.hasChunk(chX, chZ);
-                        } catch (Throwable t) {
-                            lastChunkLoaded = false;
-                        }
-                    }
-                    if (!lastChunkLoaded) continue;
-
-                    for (int y = yStart; y <= yEnd; y++) {
-                        pos.set(x, y, z);
-                        BlockState state;
-                        try {
-                            state = world.getBlockState(pos);
-                        } catch (Throwable t) {
-                            continue; // Chunk evtl. gerade entladen
-                        }
-                        if (state.isAir()) continue;
-                        Identifier id = BuiltInRegistries.BLOCK.getKey(state.getBlock());
-                        if (!mod.isBlockEnabled(id)) continue;
-                        // Optional: nur Bloecke, die an mindestens einer Seite
-                        // frei liegen. Die Pruefung passiert erst NACH dem Filter,
-                        // laeuft also nur fuer die wenigen Treffer.
-                        if (onlyExposed && !isExposed(world, x, y, z)) continue;
-                        out.add(BlockPos.asLong(x, y, z));
-                        if (out.size() >= MAX_RESULTS) return out;
-                    }
-                }
-            }
-            // Nach jedem Ring das bisherige Ergebnis sichtbar machen -> nahe
-            // Bloecke erscheinen sofort, der Rest fuellt sich auf. Nicht nach
-            // JEDEM Ring (das waere bei grosser Reichweite viel Kopierarbeit),
-            // sondern alle paar Ringe -- das reicht fuers Gefuehl von "instant".
-            if ((r & 7) == 0) {
-                // Zwischenstand: das Neue bis Ring r, dahinter das Ergebnis des
-                // letzten Scans -- so verschwindet nichts, was noch nicht neu
-                // geprueft wurde (bis 2.37 flackerten ferne Bloecke hier).
-                LongArrayList zeigen = new LongArrayList(out);
-                for (int i = 0; i < vorher.size(); i++) {
-                    long p = vorher.getLong(i);
-                    int ring = Math.max(Math.abs(BlockPos.getX(p) - cx), Math.abs(BlockPos.getZ(p) - cz));
-                    if (ring > r) zeigen.add(p);
-                }
-                RESULT.set(BlockHighlight.baue(zeigen));
-                // Gegen Freezes: Locks zwischendurch freigeben. getBlockState
-                // greift live auf Chunk-Daten zu; ohne Pause haelt ein grosser
-                // Scan (hohe Reichweite) die Locks zu lange und das Spiel
-                // ruckelt periodisch.
-                try { Thread.sleep(3); } catch (InterruptedException ie) { return null; }
-            }
-        }
-        return out;
+    /** Fuer Tests: wie viele Bloecke gerade gefunden sind und wie viele Chunks noch offen. */
+    public static int gefunden() { return RESULT.get().anzahl(); }
+    public static int offeneChunks() { return SLOT.offen(); }
+    public static boolean enthaelt(long pos) {
+        for (long p : RESULT.get().bloecke) if (p == pos) return true;
+        return false;
     }
 
     /**

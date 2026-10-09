@@ -44,11 +44,21 @@ public abstract class EntityEspMixin {
         }
     }
 
+    /**
+     * Weite ESP (seit 2.44): Minecraft zeichnet Entities nur bis etwa 64 Bloecke (je
+     * nach Groesse) -- danach fehlte auch das Leuchten. ESP-Ziele werden jetzt in jeder
+     * Entfernung gezeichnet, solange der Server sie schickt.
+     */
+    @Inject(method = "shouldRender(DDD)Z", at = @At("HEAD"), cancellable = true, require = 0)
+    private void pvpclient$espWeit(double x, double y, double z, CallbackInfoReturnable<Boolean> cir) {
+        EspModule esp = pvpclient$esp();
+        if (esp == null || !esp.isEnabled()) return;
+        if (pvpclient$isEspMob(esp)) cir.setReturnValue(true);
+    }
+
     private boolean pvpclient$isEspMob(EspModule esp) {
         try {
-            Entity self = (Entity) (Object) this;
-            Identifier id = BuiltInRegistries.ENTITY_TYPE.getKey(self.getType());
-            return esp.isMobEnabled(id);
+            return esp.isTypeEnabled(((Entity) (Object) this).getType());
         } catch (Throwable t) {
             return false;
         }

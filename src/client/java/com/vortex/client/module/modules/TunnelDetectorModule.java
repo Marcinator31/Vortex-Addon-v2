@@ -22,12 +22,15 @@ public class TunnelDetectorModule extends Module {
     // Nur unterhalb dieser Hoehe suchen (Tunnel sind unterirdisch).
     public final NumberSetting maxY = new NumberSetting("Max Y", 60, -64, 320, 4);
     public final ColorSetting color = new ColorSetting("Color", 0xFF00FFFF);
+    /** Bis wohin gezeichnet wird (seit 2.44; gesucht wird in der ganzen Sichtweite). */
+    public final NumberSetting viewDistance = new NumberSetting("View Distance", 1024, 32, 1024, 16);
 
     public TunnelDetectorModule() {
         super("Tunnel Detector", Category.CHEATS);
         addSetting(minLength);
         addSetting(maxY);
         addSetting(color);
+        addSetting(viewDistance);
     }
 
     public int getMinLength() { return minLength.getInt(); }

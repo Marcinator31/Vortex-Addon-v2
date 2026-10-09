@@ -218,6 +218,7 @@ public class VortexPlusAddon implements ClientModInitializer {
      */
     private static void registriereRenderer() {
         try {
+            com.vortex.client.hud.ChunkScanner.register();
             com.vortex.client.hud.BlockEspRenderer.register();
             com.vortex.client.hud.StashFinder.register();
             com.vortex.client.hud.BlockEntityEsp.register();
