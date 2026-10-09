@@ -179,7 +179,8 @@ public class BotGameTest implements FabricClientGameTest {
     private void fernTest(ClientGameTestContext ctx, TestServerContext srv) {
         final int SICHT = 24;
         srv.runOnServer(s -> { s.getPlayerList().setViewDistance(SICHT); s.getPlayerList().setSimulationDistance(10); });
-        ctx.runOnClient(mc -> { mc.options.renderDistance().set(SICHT); mc.options.fov().set(70); });
+        // Der Server schickt nur so weit, wie der Client "anfragt" -> Einstellung auch senden
+        ctx.runOnClient(mc -> { mc.options.renderDistance().set(SICHT); mc.options.fov().set(70); mc.options.broadcastOptions(); });
         srv.runCommand("time set noon");
         srv.runCommand("tp @a 5000.5 -60 0.5 90 0");
         int soll = (2 * SICHT + 1) * (2 * SICHT + 1) * 7 / 10;
@@ -342,6 +343,7 @@ public class BotGameTest implements FabricClientGameTest {
                     com.vortex.client.module.modules.NewChunksModule.class,
                     com.vortex.client.module.modules.EspModule.class)) ModuleManager.INSTANCE.get(c).setEnabled(false);
             mc.options.renderDistance().set(12);
+            mc.options.broadcastOptions();
         });
         srv.runOnServer(s -> s.getPlayerList().setViewDistance(12));
     }
