@@ -54,27 +54,32 @@ public final class ItemEsp {
                 // hundred times a second for an answer that changes twenty
                 // times a second.
                 double maxSq = mod.maxDistance() * mod.maxDistance();
+                // Alle Items in EINEM Zeichenauftrag (seit 2.44; vorher je Item ein eigener
+                // Auftrag fuer Kasten und Tracer -- in einem Lager mit hunderten Items teuer).
+                final java.util.List<double[]> kaesten = new java.util.ArrayList<>();
                 for (ItemEntity e : com.vortex.client.core.EntityCache.items()) {
-                    // Distant items are dots on the screen and cost the same to
-                    // draw as close ones. In a stash they are the whole cost.
                     if (e.distanceToSqr(client.player) > maxSq) continue;
-
-                    // AABB aus Position + Groesse (kein getBoundingBox noetig).
-                    double w = e.getBbWidth() / 2.0;
-                    double h = e.getBbHeight();
-                    double ex = e.getX(), ey = e.getY(), ez = e.getZ();
-                    AABB box = new AABB(ex - w, ey, ez - w, ex + w, ey + h, ez + w);
-                    EspRender.submitBox(collector, matrices, box, cam, color, 1.5f);
-
-                    if (tracer) {
-                        final Vec3 tracerStart = start;
-                        final Vec3 tracerTarget = new Vec3(ex, ey + h / 2.0, ez);
-                        final Vec3 tracerCam = cam;
-                        final int tracerColor = color;
-                        EspRender.submitLines(collector, matrices,
-                                (matrix, lines) -> EspRender.drawTracer(matrix, lines,
-                                        tracerStart, tracerTarget, tracerCam, tracerColor, 1.5f));
-                    }
+                    double w = e.getBbWidth() / 2.0, h = e.getBbHeight();
+                    kaesten.add(new double[] { e.getX() - w, e.getY(), e.getZ() - w, e.getX() + w, e.getY() + h, e.getZ() + w });
+                }
+                if (!kaesten.isEmpty()) {
+                    final Vec3 fc = cam, fs = start;
+                    final int fcol = color;
+                    final boolean ft = tracer;
+                    EspRender.submitLines(collector, matrices, (matrix, lines) -> {
+                        float r = ((fcol >> 16) & 0xFF) / 255f, g = ((fcol >> 8) & 0xFF) / 255f, b = (fcol & 0xFF) / 255f, al = ((fcol >>> 24) & 0xFF) / 255f;
+                        for (double[] k : kaesten) {
+                            float x0 = (float) (k[0] - fc.x), y0 = (float) (k[1] - fc.y), z0 = (float) (k[2] - fc.z);
+                            float x1 = (float) (k[3] - fc.x), y1 = (float) (k[4] - fc.y), z1 = (float) (k[5] - fc.z);
+                            kante(matrix, lines, x0, y0, z0, x1, y0, z0, r, g, b, al); kante(matrix, lines, x0, y1, z0, x1, y1, z0, r, g, b, al);
+                            kante(matrix, lines, x0, y0, z1, x1, y0, z1, r, g, b, al); kante(matrix, lines, x0, y1, z1, x1, y1, z1, r, g, b, al);
+                            kante(matrix, lines, x0, y0, z0, x0, y1, z0, r, g, b, al); kante(matrix, lines, x1, y0, z0, x1, y1, z0, r, g, b, al);
+                            kante(matrix, lines, x0, y0, z1, x0, y1, z1, r, g, b, al); kante(matrix, lines, x1, y0, z1, x1, y1, z1, r, g, b, al);
+                            kante(matrix, lines, x0, y0, z0, x0, y0, z1, r, g, b, al); kante(matrix, lines, x1, y0, z0, x1, y0, z1, r, g, b, al);
+                            kante(matrix, lines, x0, y1, z0, x0, y1, z1, r, g, b, al); kante(matrix, lines, x1, y1, z0, x1, y1, z1, r, g, b, al);
+                            if (ft) EspRender.drawTracer(matrix, lines, fs, new Vec3((k[0] + k[3]) / 2, (k[1] + k[4]) / 2, (k[2] + k[5]) / 2), fc, fcol, 1.5f);
+                        }
+                    });
                 }
             } catch (Throwable pvpErr) {
                 com.vortex.client.core.Errors.report("ItemEsp", pvpErr);
@@ -84,6 +89,15 @@ public final class ItemEsp {
                         System.nanoTime() - pvpT0);
             }
         });
+    }
+
+    private static void kante(org.joml.Matrix4f m, com.mojang.blaze3d.vertex.VertexConsumer v, float x1, float y1, float z1,
+                              float x2, float y2, float z2, float r, float g, float b, float a) {
+        float dx = x2 - x1, dy = y2 - y1, dz = z2 - z1;
+        float len = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (len < 1e-6f) return;
+        v.addVertex(m, x1, y1, z1).setColor(r, g, b, a).setNormal(dx / len, dy / len, dz / len).setLineWidth(1.5f);
+        v.addVertex(m, x2, y2, z2).setColor(r, g, b, a).setNormal(dx / len, dy / len, dz / len).setLineWidth(1.5f);
     }
 
     private static Module find(Class<? extends Module> type) {

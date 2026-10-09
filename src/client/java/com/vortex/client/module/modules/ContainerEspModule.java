@@ -20,6 +20,8 @@ public class ContainerEspModule extends Module {
     public final ModeSetting style = new ModeSetting("Style", 0, "Outline + Fill", "Outline", "Fill");
     public final NumberSetting fillOpacity = new NumberSetting("Fill Opacity", 20, 5, 80, 5);
     public final BooleanSetting glow = new BooleanSetting("Glow", true);
+    /** Bis wohin gezeichnet wird (seit 2.44 bis 1024; vorher fest 96). Gesucht wird in der ganzen Sichtweite. */
+    public final NumberSetting viewDistance = new NumberSetting("View Distance", 1024, 32, 1024, 16);
 
     public ContainerEspModule() {
         super("Container ESP", Category.CHEATS);
@@ -28,6 +30,7 @@ public class ContainerEspModule extends Module {
         addSetting(style);
         addSetting(fillOpacity);
         addSetting(glow);
+        addSetting(viewDistance);
     }
 
     public int getColor() { return color.get(); }

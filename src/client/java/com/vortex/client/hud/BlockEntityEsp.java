@@ -42,8 +42,7 @@ public final class BlockEntityEsp {
             new AtomicReference<>(new BlockHighlight.Mesh[]{BlockHighlight.LEER, BlockHighlight.LEER});
     private static final BlockHighlight.Kanal CONTAINER = new BlockHighlight.Kanal();
     private static final BlockHighlight.Kanal SPAWNER = new BlockHighlight.Kanal();
-    private static final int MAX_RESULTS = 3000;
-    private static final double MAX_DRAW_DIST = 96.0;
+    private static final int MAX_RESULTS = 50000;
     private static final int MAX_TRACER = 400;
 
     private static volatile boolean running = false;
@@ -75,7 +74,7 @@ public final class BlockEntityEsp {
                 BlockHighlight.Mesh[] meshes = RESULT.get();
 
                 if (contOn) {
-                    BlockHighlight.Stil stil = BlockHighlight.stil(cont.getColor(), cont.style, cont.fillOpacity, cont.glow, 2.0f, MAX_DRAW_DIST);
+                    BlockHighlight.Stil stil = BlockHighlight.stil(cont.getColor(), cont.style, cont.fillOpacity, cont.glow, 2.0f, cont.viewDistance.get());
                     CONTAINER.setze(meshes[0]);
                     CONTAINER.zeichne(collector, matrices, cam, stil);
                     if (cont.tracerEnabled()) tracer(collector, matrices, CONTAINER, cam, start, stil);
@@ -83,7 +82,7 @@ public final class BlockEntityEsp {
                     CONTAINER.leeren();
                 }
                 if (spawnOn) {
-                    BlockHighlight.Stil stil = BlockHighlight.stil(spawn.getColor(), spawn.style, spawn.fillOpacity, spawn.glow, 2.0f, MAX_DRAW_DIST);
+                    BlockHighlight.Stil stil = BlockHighlight.stil(spawn.getColor(), spawn.style, spawn.fillOpacity, spawn.glow, 2.0f, spawn.viewDistance.get());
                     SPAWNER.setze(meshes[1]);
                     SPAWNER.zeichne(collector, matrices, cam, stil);
                     if (spawn.tracerEnabled()) tracer(collector, matrices, SPAWNER, cam, start, stil);

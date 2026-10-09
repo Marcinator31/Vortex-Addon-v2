@@ -22,7 +22,7 @@ public class ItemEspModule extends Module {
      * that is where the frames go.
      */
     public final com.vortex.client.core.setting.NumberSetting maxDistance =
-            new com.vortex.client.core.setting.NumberSetting("Max Distance", 64, 8, 256, 8);
+            new com.vortex.client.core.setting.NumberSetting("Max Distance", 256, 8, 512, 8);
 
     public ItemEspModule() {
         super("Item ESP", Category.CHEATS);

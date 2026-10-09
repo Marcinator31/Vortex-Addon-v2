@@ -9,6 +9,9 @@ import com.vortex.client.module.Module;
  * New Chunks: zeigt, welche Chunks gerade zum ersten Mal erzeugt wurden (rot)
  * und welche es schon vorher gab (gruen).
  *
+ * Seit 2.44 zusaetzlich "Active" (lila): Chunks mit voll ausgewachsenen Amethyst-
+ * Geoden, dort war jemand stundenlang (siehe NewChunks).
+ *
  * Seit 2.40 ueber die Blockpalette, die der Server mit jedem Chunk schickt
  * (siehe ChunkPalette) -- im Test 1 Fehler bei 437 alten Chunks, alle neuen
  * weit draussen erkannt. Bis 2.39 ging es ueber fliessendes Wasser: das traf
@@ -24,6 +27,13 @@ public class NewChunksModule extends Module {
     public final NumberSetting renderY = new NumberSetting("Draw Height", 63, -64, 320, 1);
     /** Wie kraeftig die Flaechen gefuellt sind (0 = nur Umriss). */
     public final NumberSetting fillOpacity = new NumberSetting("Fill Opacity", 25, 0, 80, 5);
+    /**
+     * Amethyst: Chunks mit fast nur fertig gewachsenen Amethyst-Clustern markieren --
+     * dort war jemand stundenlang (Knospen wachsen nur in der Naehe von Spielern).
+     */
+    public final BooleanSetting amethyst = new BooleanSetting("Amethyst Activity", true);
+    public final ColorSetting activeColor = new ColorSetting("Active Color", 0xFFB45CFF);
+    public final BooleanSetting notify = new BooleanSetting("Notify Active", true);
 
     public NewChunksModule() {
         super("New Chunks", Category.CHEATS);
@@ -34,5 +44,8 @@ public class NewChunksModule extends Module {
         addSetting(followPlayer);
         addSetting(renderY);
         addSetting(fillOpacity);
+        addSetting(amethyst);
+        addSetting(activeColor);
+        addSetting(notify);
     }
 }

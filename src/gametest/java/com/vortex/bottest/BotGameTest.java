@@ -92,6 +92,7 @@ public class BotGameTest implements FabricClientGameTest {
             // -Dvortex.bottest.only=elytra,crop ... : nur diese Abschnitte (schnelleres Nachpruefen)
             String nur = System.getProperty("vortex.bottest.only", "").toLowerCase();
             if (nur.contains("esp")) abschnitt(ctx, "Block ESP look", () -> espTest(ctx, srv));
+            if (nur.contains("far")) abschnitt(ctx, "Far ESP, tunnels, amethyst", () -> fernTest(ctx, srv));
             if (nur.contains("freecam")) abschnitt(ctx, "Freecam view", () -> freecamTest(ctx, srv));
             if (nur.contains("freecam")) abschnitt(ctx, "Freecam keeps momentum", () -> freecamSchwungTest(ctx, srv));
             if (nur.isEmpty() || nur.contains("wtap")) abschnitt(ctx, "W-Tap", () -> wTapTest(ctx, srv));
@@ -170,6 +171,185 @@ public class BotGameTest implements FabricClientGameTest {
             var m = ModuleManager.INSTANCE.get(c.asSubclass(com.vortex.client.module.Module.class));
             try { return String.valueOf(m.getClass().getMethod("getStatus").invoke(m)); } catch (Exception e) { return "?"; }
         });
+    }
+
+    // ------------------------------------------------------------------
+    // Weite ESP (2.44): Block-ESP in der ganzen Sichtweite, Merken, Tunnel, Amethyst, Entity
+
+    private void fernTest(ClientGameTestContext ctx, TestServerContext srv) {
+        final int SICHT = 24;
+        srv.runOnServer(s -> { s.getPlayerList().setViewDistance(SICHT); s.getPlayerList().setSimulationDistance(10); });
+        // Der Server schickt nur so weit, wie der Client "anfragt" -> Einstellung auch senden
+        ctx.runOnClient(mc -> { mc.options.renderDistance().set(SICHT); mc.options.fov().set(70); mc.options.broadcastOptions(); });
+        srv.runCommand("time set noon");
+        srv.runCommand("tp @a 5000.5 -60 0.5 90 0");
+        int soll = (2 * SICHT + 1) * (2 * SICHT + 1) * 9 / 10;
+        long t0 = System.currentTimeMillis();
+        while (System.currentTimeMillis() - t0 < 120_000 && ctx.computeOnClient(mc -> com.vortex.client.hud.ChunkScanner.geladen()) < soll) ctx.waitTicks(20);
+        notiz("chunks loaded on client: " + ctx.computeOnClient(mc -> com.vortex.client.hud.ChunkScanner.geladen()) + " after " + (System.currentTimeMillis() - t0) / 1000 + " s");
+
+        // Diamantbloecke in verschiedenen Entfernungen und Hoehen
+        int[][] ziele = { {5040, -60, 0}, {5000, -60, 150}, {4700, -60, 0}, {5000, 100, -200}, {5100, -63, 100}, {5000, -60, -330} };
+        for (int[] z : ziele) srv.runCommand("setblock " + z[0] + " " + z[1] + " " + z[2] + " minecraft:diamond_block");
+        // Gang im Stein (fuer den Tunnel Detector), 250 Bloecke entfernt
+        srv.runCommand("fill 5000 -60 250 5029 -56 254 minecraft:stone");
+        srv.runCommand("fill 5001 -59 252 5028 -58 252 minecraft:air");
+        // Zwei "Geoden": A fast nur fertige Cluster (lange aktiv), B frisch gemischt
+        srv.runCommand("fill 5200 -60 200 5211 -60 200 minecraft:budding_amethyst");
+        srv.runCommand("fill 5200 -59 200 5211 -59 200 minecraft:amethyst_cluster[facing=up]");
+        srv.runCommand("fill 5232 -60 200 5243 -60 200 minecraft:budding_amethyst");
+        String[] gemischt = {"small_amethyst_bud", "medium_amethyst_bud", "large_amethyst_bud", "amethyst_cluster"};
+        for (int i = 0; i < 12; i++) srv.runCommand("setblock " + (5232 + i) + " -59 200 minecraft:" + gemischt[i % 4] + "[facing=up]");
+        // Schwein 100 Bloecke entfernt (fuer die weite Entity-ESP)
+        srv.runCommand("summon minecraft:pig 5000.5 -60 -149.5 {NoAI:1b,Silent:1b}");
+        ctx.waitTicks(40);
+
+        ctx.runOnClient(mc -> {
+            com.vortex.client.core.Errors.clear();
+            com.vortex.client.core.Profiler.setEnabled(true);
+            com.vortex.client.core.Profiler.reset();
+            var b = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.BlockEspModule.class);
+            b.getEnabledBlocks().clear();
+            b.toggleBlock("minecraft:diamond_block");
+            b.setEnabled(true);
+            ModuleManager.INSTANCE.get(com.vortex.client.module.modules.TunnelDetectorModule.class).setEnabled(true);
+            var nc = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.NewChunksModule.class);
+            nc.setEnabled(true);
+        });
+        t0 = System.currentTimeMillis();
+        boolean alle = false;
+        while (System.currentTimeMillis() - t0 < 60_000) {
+            ctx.waitTicks(10);
+            alle = ctx.computeOnClient(mc -> {
+                for (int[] z : ziele) if (!com.vortex.client.hud.BlockEspRenderer.enthaelt(net.minecraft.core.BlockPos.asLong(z[0], z[1], z[2]))) return false;
+                return true;
+            });
+            if (alle) break;
+        }
+        long dauer = System.currentTimeMillis() - t0;
+        for (int[] z : ziele) {
+            boolean da = ctx.computeOnClient(mc -> com.vortex.client.hud.BlockEspRenderer.enthaelt(net.minecraft.core.BlockPos.asLong(z[0], z[1], z[2])));
+            int dist = (int) Math.round(Math.sqrt(Math.pow(z[0] - 5000, 2) + Math.pow(z[2], 2)));
+            pruefe("Block ESP finds diamond block " + dist + " blocks away at y=" + z[1], da, "after " + dauer / 1000.0 + " s");
+        }
+        notiz("Block ESP: " + ctx.computeOnClient(mc -> com.vortex.client.hud.BlockEspRenderer.gefunden()) + " shown, open chunks " + ctx.computeOnClient(mc -> com.vortex.client.hud.BlockEspRenderer.offeneChunks()));
+
+        // Bilder: Blick nach Westen (4700 = 300 Bloecke) und nach Norden (-330)
+        srv.runCommand("tp @a 5000.5 -55 0.5 90 2");
+        ctx.waitTicks(30);
+        ctx.takeScreenshot("far-esp-west-300");
+        srv.runCommand("tp @a 5000.5 -55 0.5 180 2");
+        ctx.waitTicks(30);
+        ctx.takeScreenshot("far-esp-north-330");
+        srv.runCommand("tp @a 5000.5 -60 0.5 90 0");
+
+        // Abgebaut -> verschwindet
+        srv.runCommand("setblock 5040 -60 0 minecraft:air");
+        ctx.waitTicks(40);
+        pruefe("mined block disappears", !ctx.computeOnClient(mc -> com.vortex.client.hud.BlockEspRenderer.enthaelt(net.minecraft.core.BlockPos.asLong(5040, -60, 0))), "1 block, 40 ticks");
+
+        // Tunnel
+        t0 = System.currentTimeMillis();
+        boolean tunnel = false;
+        while (!tunnel && System.currentTimeMillis() - t0 < 30_000) {
+            ctx.waitTicks(10);
+            tunnel = ctx.computeOnClient(mc -> {
+                for (var bb : com.vortex.client.hud.TunnelDetector.tunnel()) if (bb.minZ == 252 && bb.minX <= 5002 && bb.maxX >= 5027) return true;
+                return false;
+            });
+        }
+        pruefe("Tunnel Detector finds tunnel 250 blocks away", tunnel, ctx.computeOnClient(mc -> com.vortex.client.hud.TunnelDetector.tunnel().size()) + " tunnels total");
+
+        // Amethyst
+        t0 = System.currentTimeMillis();
+        long a = net.minecraft.world.level.ChunkPos.pack(5200 >> 4, 200 >> 4), bChunk = net.minecraft.world.level.ChunkPos.pack(5232 >> 4, 200 >> 4);
+        boolean aktiv = false;
+        while (!aktiv && System.currentTimeMillis() - t0 < 30_000) {
+            ctx.waitTicks(10);
+            aktiv = ctx.computeOnClient(mc -> com.vortex.client.hud.NewChunks.aktiveChunks().contains(a));
+        }
+        pruefe("grown geode (12/12 clusters) marked active", aktiv, ctx.computeOnClient(mc -> java.util.Arrays.toString(com.vortex.client.hud.NewChunks.knospenIn(a))));
+        pruefe("fresh geode (3/12 clusters) not marked", !ctx.computeOnClient(mc -> com.vortex.client.hud.NewChunks.aktiveChunks().contains(bChunk)),
+                ctx.computeOnClient(mc -> java.util.Arrays.toString(com.vortex.client.hud.NewChunks.knospenIn(bChunk))));
+        srv.runCommand("tp @a 5222.5 -45 180.5 0 30");
+        ctx.waitTicks(40);
+        ctx.takeScreenshot("far-amethyst-active");
+        srv.runCommand("tp @a 5000.5 -60 0.5 90 0");
+        ctx.waitTicks(20);
+
+        // Entity-ESP ueber Minecrafts Zeichengrenze hinaus
+        String vorher = ctx.computeOnClient(mc -> {
+            for (var e : mc.level.entitiesForRendering()) if (e instanceof net.minecraft.world.entity.animal.pig.Pig) {
+                var c = mc.player.getEyePosition();
+                return "pig " + (int) e.distanceTo(mc.player) + " m, drawn=" + e.shouldRender(c.x, c.y, c.z);
+            }
+            return "no pig";
+        });
+        ctx.runOnClient(mc -> {
+            var esp = ModuleManager.INSTANCE.get(com.vortex.client.module.modules.EspModule.class);
+            esp.setMob("minecraft:pig", true);
+            esp.setEnabled(true);
+        });
+        ctx.waitTicks(5);
+        boolean schwein = ctx.computeOnClient(mc -> {
+            for (var e : mc.level.entitiesForRendering()) if (e instanceof net.minecraft.world.entity.animal.pig.Pig) {
+                var c = mc.player.getEyePosition();
+                return e.shouldRender(c.x, c.y, c.z);
+            }
+            return false;
+        });
+        pruefe("ESP draws pig 150 blocks away", schwein, "without ESP: " + vorher);
+        srv.runCommand("tp @a 5000.5 -58 0.5 180 8");
+        ctx.waitTicks(20);
+        ctx.takeScreenshot("far-esp-pig-150");
+        srv.runCommand("tp @a 5000.5 -60 0.5 90 0");
+
+        // Viele Bloecke: 10.000 Diamantbloecke -> Bildrate mit und ohne ESP
+        srv.runCommand("fill 4800 -63 -50 4899 -63 49 minecraft:diamond_block");
+        ctx.waitTicks(100);
+        int[] fps = new int[2];
+        for (int an = 1; an >= 0; an--) {
+            final boolean f = an == 1;
+            ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.BlockEspModule.class).setEnabled(f));
+            ctx.waitTicks(60);
+            int summe = 0;
+            for (int i = 0; i < 6; i++) { ctx.waitTicks(20); summe += ctx.computeOnClient(mc -> mc.getFps()); }
+            fps[an] = summe / 6;
+            if (f) notiz("10,000 blocks: shown " + ctx.computeOnClient(mc -> com.vortex.client.hud.BlockEspRenderer.gefunden()));
+        }
+        notiz("10,000 blocks: fps with Block ESP " + fps[1] + ", without " + fps[0]);
+        ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.BlockEspModule.class).setEnabled(true));
+        ctx.waitTicks(60);
+        srv.runCommand("tp @a 4960.5 -50 0.5 90 25");
+        ctx.waitTicks(40);
+        ctx.takeScreenshot("far-esp-10000-blocks");
+
+        // Merken: weit wegfliegen, die alten Chunks werden entladen
+        srv.runCommand("tp @a 5450.5 -60 0.5 90 0");
+        ctx.waitTicks(200);
+        boolean gemerkt = ctx.computeOnClient(mc -> com.vortex.client.hud.BlockEspRenderer.enthaelt(net.minecraft.core.BlockPos.asLong(4700, -60, 0)));
+        boolean entladen = ctx.computeOnClient(mc -> !com.vortex.client.hud.ChunkScanner.istGeladen(net.minecraft.world.level.ChunkPos.pack(4700 >> 4, 0)));
+        pruefe("Remember Unloaded keeps block 750 blocks away (chunk no longer loaded)", gemerkt && entladen, "kept=" + gemerkt + " unloaded=" + entladen);
+        srv.runCommand("tp @a 5450.5 -55 0.5 90 2");
+        ctx.waitTicks(30);
+        ctx.takeScreenshot("far-esp-remembered-750");
+
+        notiz("profiler: " + ctx.computeOnClient(mc -> com.vortex.client.core.Profiler.summary()).replace('\n', '|'));
+        String fehler = ctx.computeOnClient(mc -> com.vortex.client.core.Errors.summary());
+        notiz("errors: " + fehler.replace('\n', '|'));
+        int n = ctx.computeOnClient(mc -> com.vortex.client.core.Errors.count("BlockEsp") + com.vortex.client.core.Errors.count("ChunkScanner")
+                + com.vortex.client.core.Errors.count("TunnelDetector") + com.vortex.client.core.Errors.count("NewChunks.render"));
+        pruefe("no ESP errors", n == 0, n + " errors");
+        ctx.runOnClient(mc -> {
+            for (Class<? extends com.vortex.client.module.Module> c : java.util.List.of(
+                    com.vortex.client.module.modules.BlockEspModule.class,
+                    com.vortex.client.module.modules.TunnelDetectorModule.class,
+                    com.vortex.client.module.modules.NewChunksModule.class,
+                    com.vortex.client.module.modules.EspModule.class)) ModuleManager.INSTANCE.get(c).setEnabled(false);
+            mc.options.renderDistance().set(12);
+            mc.options.broadcastOptions();
+        });
+        srv.runOnServer(s -> s.getPlayerList().setViewDistance(12));
     }
 
     // ------------------------------------------------------------------

@@ -111,7 +111,7 @@ public final class WorldScan {
     /** Obergrenze, damit auch bei leeren Chunks nicht endlos gearbeitet wird. */
     private static final int MAX_CHUNKS_PER_TICK = 64;
     /** Sicherheitsgrenze fuer die Gesamtzahl gesammelter Eintraege. */
-    private static final int MAX_ENTRIES = 20000;
+    private static final int MAX_ENTRIES = 100000;
 
     // Zustand des laufenden Durchgangs.
     private static List<Be> building = new ArrayList<>();

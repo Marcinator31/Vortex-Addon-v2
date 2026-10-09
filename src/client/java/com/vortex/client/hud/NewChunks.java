@@ -32,6 +32,15 @@ import org.joml.Matrix4f;
  * einzelner unsortierter Abschnitt kommt auch in alten Chunks vor (der Server
  * hat dort seit dem Laden etwas veraendert: Schnee, Wasser, Laub ...).
  *
+ * AMETHYST (seit 2.44, zusaetzlich): In Amethyst-Geoden wachsen Knospen nur, solange
+ * ein Spieler in der Naehe ist (zufaellige Ticks im geladenen Bereich). Eine frisch
+ * erzeugte Geode hat ein zufaelliges Gemisch aus kleinen, mittleren, grossen Knospen
+ * und fertigen Clustern (je ein Viertel). Sind in einem Chunk fast nur noch fertige
+ * Cluster, war dort jemand STUNDENLANG (Erwartung: rund 2 Stunden pro Knospe bis
+ * zum Cluster) -- ein starker Hinweis auf eine Basis. Das sagt NICHT, ob ein Chunk
+ * neu oder alt ist (eine alte Geode, bei der nie jemand war, sieht aus wie neu),
+ * deshalb ist es eine eigene Markierung ("Active") neben neu/alt.
+ *
  * ANZEIGE: flache, halbtransparente Flaechen auf der eingestellten Hoehe;
  * zusammenhaengende Chunks einer Art bekommen EINEN Umriss (nur Aussenkanten),
  * neue Markierungen blenden weich ein, am Rand der Sichtweite blendet es aus.
@@ -46,6 +55,70 @@ public final class NewChunks {
     /** Seit wann markiert (Einblenden), nur Render-Thread. */
     private static final Long2LongOpenHashMap SEIT = new Long2LongOpenHashMap();
     private static Object letzteWelt = null;
+
+    // ------------------------------------------------------------------
+    // Amethyst-Aktivitaet
+    // ------------------------------------------------------------------
+
+    /** Knospen je Chunk: [klein, mittel, gross, Cluster]. */
+    private static final ChunkScanner.Slot<int[]> AMETHYST = ChunkScanner.anmelden(new ChunkScanner.Job<int[]>() {
+        @Override public boolean aktiv() {
+            NewChunksModule m = ModuleManager.INSTANCE.get(NewChunksModule.class);
+            return m != null && m.isEnabled() && m.amethyst.get();
+        }
+        @Override public Object signatur() { return "knospen"; }
+        @Override public boolean merken() { return true; }
+        @Override public int[] scanne(net.minecraft.client.multiplayer.ClientLevel level, LevelChunk chunk) { return knospen(chunk); }
+    });
+
+    /** Mindestens so viele Knospen im Chunk, damit das Verhaeltnis etwas aussagt. */
+    static final int MIN_KNOSPEN = 8;
+    /** Ab diesem Anteil fertiger Cluster: lange aktiv (frisch: ~25 %). */
+    static final double AKTIV_AB = 0.65;
+    private static final Set<Long> GEMELDET = ConcurrentHashMap.newKeySet();
+
+    private static int[] knospen(LevelChunk chunk) {
+        java.util.function.Predicate<net.minecraft.world.level.block.state.BlockState> knospe = st -> stufe(st) >= 0;
+        int[] n = null;
+        var sec = chunk.getSections();
+        for (var s : sec) {
+            if (s == null || s.hasOnlyAir() || !s.maybeHas(knospe)) continue;
+            for (int y = 0; y < 16; y++)
+                for (int z = 0; z < 16; z++)
+                    for (int x = 0; x < 16; x++) {
+                        int st = stufe(s.getBlockState(x, y, z));
+                        if (st < 0) continue;
+                        if (n == null) n = new int[4];
+                        n[st]++;
+                    }
+        }
+        return n;
+    }
+
+    private static int stufe(net.minecraft.world.level.block.state.BlockState st) {
+        var b = st.getBlock();
+        if (b == net.minecraft.world.level.block.Blocks.SMALL_AMETHYST_BUD) return 0;
+        if (b == net.minecraft.world.level.block.Blocks.MEDIUM_AMETHYST_BUD) return 1;
+        if (b == net.minecraft.world.level.block.Blocks.LARGE_AMETHYST_BUD) return 2;
+        if (b == net.minecraft.world.level.block.Blocks.AMETHYST_CLUSTER) return 3;
+        return -1;
+    }
+
+    /** Anteil fertiger Cluster, oder -1 wenn zu wenige Knospen. */
+    public static double clusterAnteil(int[] n) {
+        if (n == null) return -1;
+        int summe = n[0] + n[1] + n[2] + n[3];
+        return summe < MIN_KNOSPEN ? -1 : n[3] / (double) summe;
+    }
+
+    /** Fuer Tests: als "lange aktiv" erkannte Chunks. */
+    public static java.util.List<Long> aktiveChunks() {
+        java.util.List<Long> l = new java.util.ArrayList<>();
+        AMETHYST.fuerAlle(true, (k, n) -> { if (clusterAnteil(n) >= AKTIV_AB) l.add(k); });
+        return l;
+    }
+
+    public static int[] knospenIn(long chunk) { return AMETHYST.get(chunk); }
 
     private static boolean an() {
         NewChunksModule m = ModuleManager.INSTANCE.get(NewChunksModule.class);
@@ -65,6 +138,7 @@ public final class NewChunks {
                 letzteWelt = mc.level;
                 NEU.clear();
                 ALT.clear();
+                GEMELDET.clear();
             }
         });
         LevelRenderEvents.AFTER_TRANSLUCENT_FEATURES.register(context -> {
@@ -92,18 +166,31 @@ public final class NewChunks {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
         boolean zeigNeu = m.showNew.get(), zeigAlt = m.showOld.get();
-        if (!zeigNeu && !zeigAlt) return;
+        if (!zeigNeu && !zeigAlt && !m.amethyst.get()) return;
 
         float td = mc.getDeltaTracker().getGameTimeDeltaPartialTick(false);
         Vec3 cam = EspRender.cameraOffset(mc, td);
         int r = mc.options.renderDistance().get() + 1;
         int pcx = mc.player.getBlockX() >> 4, pcz = mc.player.getBlockZ() >> 4;
-        double sicht = r * 16.0;
+        double sicht;
 
-        // Art je Chunk im Bereich: 1 = neu, 2 = alt
+        // Gemerkte Markierungen auch hinter der Sichtweite zeigen (bis 64 Chunks = 1024 Bloecke)
+        r = Math.max(r, 64);
+        sicht = r * 16.0;
+        // Art je Chunk im Bereich: 1 = neu, 2 = alt, 3 = lange aktiv (Amethyst)
         Long2ByteOpenHashMap art = new Long2ByteOpenHashMap();
         if (zeigNeu) for (long c : NEU) if (imBereich(c, pcx, pcz, r)) art.put(c, (byte) 1);
         if (zeigAlt) for (long c : ALT) if (imBereich(c, pcx, pcz, r)) art.put(c, (byte) 2);
+        if (m.amethyst.get()) {
+            ChunkScanner.brauche();
+            final int fr = r;
+            AMETHYST.fuerAlle(true, (c, n) -> {
+                double anteil = clusterAnteil(n);
+                if (anteil < AKTIV_AB || !imBereich(c, pcx, pcz, fr)) return;
+                art.put((long) c, (byte) 3);
+                if (m.notify.get() && GEMELDET.add(c)) melden(c, n, anteil);
+            });
+        }
         if (art.isEmpty()) return;
 
         long jetzt = System.currentTimeMillis();
@@ -116,7 +203,7 @@ public final class NewChunks {
         hoehe += (zielY - hoehe) * 0.15;
         final float y = (float) (hoehe - cam.y);
 
-        int neuF = deckend(m.newColor.get()), altF = deckend(m.oldColor.get());
+        int neuF = deckend(m.newColor.get()), altF = deckend(m.oldColor.get()), aktivF = deckend(m.activeColor.get());
         float fuell = (float) (m.fillOpacity.get() / 100.0);
 
         // Deckkraft je Chunk: Einblenden x Sichtweite
@@ -130,7 +217,8 @@ public final class NewChunks {
             float weit = (float) Math.max(0, Math.min(1, (sicht - d) / (sicht * 0.3)));
             float ein = glatt((jetzt - SEIT.get(c)) / 400f);
             alpha[i] = weit * ein;
-            farbe[i] = art.get(c) == 1 ? neuF : altF;
+            byte a = art.get(c);
+            farbe[i] = a == 1 ? neuF : a == 3 ? aktivF : altF;
         }
 
         if (fuell > 0.001f) {
@@ -173,6 +261,15 @@ public final class NewChunks {
     }
 
     private static double hoehe = Double.NaN;
+
+    private static void melden(long c, int[] n, double anteil) {
+        Minecraft mc = Minecraft.getInstance();
+        int x = ChunkPos.getX(c) * 16 + 8, z = ChunkPos.getZ(c) * 16 + 8;
+        int summe = n[0] + n[1] + n[2] + n[3];
+        String text = "\u00a7d[New Chunks] \u00a7fGrown amethyst geode near \u00a7e" + x + " " + z
+                + " \u00a77(" + n[3] + "/" + summe + " clusters, " + Math.round(anteil * 100) + " %) \u00a78- someone spent hours here";
+        mc.execute(() -> { if (mc.player != null) mc.player.sendSystemMessage(net.minecraft.network.chat.Component.literal(text)); });
+    }
 
     private static boolean imBereich(long c, int pcx, int pcz, int r) {
         return Math.abs(ChunkPos.getX(c) - pcx) <= r && Math.abs(ChunkPos.getZ(c) - pcz) <= r;

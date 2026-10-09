@@ -23,7 +23,12 @@ import net.minecraft.resources.Identifier;
 public class BlockEspModule extends Module implements com.vortex.client.module.ExtraData, com.vortex.client.module.HasOwnScreen {
 
     public final ColorSetting color = new ColorSetting("Color", 0xFF00FFFF);
-    public final NumberSetting range = new NumberSetting("Range", 64, 16, 512, 16);
+    /**
+     * Such-Reichweite in Bloecken (waagerecht). Seit 2.44 bis 1024: gesucht wird in
+     * allem, was der Server geschickt hat -- mehr als die Sichtweite geht nicht,
+     * dort gibt es auf dem Client keine Bloecke.
+     */
+    public final NumberSetting range = new NumberSetting("Search Range", 1024, 16, 1024, 16);
     public final NumberSetting lineWidth = new NumberSetting("Line Width", 2.0, 0.5, 5.0, 0.5);
     /** Aussehen: Umriss + halbtransparente Fuellung, nur Umriss oder nur Fuellung. */
     public final ModeSetting style = new ModeSetting("Style", 0, "Outline + Fill", "Outline", "Fill");
@@ -49,7 +54,14 @@ public class BlockEspModule extends Module implements com.vortex.client.module.E
 
     /** Ab welcher Entfernung nicht mehr gezeichnet wird (schont die Bildrate). */
     public final NumberSetting drawDistance =
-            new NumberSetting("Draw Distance", 96, 32, 256, 16);
+            new NumberSetting("View Distance", 1024, 32, 1024, 16);
+
+    /**
+     * Gefundene Bloecke aus Chunks behalten, die der Server wieder entladen hat
+     * (man ist weggeflogen). So bleibt alles sichtbar, auch weit hinter der
+     * Sichtweite. Sind sie inzwischen abgebaut, merkt man das erst beim Zurueckkommen.
+     */
+    public final BooleanSetting remember = new BooleanSetting("Remember Unloaded", true);
 
     public final BooleanSetting tracers = new BooleanSetting("Tracers", false);
     public final ColorSetting tracerColor = new ColorSetting("Tracer Color", 0xFFFFFF00);
@@ -69,6 +81,7 @@ public class BlockEspModule extends Module implements com.vortex.client.module.E
         addSetting(maxY);
         addSetting(onlyExposed);
         addSetting(drawDistance);
+        addSetting(remember);
         addSetting(tracers);
         addSetting(tracerColor);
     }

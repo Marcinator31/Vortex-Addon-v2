@@ -6,6 +6,7 @@
 		"BoatNoClipServerMixin",
 		"BotAttackMixin",
 		"CheatMoveMixin",
+		"ChunkAenderungMixin",
 		"EntityEspMixin",
 		"ExplodePacketAccessor",
 		"FastUseMixin",
