@@ -183,7 +183,7 @@ public class BotGameTest implements FabricClientGameTest {
         ctx.runOnClient(mc -> { mc.options.renderDistance().set(SICHT); mc.options.fov().set(70); mc.options.broadcastOptions(); });
         srv.runCommand("time set noon");
         srv.runCommand("tp @a 5000.5 -60 0.5 90 0");
-        int soll = (2 * SICHT + 1) * (2 * SICHT + 1) * 7 / 10;
+        int soll = (2 * SICHT + 1) * (2 * SICHT + 1) * 9 / 10;
         long t0 = System.currentTimeMillis();
         while (System.currentTimeMillis() - t0 < 120_000 && ctx.computeOnClient(mc -> com.vortex.client.hud.ChunkScanner.geladen()) < soll) ctx.waitTicks(20);
         notiz("chunks loaded on client: " + ctx.computeOnClient(mc -> com.vortex.client.hud.ChunkScanner.geladen()) + " after " + (System.currentTimeMillis() - t0) / 1000 + " s");
@@ -195,13 +195,13 @@ public class BotGameTest implements FabricClientGameTest {
         srv.runCommand("fill 5000 -60 250 5029 -56 254 minecraft:stone");
         srv.runCommand("fill 5001 -59 252 5028 -58 252 minecraft:air");
         // Zwei "Geoden": A fast nur fertige Cluster (lange aktiv), B frisch gemischt
-        srv.runCommand("fill 5296 -60 300 5307 -60 300 minecraft:budding_amethyst");
-        srv.runCommand("fill 5296 -59 300 5307 -59 300 minecraft:amethyst_cluster[facing=up]");
-        srv.runCommand("fill 5328 -60 300 5339 -60 300 minecraft:budding_amethyst");
+        srv.runCommand("fill 5200 -60 200 5211 -60 200 minecraft:budding_amethyst");
+        srv.runCommand("fill 5200 -59 200 5211 -59 200 minecraft:amethyst_cluster[facing=up]");
+        srv.runCommand("fill 5232 -60 200 5243 -60 200 minecraft:budding_amethyst");
         String[] gemischt = {"small_amethyst_bud", "medium_amethyst_bud", "large_amethyst_bud", "amethyst_cluster"};
-        for (int i = 0; i < 12; i++) srv.runCommand("setblock " + (5328 + i) + " -59 300 minecraft:" + gemischt[i % 4] + "[facing=up]");
+        for (int i = 0; i < 12; i++) srv.runCommand("setblock " + (5232 + i) + " -59 200 minecraft:" + gemischt[i % 4] + "[facing=up]");
         // Schwein 100 Bloecke entfernt (fuer die weite Entity-ESP)
-        srv.runCommand("summon minecraft:pig 5000.5 -60 -99.5 {NoAI:1b,Silent:1b}");
+        srv.runCommand("summon minecraft:pig 5000.5 -60 -149.5 {NoAI:1b,Silent:1b}");
         ctx.waitTicks(40);
 
         ctx.runOnClient(mc -> {
@@ -262,7 +262,7 @@ public class BotGameTest implements FabricClientGameTest {
 
         // Amethyst
         t0 = System.currentTimeMillis();
-        long a = net.minecraft.world.level.ChunkPos.pack(5296 >> 4, 300 >> 4), bChunk = net.minecraft.world.level.ChunkPos.pack(5328 >> 4, 300 >> 4);
+        long a = net.minecraft.world.level.ChunkPos.pack(5200 >> 4, 200 >> 4), bChunk = net.minecraft.world.level.ChunkPos.pack(5232 >> 4, 200 >> 4);
         boolean aktiv = false;
         while (!aktiv && System.currentTimeMillis() - t0 < 30_000) {
             ctx.waitTicks(10);
@@ -271,7 +271,7 @@ public class BotGameTest implements FabricClientGameTest {
         pruefe("grown geode (12/12 clusters) marked active", aktiv, ctx.computeOnClient(mc -> java.util.Arrays.toString(com.vortex.client.hud.NewChunks.knospenIn(a))));
         pruefe("fresh geode (3/12 clusters) not marked", !ctx.computeOnClient(mc -> com.vortex.client.hud.NewChunks.aktiveChunks().contains(bChunk)),
                 ctx.computeOnClient(mc -> java.util.Arrays.toString(com.vortex.client.hud.NewChunks.knospenIn(bChunk))));
-        srv.runCommand("tp @a 5310.5 -50 290.5 0 30");
+        srv.runCommand("tp @a 5222.5 -45 180.5 0 30");
         ctx.waitTicks(40);
         ctx.takeScreenshot("far-amethyst-active");
         srv.runCommand("tp @a 5000.5 -60 0.5 90 0");
@@ -298,10 +298,10 @@ public class BotGameTest implements FabricClientGameTest {
             }
             return false;
         });
-        pruefe("ESP draws pig 100 blocks away", schwein, "without ESP: " + vorher);
+        pruefe("ESP draws pig 150 blocks away", schwein, "without ESP: " + vorher);
         srv.runCommand("tp @a 5000.5 -58 0.5 180 8");
         ctx.waitTicks(20);
-        ctx.takeScreenshot("far-esp-pig-100");
+        ctx.takeScreenshot("far-esp-pig-150");
         srv.runCommand("tp @a 5000.5 -60 0.5 90 0");
 
         // Viele Bloecke: 10.000 Diamantbloecke -> Bildrate mit und ohne ESP
@@ -315,8 +315,9 @@ public class BotGameTest implements FabricClientGameTest {
             int summe = 0;
             for (int i = 0; i < 6; i++) { ctx.waitTicks(20); summe += ctx.computeOnClient(mc -> mc.getFps()); }
             fps[an] = summe / 6;
+            if (f) notiz("10,000 blocks: shown " + ctx.computeOnClient(mc -> com.vortex.client.hud.BlockEspRenderer.gefunden()));
         }
-        notiz("10,000 blocks: fps with Block ESP " + fps[1] + ", without " + fps[0] + ", shown " + ctx.computeOnClient(mc -> com.vortex.client.hud.BlockEspRenderer.gefunden()));
+        notiz("10,000 blocks: fps with Block ESP " + fps[1] + ", without " + fps[0]);
         ctx.runOnClient(mc -> ModuleManager.INSTANCE.get(com.vortex.client.module.modules.BlockEspModule.class).setEnabled(true));
         ctx.waitTicks(60);
         srv.runCommand("tp @a 4960.5 -50 0.5 90 25");
@@ -324,11 +325,14 @@ public class BotGameTest implements FabricClientGameTest {
         ctx.takeScreenshot("far-esp-10000-blocks");
 
         // Merken: weit wegfliegen, die alten Chunks werden entladen
-        srv.runCommand("tp @a 5800.5 -60 0.5 90 0");
+        srv.runCommand("tp @a 5450.5 -60 0.5 90 0");
         ctx.waitTicks(200);
         boolean gemerkt = ctx.computeOnClient(mc -> com.vortex.client.hud.BlockEspRenderer.enthaelt(net.minecraft.core.BlockPos.asLong(4700, -60, 0)));
-        boolean entladen = ctx.computeOnClient(mc -> !mc.level.hasChunk(4700 >> 4, 0));
-        pruefe("Remember Unloaded keeps block 1100 blocks away", gemerkt, "chunk unloaded=" + entladen);
+        boolean entladen = ctx.computeOnClient(mc -> !com.vortex.client.hud.ChunkScanner.istGeladen(net.minecraft.world.level.ChunkPos.pack(4700 >> 4, 0)));
+        pruefe("Remember Unloaded keeps block 750 blocks away (chunk no longer loaded)", gemerkt && entladen, "kept=" + gemerkt + " unloaded=" + entladen);
+        srv.runCommand("tp @a 5450.5 -55 0.5 90 2");
+        ctx.waitTicks(30);
+        ctx.takeScreenshot("far-esp-remembered-750");
 
         notiz("profiler: " + ctx.computeOnClient(mc -> com.vortex.client.core.Profiler.summary()).replace('\n', '|'));
         String fehler = ctx.computeOnClient(mc -> com.vortex.client.core.Errors.summary());

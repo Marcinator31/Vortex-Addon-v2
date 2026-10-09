@@ -128,6 +128,7 @@ public final class ChunkScanner {
     }
 
     public static int geladen() { return GELADEN.size(); }
+    public static boolean istGeladen(long chunk) { return GELADEN.containsKey(chunk); }
 
     public static void register() {
         ClientChunkEvents.CHUNK_LOAD.register((level, chunk) -> {

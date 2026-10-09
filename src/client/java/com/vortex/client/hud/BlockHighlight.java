@@ -316,6 +316,7 @@ public final class BlockHighlight {
             // Fuellung (auf diese Entfernung ist ein Block ohnehin nur ein paar Pixel gross).
             // Hinter der Kamera: gar nicht (spart bei grosser Reichweite die Haelfte).
             final boolean[] fern = new boolean[m.bloecke.length];
+            final float[] fernGroesse = new float[m.bloecke.length];
             final double[] vorne = blickrichtung();
             boolean irgendwas = false, irgendwasFern = false;
             for (int i = 0; i < alpha.length; i++) {
@@ -326,6 +327,8 @@ public final class BlockHighlight {
                 if (vorne != null && d2 > 64 && (dx * vorne[0] + dy * vorne[1] + dz * vorne[2]) < -0.3 * Math.sqrt(d2)) continue;
                 alpha[i] = deckkraft(p, bx, by, bz, cam, stil, jetzt);
                 fern[i] = d2 > NAH * NAH;
+                // Kreuz waechst mit der Entfernung -> bleibt auf dem Bildschirm etwa gleich gross (~10 px)
+                if (fern[i]) fernGroesse[i] = (float) Math.max(0.75, Math.sqrt(d2) * 0.014);
                 if (alpha[i] > 0.004f) { irgendwas = true; if (fern[i]) irgendwasFern = true; }
             }
             final boolean fernDa = irgendwasFern;
@@ -399,9 +402,10 @@ public final class BlockHighlight {
                                     if (a <= 0.003f) continue;
                                     long p = m.bloecke[i];
                                     float cx = BlockPos.getX(p) - ox + 0.5f, cy = BlockPos.getY(p) - oy + 0.5f, cz = BlockPos.getZ(p) - oz + 0.5f;
-                                    linie(mat, v, cx - 0.75f, cy, cz, cx + 0.75f, cy, cz, r, g, b, a, breite + 1f);
-                                    linie(mat, v, cx, cy - 0.75f, cz, cx, cy + 0.75f, cz, r, g, b, a, breite + 1f);
-                                    linie(mat, v, cx, cy, cz - 0.75f, cx, cy, cz + 0.75f, r, g, b, a, breite + 1f);
+                                    float h = fernGroesse[i];
+                                    linie(mat, v, cx - h, cy, cz, cx + h, cy, cz, r, g, b, a, breite + 1f);
+                                    linie(mat, v, cx, cy - h, cz, cx, cy + h, cz, r, g, b, a, breite + 1f);
+                                    linie(mat, v, cx, cy, cz - h, cx, cy, cz + h, r, g, b, a, breite + 1f);
                                 }
                             }
                             for (int i = 0; i < gp.length; i++) {
