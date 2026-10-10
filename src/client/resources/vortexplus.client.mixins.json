@@ -32,7 +32,9 @@
 		"SpeedMineMixin",
 		"TotemPopMixin",
 		"XrayFaceMixin",
-		"XrayShapeMixin"
+		"XrayShapeMixin",
+		"ContainerOpenMixin",
+		"FreecamAntiAfkMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

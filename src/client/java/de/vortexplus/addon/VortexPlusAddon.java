@@ -225,6 +225,7 @@ public class VortexPlusAddon implements ClientModInitializer {
             com.vortex.client.hud.ItemEsp.register();
             com.vortex.client.hud.SusChunks.register();
             com.vortex.client.hud.TunnelDetector.register();
+            com.vortex.client.hud.FreecamHighlightRenderer.register();
             com.vortex.client.hud.AutoTotem.register();
             com.vortex.client.hud.Aimbot.register();
             com.vortex.client.hud.AutoHit.register();
