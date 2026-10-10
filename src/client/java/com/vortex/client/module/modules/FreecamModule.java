@@ -71,6 +71,10 @@ public class FreecamModule extends Module {
     public final BooleanSetting smooth =
             new BooleanSetting("Smooth Movement", false);
 
+    /** Zeigt den Block, den die virtuelle Kamera gerade ansieht, an. */
+    public final BooleanSetting highlightBlock =
+            new BooleanSetting("Highlight Block", true);
+
     public FreecamModule() {
         super("Freecam", Category.CHEATS);
         addSetting(speed);
@@ -79,5 +83,6 @@ public class FreecamModule extends Module {
         addSetting(rotatePlayer);
         addSetting(showPlayer);
         addSetting(smooth);
+        addSetting(highlightBlock);
     }
 }

@@ -39,8 +39,11 @@ public class StashFinderModule extends Module {
     public final ColorSetting tracerColor = new ColorSetting("Tracer Color", 0xFFFF00FF);
     /** Rahmen um das gefundene Lager. */
     public final BooleanSetting box = new BooleanSetting("Box", true);
+    /** Filtert Stashes nach einem bestimmten Item (z.B. "diamond"). Nur Stashes, die dieses Item enthalten, werden angezeigt. */
+    public final com.vortex.client.core.setting.StringSetting contentFilter = new com.vortex.client.core.setting.StringSetting("Content Filter", "");
     /** Tracer auch zu gemerkten Stashes, die nicht mehr geladen sind. */
     public final BooleanSetting remember = new BooleanSetting("Tracers To Remembered", true);
+
     public final BooleanSetting notify = new BooleanSetting("Chat Message", true);
     public final BooleanSetting sound = new BooleanSetting("Sound", true);
     /** Fuer jeden neuen Stash einen Waypoint (Art "Lager") anlegen. */
@@ -56,6 +59,7 @@ public class StashFinderModule extends Module {
         addSetting(tracer);
         addSetting(tracerColor);
         addSetting(box);
+        addSetting(contentFilter);
         addSetting(remember);
         addSetting(notify);
         addSetting(sound);

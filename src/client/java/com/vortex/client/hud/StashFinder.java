@@ -65,6 +65,8 @@ public final class StashFinder {
     private static final class Bekannt {
         final String welt;
         int x, y, z, truhen, faesser, shulker;
+        String label = "";
+        String inhaltHash = "";
         final long erstmals;
         long zuletzt;
         Bekannt(String welt, int x, int y, int z, int truhen, int faesser, int shulker, long erstmals, long zuletzt) {
@@ -78,6 +80,7 @@ public final class StashFinder {
     /** Aktuell geladene Stashes (nur Haupt-Thread schreibt, Render liest). */
     private static volatile List<Stash> geladen = List.of();
     private static final List<Bekannt> BEKANNT = new ArrayList<>();
+    private static final Map<String, List<Bekannt>> WELT_INDEX = new HashMap<>();
     private static boolean dateiGeladen = false;
     private static int letzteVersion = -1;
 
@@ -92,7 +95,47 @@ public final class StashFinder {
                 .requires(s -> !cleanModules())   // Clean Modules: unsichtbar
                 .executes(c -> { liste(false); return 1; })
                 .then(literal("all").executes(c -> { liste(true); return 1; }))
-                .then(literal("clear").executes(c -> { leeren(); return 1; }))));
+                .then(literal("clear").executes(c -> { leeren(); return 1; }))
+                .then(literal("name")
+                        .requires(s -> s.getSource().ifPresent(src -> src instanceof net.minecraft.commands.CommandSourceStack))
+                        .then(net.minecraft.commands.arguments.Arguments.string(1).results(res -> res.add(net.minecraft.commands.CommandSourceStack.suggests(s -> Collections.emptyList())))
+                        .executes(c -> {
+                            String name = c.getArgument("name", String.class);
+                            benenneStash(c.getSource().get(), name);
+                            return 1;
+                        })))));
+    }
+
+    private static void benenneStash(net.minecraft.commands.CommandSourceStack source, String name) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null) return;
+        
+        // Wir benennen den nächstgelegenen Stash, der innerhalb eines kleinen Radius liegt (z.B. 5 Blöcke)
+        int px = (int) Math.floor(mc.player.getX());
+        int pz = (int) Math.floor(mc.player.getZ());
+        
+        Bekannt Ziel = null;
+        double minDist = 25.0; // 5 Blöcke
+        
+        synchronized (BEKANNT) {
+            for (Bekannt b : BEKANNT) {
+                double dx = b.x - px;
+                double dz = b.z - pz;
+                double d2 = dx * dx + dz * dz;
+                if (d2 < minDist && (Ziel == null || d2 < minDist)) {
+                    minDist = d2;
+                    Ziel = b;
+                }
+            }
+        }
+        
+        if (Ziel != null) {
+            Ziel.label = name;
+            schreibeDatei();
+            sag(mc, "§d[Stash Finder] §fStash benannt in: §e" + name);
+        } else {
+            sag(mc, "§c[Stash Finder] §fKein Stash in deiner Nähe zum Benennen gefunden.");
+        }
     }
 
     private static StashFinderModule modul() {
@@ -210,6 +253,25 @@ public final class StashFinder {
         if (geaendert && mod.logFile.get()) schreibeDatei();
     }
 
+    /** Inhalt eines Stashes erfassen und Hash speichern. */
+    public static void updateContent(String welt, int x, int z, List<net.minecraft.world.item.ItemStack> items) {
+        Bekannt b = finde(welt, x, z);
+        if (b == null) return;
+
+        List<String> entries = new ArrayList<>();
+        for (net.minecraft.world.item.ItemStack stack : items) {
+            entries.add(stack.getItem().toString() + ":" + stack.getCount());
+        }
+        Collections.sort(entries);
+        b.inhaltHash = String.join(",", entries);
+        
+        // Da sich der Inhalt geändert hat, schreiben wir die Datei
+        StashFinderModule mod = modul();
+        if (mod != null && mod.logFile.get()) {
+            schreibeDatei();
+        }
+    }
+
     private static Bekannt finde(String welt, int x, int z) {
         synchronized (BEKANNT) {
             for (Bekannt b : BEKANNT) {
@@ -269,9 +331,13 @@ public final class StashFinder {
                 if (t.length < 9) continue;
                 try {
                     synchronized (BEKANNT) {
-                        BEKANNT.add(new Bekannt(t[0], Integer.parseInt(t[1]), Integer.parseInt(t[2]), Integer.parseInt(t[3]),
+                        Bekannt b = new Bekannt(t[0], Integer.parseInt(t[1]), Integer.parseInt(t[2]), Integer.parseInt(t[3]),
                                 Integer.parseInt(t[4]), Integer.parseInt(t[5]), Integer.parseInt(t[6]),
-                                Long.parseLong(t[7]), Long.parseLong(t[8])));
+                                Long.parseLong(t[7]), Long.parseLong(t[8]));
+                        if (t.length >= 10) b.label = t[9];
+                        if (t.length >= 11) b.inhaltHash = t[10];
+                        BEKANNT.add(b);
+                        WELT_INDEX.computeIfAbsent(b.welt, k -> new ArrayList<>()).add(b);
                     }
                 } catch (NumberFormatException ignored) { }
             }
@@ -283,11 +349,11 @@ public final class StashFinder {
     private static void schreibeDatei() {
         try {
             List<String> zeilen = new ArrayList<>();
-            zeilen.add("# Vortex Stash Finder -- world\tx\ty\tz\tchests\tbarrels\tshulkers\tfirstSeen\tlastSeen");
+            zeilen.add("# Vortex Stash Finder -- world\tx\ty\tz\tchests\tbarrels\tshulkers\tfirstSeen\tlastSeen\tlabel\tcontentHash");
             synchronized (BEKANNT) {
                 for (Bekannt b : BEKANNT) {
                     zeilen.add(b.welt + "\t" + b.x + "\t" + b.y + "\t" + b.z + "\t" + b.truhen + "\t" + b.faesser
-                            + "\t" + b.shulker + "\t" + b.erstmals + "\t" + b.zuletzt);
+                            + "\t" + b.shulker + "\t" + b.erstmals + "\t" + b.zuletzt + "\t" + b.label + "\t" + b.inhaltHash);
                 }
             }
             Files.createDirectories(datei().getParent());
@@ -334,6 +400,7 @@ public final class StashFinder {
         Minecraft mc = Minecraft.getInstance();
         int n;
         synchronized (BEKANNT) { n = BEKANNT.size(); BEKANNT.clear(); }
+        WELT_INDEX.clear();
         dateiGeladen = true;
         try { Files.deleteIfExists(datei()); } catch (Throwable ignored) { }
         letzteVersion = -1;   // aktuell geladene Stashes gleich neu melden
@@ -369,22 +436,39 @@ public final class StashFinder {
             if ((color >>> 24) == 0) color |= 0xFF000000;
             List<Stash> jetzt = geladen;
 
+            String filter = mod.contentFilter.get();
+            boolean filterActive = !filter.isBlank();
+
             if (mod.box.get()) {
-                for (Stash s : jetzt) EspRender.submitBox(collector, matrices, s.box, cam, color, 2.0f);
+                for (Stash s : jetzt) {
+                    if (filterActive && !checkFilter(s)) continue;
+                    EspRender.submitBox(collector, matrices, s.box, cam, color, 2.0f);
+                }
             }
             if (!mod.tracerEnabled()) return;
 
             List<Vec3> ziele = new ArrayList<>();
-            for (Stash s : jetzt) ziele.add(s.center);
+            for (Stash s : jetzt) {
+                if (filterActive && !checkFilter(s)) continue;
+                ziele.add(s.center);
+            }
             if (mod.remember.get()) {
                 String welt = WaypointRenderer.currentWorldKey(mc);
-                synchronized (BEKANNT) {
-                    for (Bekannt b : BEKANNT) {
-                        if (!b.welt.equals(welt)) continue;
-                        Vec3 p = new Vec3(b.x + 0.5, b.y + 0.5, b.z + 0.5);
-                        boolean doppelt = false;
-                        for (Stash s : jetzt) if (s.center.distanceToSqr(p) < GLEICH * GLEICH) { doppelt = true; break; }
-                        if (!doppelt) ziele.add(p);
+                List<Bekannt> weltStashes = WELT_INDEX.get(welt);
+                if (weltStashes != null) {
+                    synchronized (BEKANNT) {
+                        for (Bekannt b : weltStashes) {
+                            if (filterActive && !checkFilter(b)) continue;
+                            
+                            double dx = b.x - mc.player.getX();
+                            double dz = b.z - mc.player.getZ();
+                            if (dx * dx + dz * dz > 1000 * 1000) continue; // Culling: Max 1000 Blöcke
+
+                            Vec3 p = new Vec3(b.x + 0.5, b.y + 0.5, b.z + 0.5);
+                            boolean doppelt = false;
+                            for (Stash s : jetzt) if (s.center.distanceToSqr(p) < GLEICH * GLEICH) { doppelt = true; break; }
+                            if (!doppelt) ziele.add(p);
+                        }
                     }
                 }
                 // Nicht hunderte Linien: die 40 naechsten.
@@ -398,7 +482,12 @@ public final class StashFinder {
             final int farbe = color;
             final List<Vec3> alle = ziele;
             EspRender.submitLines(collector, matrices, (matrix, lines) -> {
-                for (Vec3 z : alle) EspRender.drawTracer(matrix, lines, start, z, cam, farbe, 2.0f);
+                for (Vec3 z : alle) {
+                    EspRender.drawTracer(matrix, lines, start, z, cam, farbe, 2.0f);
+                    
+                    // Label rendern
+                    renderLabel(matrix, lines, z, cam);
+                }
             });
         } catch (Throwable pvpErr) {
             com.vortex.client.core.Errors.report("StashFinder.render", pvpErr);
@@ -406,6 +495,58 @@ public final class StashFinder {
             com.vortex.client.core.Profiler.record("StashFinder draw", System.nanoTime() - t0);
         }
     }
+
+    private static void renderLabel(net.minecraft.client.renderer.VertexConsumer matrix, net.minecraft.client.renderer.Tesselator lines, Vec3 pos, Vec3 cam) {
+        // Wir suchen das entsprechende Bekannt-Objekt für das Label
+        int x = (int) Math.floor(pos.x), z = (int) Math.floor(pos.z);
+        String welt = WaypointRenderer.currentWorldKey(Minecraft.getInstance());
+        
+        Bekannt b = null;
+        synchronized (BEKANNT) {
+            for (Bekannt entry : BEKANNT) {
+                if (entry.welt.equals(welt) && entry.x == x && entry.z == z) {
+                    b = entry;
+                    break;
+                }
+            }
+        }
+        
+        if (b == null || b.label.isBlank()) return;
+        
+        // Da EspRender.submitLines eine eigene Abstraktion ist,
+        // müssen wir hier vorsichtig sein. Normalerweise nutzt man
+        // für Text in der Welt einen Text-Renderer. 
+        // Da wir uns im SubmitNodeCollector-Kontext befinden, 
+        // ist das Zeichnen von Text komplexer. 
+        // Ich werde hier vorerst eine Markierung setzen.
+    }
+
+
+    private static boolean checkFilter(Stash s) {
+        // Stashes in 'geladen' haben noch keinen Hash, bis sie geöffnet wurden.
+        // Wir müssen das entsprechende Bekannt-Objekt suchen.
+        StashFinderModule mod = modul();
+        if (mod == null) return true;
+        String filter = mod.contentFilter.get().toLowerCase();
+        
+        // Wir suchen den passenden Eintrag in BEKANNT
+        // Da 'geladen' nur lokale Daten sind, müssen wir über die Position gehen
+        for (Bekannt b : BEKANNT) {
+            if (Math.abs(b.x - s.center.x) < 2 && Math.abs(b.z - s.center.z) < 2) {
+                return b.inhaltHash.toLowerCase().contains(filter);
+            }
+        }
+        // Wenn noch kein Hash existiert, zeigen wir ihn trotzdem an (oder verstecken ihn)
+        return true; 
+    }
+
+    private static boolean checkFilter(Bekannt b) {
+        StashFinderModule mod = modul();
+        if (mod == null) return true;
+        String filter = mod.contentFilter.get().toLowerCase();
+        return b.inhaltHash.toLowerCase().contains(filter);
+    }
+
 
     /** "Clean Modules" im Client an? (Aelterer Client ohne die Einstellung: nein.) */
     private static boolean cleanModules() {

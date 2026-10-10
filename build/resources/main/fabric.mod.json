@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "vortexplusaddon",
+  "version": "2.44.0+26.2",
+  "name": "Vortex Plus Addon",
+  "description": "Cheat-Module fuer den Vortex Client.",
+  "authors": ["Vortex"],
+  "license": "ARR",
+  "icon": "assets/vortexplusaddon/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["de.vortexplus.addon.VortexPlusAddon"]
+  },
+  "mixins": [
+    { "config": "vortexplus.client.mixins.json", "environment": "client" }
+  ],
+  "depends": {
+    "fabricloader": ">=0.19.3",
+    "minecraft": "26.2",
+    "java": ">=25",
+    "vortexclient": ">=4.4.0"
+  }
+}
